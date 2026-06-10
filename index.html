@@ -26,17 +26,17 @@
   #hud{position:fixed;inset:0;pointer-events:none;opacity:0;transition:opacity .4s}
   #hud.on{opacity:1}
   .panel{background:rgba(8,7,4,.72);border:1px solid rgba(216,194,102,.28);backdrop-filter:blur(2px)}
-  #objectives{position:fixed;top:18px;left:18px;padding:12px 16px;max-width:330px}
-  #objectives h3{font-size:11px;letter-spacing:.28em;color:var(--yellow);font-weight:400;margin-bottom:8px}
+  #objectives{position:fixed;top:18px;left:18px;padding:16px 20px;max-width:410px}
+  #objectives h3{font-size:14px;letter-spacing:.28em;color:var(--yellow);font-weight:400;margin-bottom:10px}
   #objectives ul{list-style:none}
-  #objectives li{font-size:13px;line-height:1.7;color:#7d7560}
+  #objectives li{font-size:15.5px;line-height:1.75;color:#7d7560}
   #objectives li.active{color:var(--bone)}
   #objectives li.active::before{content:"▸ ";color:var(--yellow)}
   #objectives li.done{color:#5d6b46;text-decoration:line-through}
   #objectives li.done::before{content:"✓ ";text-decoration:none}
-  #stats{margin-top:8px;padding-top:8px;border-top:1px dashed rgba(216,194,102,.25);font-size:11px;color:#8d8468;letter-spacing:.06em}
+  #stats{margin-top:10px;padding-top:10px;border-top:1px dashed rgba(216,194,102,.25);font-size:13.5px;color:#8d8468;letter-spacing:.06em}
   #topright{position:fixed;top:18px;right:18px;display:flex;gap:10px;pointer-events:auto}
-  .hudbtn{font-family:inherit;font-size:11px;letter-spacing:.22em;padding:9px 14px;background:rgba(8,7,4,.72);
+  .hudbtn{font-family:inherit;font-size:13px;letter-spacing:.22em;padding:11px 18px;background:rgba(8,7,4,.72);
     color:var(--yellow);border:1px solid rgba(216,194,102,.4);cursor:pointer}
   .hudbtn:hover{background:rgba(216,194,102,.15)}
 
@@ -52,16 +52,16 @@
     box-shadow:0 0 10px rgba(216,194,102,.25)}
   #staminaWrap.low #stamina{background:var(--alert);box-shadow:0 0 10px rgba(176,58,46,.35)}
 
-  #keysHint{position:fixed;bottom:18px;right:18px;font-size:10px;letter-spacing:.14em;color:#6e6750;
+  #keysHint{position:fixed;bottom:18px;right:18px;font-size:12.5px;letter-spacing:.14em;color:#7d7560;
     text-shadow:0 1px 3px rgba(0,0,0,.9)}
-  #prompt{position:fixed;bottom:14%;left:50%;transform:translateX(-50%);font-size:14px;letter-spacing:.12em;
+  #prompt{position:fixed;bottom:14%;left:50%;transform:translateX(-50%);font-size:18px;letter-spacing:.12em;
     color:var(--bone);text-shadow:0 0 8px rgba(0,0,0,.9);opacity:0;transition:opacity .15s}
   #prompt.show{opacity:1}
   #prompt b{color:var(--yellow)}
-  #hiddenTag{position:fixed;bottom:9%;left:50%;transform:translateX(-50%);font-size:11px;letter-spacing:.5em;
+  #hiddenTag{position:fixed;bottom:9%;left:50%;transform:translateX(-50%);font-size:14px;letter-spacing:.5em;
     color:#6f87b8;opacity:0;transition:opacity .3s}
   #hiddenTag.show{opacity:.9}
-  #toast{position:fixed;top:22%;left:50%;transform:translateX(-50%);font-size:15px;letter-spacing:.14em;
+  #toast{position:fixed;top:22%;left:50%;transform:translateX(-50%);font-size:18px;letter-spacing:.14em;
     color:var(--yellow);text-shadow:0 0 14px rgba(0,0,0,1);opacity:0;transition:opacity .5s;text-align:center;max-width:80vw}
   #crosshair{position:fixed;top:50%;left:50%;width:4px;height:4px;margin:-2px 0 0 -2px;border-radius:50%;
     background:rgba(232,226,207,.55)}
@@ -195,7 +195,8 @@
     <div class="mixrow"><label>MASTER</label><input type="range" id="volMaster" min="0" max="100" value="90"><output id="volMasterV">90</output></div>
     <div class="mixrow"><label>MUSIC</label><input type="range" id="volMusic" min="0" max="100" value="75"><output id="volMusicV">75</output></div>
     <div class="mixrow"><label>SOUND</label><input type="range" id="volSound" min="0" max="100" value="90"><output id="volSoundV">90</output></div>
-    <p class="subtle">music = ambient drone &amp; distant tones · sound = footsteps, lights, the entity</p>
+    <div class="mixrow"><label>MOUSE</label><input type="range" id="sensSlider" min="10" max="400" value="100"><output id="sensV">1.0x</output></div>
+    <p class="subtle">music = ambient drone &amp; distant tones · sound = footsteps, lights, the entity<br>mouse = look sensitivity, 0.1x–4x</p>
     <button class="bigbtn" id="btnSoundClose">DONE</button>
   </div>
 </div>
@@ -445,7 +446,7 @@ function buildLevel(){
       lights.push({mesh:m, cx:x, cy:y, world:p, flickery:Math.random()<0.22,
         phase:Math.random()*100, on:1,
         mode:"steady", timer:rand(1,12), pattern:0, rate:20,
-        burstDur:0, burstT:0, seed:Math.random()*1000});
+        burstDur:0, burstT:0, seed:Math.random()*1000, lastTick:0});
     }
   }
 }
@@ -462,6 +463,7 @@ function makeBottle(){
   const label=new THREE.Mesh(new THREE.CylinderGeometry(0.092,0.092,0.13,10),
     new THREE.MeshLambertMaterial({color:0xc8b25a}));
   label.position.y=0.17; g.add(label);
+  g.scale.setScalar(1.2);
   return g;
 }
 function makeFuse(){
@@ -472,6 +474,7 @@ function makeFuse(){
   const prong=new THREE.Mesh(new THREE.BoxGeometry(0.05,0.12,0.05),new THREE.MeshLambertMaterial({color:0xcccccc}));
   prong.position.set(-0.06,0.34,0);g.add(prong);
   const prong2=prong.clone();prong2.position.x=0.06;g.add(prong2);
+  g.scale.setScalar(1.2);
   return g;
 }
 function makeBreaker(p,facing){
@@ -605,11 +608,11 @@ function audioInit(){
   AU.sfx=C.createGain();    AU.sfx.connect(AU.master);
   applyVolumes();
 
-  /* fluorescent hum (SOUND bus) */
-  const hum=C.createOscillator(); hum.type="triangle"; hum.frequency.value=120;
-  const hum2=C.createOscillator(); hum2.type="sawtooth"; hum2.frequency.value=240;
-  const hg=AU.humGain=C.createGain(); hg.gain.value=0.028;
-  const hg2=C.createGain(); hg2.gain.value=0.0096;
+  /* fluorescent hum (SOUND bus) — low, soft */
+  const hum=C.createOscillator(); hum.type="triangle"; hum.frequency.value=105;
+  const hum2=C.createOscillator(); hum2.type="sawtooth"; hum2.frequency.value=210;
+  const hg=AU.humGain=C.createGain(); hg.gain.value=0.0252;
+  const hg2=C.createGain(); hg2.gain.value=0.0086;
   hum.connect(hg); hum2.connect(hg2); hg.connect(AU.sfx); hg2.connect(AU.sfx);
   hum.start(); hum2.start();
 
@@ -763,7 +766,15 @@ function noiseBurst(dur,filterFreq,peak,type="lowpass"){
   src.connect(f); f.connect(g); g.connect(AU.sfx); src.start(t);
 }
 function sfxStep(crouched,sprinting){
-  noiseBurst(0.09, crouched?500:900, crouched?0.03:(sprinting?0.16:0.08));
+  /* feet on damp carpet: a muffled brush + soft pad thump, no hard click */
+  if(!AU.ctx)return;
+  const C=AU.ctx,t=C.currentTime;
+  const peak=crouched?0.022:(sprinting?0.12:0.065);
+  noiseBurst(0.13, crouched?200:300, peak);          // low-passed fiber brush
+  const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(74,t);
+  o.frequency.exponentialRampToValueAtTime(44,t+0.07);
+  const g=C.createGain();env(g,t,0.005,peak*0.5,0.1);
+  o.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+0.18);
 }
 function sfxJump(){ noiseBurst(0.07,700,0.06); }
 function sfxLand(){
@@ -851,22 +862,42 @@ function sfxDoor(){
   o.frequency.setValueAtTime(90,t);o.frequency.linearRampToValueAtTime(160,t+0.9);
   const g=C.createGain();env(g,t,0.05,0.07,1.0);o.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+1.2);
 }
-function sfxBuzzFlick(){ noiseBurst(0.05,3000,0.05,"highpass"); }
-function sfxKnock(vol,raps){
+function panTo(x,z){
+  /* stereo pan (-1..1) of a world point relative to where the player is facing */
+  const rel=((Math.atan2(x-STATE.pos.x,z-STATE.pos.z)-(STATE.yaw+Math.PI))%(Math.PI*2)+Math.PI*3)%(Math.PI*2)-Math.PI;
+  return clamp(-Math.sin(rel),-1,1)*0.9;
+}
+function sfxFlickTick(vol,pan){
+  /* fluorescent ballast tick: tiny band-passed static snap, panned to the fixture */
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  const len=Math.floor(C.sampleRate*0.025), buf=C.createBuffer(1,len,C.sampleRate);
+  const d=buf.getChannelData(0); for(let i=0;i<len;i++)d[i]=(Math.random()*2-1)*(1-i/len);
+  const src=C.createBufferSource(); src.buffer=buf;
+  const f=C.createBiquadFilter(); f.type="bandpass"; f.frequency.value=rand(1700,3300); f.Q.value=2.2;
+  const g=C.createGain(); g.gain.value=vol;
+  const p=C.createStereoPanner?C.createStereoPanner():null;
+  src.connect(f); f.connect(g);
+  if(p){p.pan.value=pan; g.connect(p); p.connect(AU.sfx);} else g.connect(AU.sfx);
+  src.start(t);
+}
+function sfxKnock(vol,raps,pan=0){
   /* the classic: deliberate raps on drywall — thump body + knuckle click */
   if(!AU.ctx)return; const C=AU.ctx;
+  const p=C.createStereoPanner?C.createStereoPanner():null;
+  const out=C.createGain(); out.gain.value=1;
+  if(p){p.pan.value=pan; out.connect(p); p.connect(AU.sfx);} else out.connect(AU.sfx);
   for(let i=0;i<raps;i++){
     const t=C.currentTime + 0.05 + i*0.27 + rand(-0.02,0.03);
     const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(120,t);
     o.frequency.exponentialRampToValueAtTime(62,t+0.09);
     const g=C.createGain();env(g,t,0.003,vol,0.14);
-    o.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+0.25);
+    o.connect(g);g.connect(out);o.start(t);o.stop(t+0.25);
     const len=Math.floor(C.sampleRate*0.04), buf=C.createBuffer(1,len,C.sampleRate);
     const dd=buf.getChannelData(0); for(let j=0;j<len;j++)dd[j]=(Math.random()*2-1)*(1-j/len);
     const src=C.createBufferSource();src.buffer=buf;
     const f=C.createBiquadFilter();f.type="bandpass";f.frequency.value=900;f.Q.value=1.2;
     const g2=C.createGain();g2.gain.value=vol*0.8;
-    src.connect(f);f.connect(g2);g2.connect(AU.sfx);src.start(t);
+    src.connect(f);f.connect(g2);g2.connect(out);src.start(t);
   }
 }
 
@@ -874,8 +905,8 @@ function sfxKnock(vol,raps){
 const STATE={
   playing:false, paused:false, dead:false, won:false,
   pos:new THREE.Vector3(0,0,0), yaw:0, pitch:0,
-  y:0, vy:0, grounded:true,
-  crouch:false, sprinting:false, stamina:1,
+  y:0, vy:0, grounded:true, velX:0, velZ:0,
+  crouch:false, sprinting:false, stamina:1, sens:1,
   curEyeH:1.62,
   bottles:0, hasFuse:false, powerOn:false, objective:0,
   deaths:0, time:0,
@@ -934,8 +965,8 @@ addEventListener("keydown",e=>{
 addEventListener("keyup",e=>KEYS[e.code]=false);
 document.addEventListener("mousemove",e=>{
   if(document.pointerLockElement!==renderer.domElement) return;
-  STATE.yaw -= e.movementX*0.0022;
-  STATE.pitch = clamp(STATE.pitch - e.movementY*0.0022, -1.45, 1.45);
+  STATE.yaw -= e.movementX*0.0022*STATE.sens;
+  STATE.pitch = clamp(STATE.pitch - e.movementY*0.0022*STATE.sens, -1.45, 1.45);
 });
 document.addEventListener("pointerlockchange",()=>{
   const locked = document.pointerLockElement===renderer.domElement;
@@ -1010,6 +1041,14 @@ $("btnAgain").onclick=()=>location.reload();
     applyVolumes();
   });
 });
+/* mouse sensitivity: 0.1x – 4x */
+{
+  const el=$("sensSlider"), out=$("sensV");
+  el.addEventListener("input",()=>{
+    STATE.sens=el.value/100;
+    out.value=STATE.sens.toFixed(1)+"x";
+  });
+}
 
 /* ---------------- game lifecycle ---------------- */
 function startGame(){
@@ -1026,7 +1065,7 @@ function startGame(){
 function respawn(){
   const s=cellToWorld(W>>1,H>>1);
   STATE.pos.set(s.x,0,s.z);
-  STATE.y=0; STATE.vy=0; STATE.grounded=true;
+  STATE.y=0; STATE.vy=0; STATE.grounded=true; STATE.velX=0; STATE.velZ=0;
   STATE.dead=false; STATE.stamina=1;
   if(monster.active){
     const p=farOpenWorldPoint(STATE.pos.x,STATE.pos.z,44);
@@ -1104,7 +1143,7 @@ function tryInteract(){
 }
 function updateFocus(){
   focusedItem=null;
-  let best=2.4;
+  let best=2.7;
   const fwd=new THREE.Vector3(-Math.sin(STATE.yaw),0,-Math.cos(STATE.yaw));
   for(const it of interactables){
     if(it.taken&&it.kind!=="exit") continue;
@@ -1208,7 +1247,9 @@ function updateMonster(dt){
   } else if(m.state==="wander"){
     if(m.pauseT>0){ m.pauseT-=dt; }                 // it sometimes just… stands there
     else if(m.path.length===0&&m.repath<=0){
-      if(Math.random()<0.35){ m.pauseT=rand(2,5); m.repath=0.2; }
+      const cc=worldToCell(m.pos.x,m.pos.z);
+      const byWall=isWall(cc.cx+1,cc.cy)||isWall(cc.cx-1,cc.cy)||isWall(cc.cx,cc.cy+1)||isWall(cc.cx,cc.cy-1);
+      if(Math.random()<(byWall?0.6:0.4)){ m.pauseT=rand(2,5.5); m.repath=0.2; }
       else {
         const c=randomOpenCell(0), p=cellToWorld(c.cx,c.cy);
         setPathTo(p.x,p.z); m.repath=1.5;
@@ -1252,17 +1293,20 @@ function updateMonster(dt){
   if(stationary){
     m.knockT-=dt;
     if(m.knockT<=0){
-      m.knockT=rand(3.5,8);
+      m.knockT=rand(2.5,6);
       const c=worldToCell(m.pos.x,m.pos.z);
       let wallDir=null;
       for(const[wx,wy]of[[1,0],[-1,0],[0,1],[0,-1]])
         if(isWall(c.cx+wx,c.cy+wy)){wallDir=[wx,wy];break;}
-      if(wallDir&&d<46){
+      if(wallDir){
         m.faceAng=Math.atan2(wallDir[0],wallDir[1]);     // turns to the wall first
-        sfxKnock(clamp(1-d/46,0.04,1)*0.34, 2+Math.floor(Math.random()*3));
+        /* near-global volume: gentle falloff keeps a sense of distance &
+           direction without ever making the knocks easy to miss */
+        const vol=0.5*(0.45+0.55*clamp(1-d/80,0,1));
+        sfxKnock(vol, 2+Math.floor(Math.random()*3), panTo(m.pos.x,m.pos.z));
       }
     }
-  } else m.knockT=Math.max(m.knockT,1.6);   // brief settle time after it stops
+  } else m.knockT=Math.max(m.knockT,1.4);   // brief settle time after it stops
 
   /* ---- continuous audio: breathing, groans, proximity bed, heartbeat ---- */
   const prox = clamp(1 - d/22, 0, 1);
@@ -1327,9 +1371,20 @@ function updatePlayer(dt){
   let vx=(-sin*fwd + cos*str), vz=(-cos*fwd - sin*str);
   const vl=Math.hypot(vx,vz)||1; vx/=vl; vz/=vl;
 
-  const tx=STATE.pos.x+vx*speed*dt, tz=STATE.pos.z+vz*speed*dt;
+  /* momentum: grounded movement is direct; airborne, velocity persists and
+     input (incl. starting/stopping sprint) only steers ~20% over a full jump */
+  const desX=vx*speed*(movingInput?1:0), desZ=vz*speed*(movingInput?1:0);
+  if(STATE.grounded){
+    STATE.velX=desX; STATE.velZ=desZ;
+  } else {
+    const k=Math.min(1,dt*0.28);
+    STATE.velX+=(desX-STATE.velX)*k;
+    STATE.velZ+=(desZ-STATE.velZ)*k;
+  }
+  const tx=STATE.pos.x+STATE.velX*dt, tz=STATE.pos.z+STATE.velZ*dt;
   const solved=collide(tx,tz,0.42);
-  STATE.moving = movingInput && (Math.abs(solved.x-STATE.pos.x)>1e-4||Math.abs(solved.z-STATE.pos.z)>1e-4);
+  STATE.moving = (movingInput||!STATE.grounded) &&
+    (Math.abs(solved.x-STATE.pos.x)>1e-4||Math.abs(solved.z-STATE.pos.z)>1e-4);
   STATE.pos.x=solved.x; STATE.pos.z=solved.z;
 
   /* stamina: airborne sprinting drains at half rate */
@@ -1402,7 +1457,6 @@ function updateLights(dt,t){
           L.pattern=Math.floor(Math.random()*FLICKER_PATTERNS);
           L.rate=rand(14,30);
           L.burstDur=L.burstT=rand(0.25,1.4)*(1+near*0.8);
-          if(dl<12&&Math.random()<0.6) sfxBuzzFlick();
         }
         // long natural calms; the entity's presence shreds them
         L.timer = (L.flickery? rand(4,14) : rand(7,20)) * clamp(1-near*0.9, 0.06, 1);
@@ -1414,6 +1468,13 @@ function updateLights(dt,t){
     const v=panelValue(L,t);
     if(L.mode==="burst"&&dl<12) nearBurst=true;
     if(Math.abs(v-L.on)>0.04){
+      /* ballast tick fires WITH the visible transition, from the fixture's
+         direction, fading with distance — classic fluorescent static */
+      if(Math.abs(v-L.on)>0.35 && dl<30 && t-L.lastTick>0.09 && Math.random()<0.75){
+        L.lastTick=t;
+        const fall=Math.pow(clamp(1-dl/30,0,1),1.4);
+        sfxFlickTick(0.075*fall, panTo(L.world.x,L.world.z));
+      }
       L.on=v;
       L.mesh.material.color.setRGB(v, 0.965*v, 0.81*v);
     }
@@ -1446,9 +1507,9 @@ function updateLights(dt,t){
   /* hum reacts when a fixture near the player is actually misbehaving */
   if(AU.humGain&&AU.ctx){
     if(nearBurst||monNear>0.4){
-      AU.humGain.gain.setTargetAtTime(0.044+Math.random()*0.016,AU.ctx.currentTime,0.05);
+      AU.humGain.gain.setTargetAtTime(0.0396+Math.random()*0.0144,AU.ctx.currentTime,0.05);
     } else {
-      AU.humGain.gain.setTargetAtTime(0.028,AU.ctx.currentTime,0.4);
+      AU.humGain.gain.setTargetAtTime(0.0252,AU.ctx.currentTime,0.4);
     }
   }
   hemi.intensity = lerp(hemi.intensity, STATE.powerOn? 0.50:0.42, 0.1);
