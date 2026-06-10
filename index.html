@@ -349,14 +349,44 @@ const texWall = makeCanvas(256,256,(g,w,h)=>{
     g.fillStyle=gr;g.fillRect(x-r,y-r,r*2,r*2);}
   g.fillStyle="rgba(40,32,12,.35)";g.fillRect(0,h-14,w,14);
 });
-const texCarpet = makeCanvas(256,256,(g,w,h)=>{
+const texCarpet = makeCanvas(512,512,(g,w,h)=>{
   g.fillStyle="#7a6c35";g.fillRect(0,0,w,h);
-  for(let i=0;i<7000;i++){const v=Math.random();
+  for(let i=0;i<26000;i++){const v=Math.random();
     g.fillStyle=`rgba(${v<.5?40:110},${v<.5?34:96},${v<.5?14:46},0.25)`;
     g.fillRect(Math.random()*w,Math.random()*h,1.5,1.5);}
-  for(let i=0;i<5;i++){const x=Math.random()*w,y=Math.random()*h,r=18+Math.random()*50;
-    const gr=g.createRadialGradient(x,y,2,x,y,r);gr.addColorStop(0,"rgba(35,28,8,0.3)");gr.addColorStop(1,"rgba(35,28,8,0)");
-    g.fillStyle=gr;g.fillRect(x-r,y-r,r*2,r*2);}
+  /* varied stains: random rotation, squash, size, and strength */
+  for(let i=0;i<11;i++){
+    const x=Math.random()*w,y=Math.random()*h,r=18+Math.random()*70;
+    g.save();g.translate(x,y);g.rotate(Math.random()*Math.PI);g.scale(1,0.45+Math.random()*0.9);
+    const a=0.10+Math.random()*0.22;
+    const gr=g.createRadialGradient(0,0,2,0,0,r);
+    gr.addColorStop(0,`rgba(35,28,8,${a})`);gr.addColorStop(1,"rgba(35,28,8,0)");
+    g.fillStyle=gr;g.fillRect(-r,-r,r*2,r*2);g.restore();
+  }
+});
+/* sparse large-scale stain overlay, tiled at a different (non-integer)
+   rate than the carpet so the two layers never line up — kills the
+   visible repeat without true uniqueness */
+const texStains = makeCanvas(512,512,(g,w,h)=>{
+  g.clearRect(0,0,w,h);
+  for(let i=0;i<8;i++){
+    const x=Math.random()*w,y=Math.random()*h,r=40+Math.random()*120;
+    g.save();g.translate(x,y);g.rotate(Math.random()*Math.PI);g.scale(1,0.35+Math.random()*1.1);
+    const a=0.05+Math.random()*0.13;
+    const gr=g.createRadialGradient(0,0,4,0,0,r);
+    gr.addColorStop(0,`rgba(28,22,7,${a})`);gr.addColorStop(0.7,`rgba(28,22,7,${a*0.5})`);
+    gr.addColorStop(1,"rgba(28,22,7,0)");
+    g.fillStyle=gr;g.fillRect(-r,-r,r*2,r*2);g.restore();
+  }
+  /* a few long drag streaks */
+  for(let i=0;i<4;i++){
+    const x=Math.random()*w,y=Math.random()*h,len=80+Math.random()*160;
+    g.save();g.translate(x,y);g.rotate(Math.random()*Math.PI);
+    const gr=g.createLinearGradient(-len/2,0,len/2,0);
+    const a=0.04+Math.random()*0.08;
+    gr.addColorStop(0,"rgba(30,24,8,0)");gr.addColorStop(0.5,`rgba(30,24,8,${a})`);gr.addColorStop(1,"rgba(30,24,8,0)");
+    g.fillStyle=gr;g.fillRect(-len/2,-9-Math.random()*10,len,18+Math.random()*20);g.restore();
+  }
 });
 const texCeil = makeCanvas(256,256,(g,w,h)=>{
   g.fillStyle="#cfc6a0";g.fillRect(0,0,w,h);
@@ -368,7 +398,7 @@ const texCeil = makeCanvas(256,256,(g,w,h)=>{
 });
 
 /* ---------------- three.js scene ---------------- */
-const FOG_COLOR = 0x4a4124;       // darker murk: light pools read as pools
+const FOG_COLOR = 0x26241b;       // blackish-grey murk with a trace of yellow
 const scene = new THREE.Scene();
 scene.fog = new THREE.FogExp2(FOG_COLOR, 0.048);
 scene.background = new THREE.Color(FOG_COLOR);
@@ -426,24 +456,59 @@ function buildLevel(){
     }
   }
   const SZ=W*CELL;
-  texCarpet.repeat.set(W,H); texCeil.repeat.set(W*2,H*2);
+  texCarpet.repeat.set(W/2,H/2); texCeil.repeat.set(W*2,H*2);
   const floor=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),
     new THREE.MeshPhongMaterial({map:texCarpet, specular:0x000000, shininess:1}));
   floor.rotation.x=-Math.PI/2; scene.add(floor);
+  /* stain overlay tiles at a non-integer rate so it never aligns with the carpet */
+  texStains.repeat.set(5.13,4.71);
+  const stains=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),
+    new THREE.MeshPhongMaterial({map:texStains, transparent:true, depthWrite:false,
+      specular:0x000000, shininess:1}));
+  stains.rotation.x=-Math.PI/2; stains.position.y=0.015; scene.add(stains);
   const ceil=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),
     new THREE.MeshPhongMaterial({map:texCeil, specular:0x050503, shininess:2}));
   ceil.rotation.x=Math.PI/2; ceil.position.y=WALL_H; scene.add(ceil);
 
-  const panelGeo=new THREE.PlaneGeometry(CELL*0.62,CELL*0.3);
+  /* fluorescent fixtures: a shallow housing with an OPEN bottom face —
+     tubes and diffuse backplate sit recessed inside it, and the grille is
+     inset flush with the bottom rim, exactly like a real troffer */
+  const grateTex = makeCanvas(64,64,(g,w,h)=>{
+    g.clearRect(0,0,w,h);
+    g.fillStyle="rgba(22,19,11,0.96)";
+    for(let x=0;x<w;x+=8) g.fillRect(x,0,2,h);       // long grille vanes
+    for(let y=0;y<h;y+=16) g.fillRect(0,y,w,2);      // cross ribs
+  });
+  grateTex.repeat.set(4,2);
+  const HOUSE_D=0.096;                               // 20% shallower than before
+  const housingGeo=new THREE.BoxGeometry(CELL*0.66,HOUSE_D,CELL*0.34);
+  const housingSide=new THREE.MeshPhongMaterial({color:0x8e8568,specular:0x111108,shininess:8});
+  const housingOpen=new THREE.MeshBasicMaterial({visible:false});
+  // box face order: +x,-x,+y,-y,+z,-z — bottom (-y) is open so we can see inside
+  const housingMats=[housingSide,housingSide,housingSide,housingOpen,housingSide,housingSide];
+  const tubeGeo=new THREE.CylinderGeometry(0.042,0.042,CELL*0.55,8);
+  tubeGeo.rotateZ(Math.PI/2);                        // lie along x
+  const glowGeo=new THREE.PlaneGeometry(CELL*0.6,CELL*0.28);
+  const grateGeo=new THREE.PlaneGeometry(CELL*0.62,CELL*0.3);
+  const grateMat=new THREE.MeshBasicMaterial({map:grateTex,transparent:true});
   for(let y=1;y<H-1;y+=2)for(let x=1;x<W-1;x+=2){
     if(grid[y][x]===0 && Math.random()<0.85){
-      const mat=new THREE.MeshBasicMaterial({color:0xfff6cf});
-      const m=new THREE.Mesh(panelGeo,mat);
+      const glowMat=new THREE.MeshBasicMaterial({color:0xfff6cf});
       const p=cellToWorld(x,y);
-      m.position.set(p.x,WALL_H-0.02,p.z);
-      m.rotation.x=Math.PI/2;
-      scene.add(m);
-      lights.push({mesh:m, cx:x, cy:y, world:p, flickery:Math.random()<0.22,
+      const fix=new THREE.Group();
+      const housing=new THREE.Mesh(housingGeo,housingMats);
+      housing.position.y=WALL_H-HOUSE_D/2; fix.add(housing);
+      const backplate=new THREE.Mesh(glowGeo,glowMat);
+      backplate.rotation.x=Math.PI/2; backplate.position.y=WALL_H-0.014; fix.add(backplate);
+      for(const tz of[-0.32,0.32]){
+        const tube=new THREE.Mesh(tubeGeo,glowMat);
+        tube.position.set(0,WALL_H-0.05,tz); fix.add(tube);   // recessed inside the housing
+      }
+      const grate=new THREE.Mesh(grateGeo,grateMat);
+      grate.rotation.x=Math.PI/2; grate.position.y=WALL_H-HOUSE_D+0.004; fix.add(grate); // flush with the rim
+      fix.position.set(p.x,0,p.z);
+      scene.add(fix);
+      lights.push({glowMat:glowMat, cx:x, cy:y, world:p, flickery:Math.random()<0.22,
         phase:Math.random()*100, on:1,
         mode:"steady", timer:rand(1,12), pattern:0, rate:20,
         burstDur:0, burstT:0, seed:Math.random()*1000, lastTick:0});
@@ -588,7 +653,7 @@ const AU = {
   ctx:null, started:false,
   master:null, music:null, sfx:null,
   vol:{master:0.90, music:0.75, sound:0.90},
-  humGain:null, proxGain:null, proxOsc:null,
+  humVoices:null, proxGain:null, proxOsc:null,
   breathGain:null,
   heartTimer:0, stepTimer:0,
 };
@@ -608,13 +673,26 @@ function audioInit(){
   AU.sfx=C.createGain();    AU.sfx.connect(AU.master);
   applyVolumes();
 
-  /* fluorescent hum (SOUND bus) — low, soft */
-  const hum=C.createOscillator(); hum.type="triangle"; hum.frequency.value=105;
-  const hum2=C.createOscillator(); hum2.type="sawtooth"; hum2.frequency.value=210;
-  const hg=AU.humGain=C.createGain(); hg.gain.value=0.0252;
-  const hg2=C.createGain(); hg2.gain.value=0.0086;
-  hum.connect(hg); hum2.connect(hg2); hg.connect(AU.sfx); hg2.connect(AU.sfx);
-  hum.start(); hum2.start();
+  /* fluorescent buzz comes FROM the fixtures: one shared 3-layer harmonic
+     source fanned out to a pool of positional voices (gain + pan each),
+     bound to the nearest lights every frame in updateLights. A fixture's
+     buzz dies with it when it flickers off. */
+  {
+    const mix=C.createGain(); mix.gain.value=1;
+    [[105,"triangle",0.0202],[210,"sawtooth",0.0069],[52.5,"sine",0.016]].forEach(([f,type,g])=>{
+      const o=C.createOscillator(); o.type=type; o.frequency.value=f;
+      const og=C.createGain(); og.gain.value=g;
+      o.connect(og); og.connect(mix); o.start();
+    });
+    AU.humVoices=[];
+    for(let i=0;i<6;i++){
+      const g=C.createGain(); g.gain.value=0;
+      const p=C.createStereoPanner?C.createStereoPanner():null;
+      mix.connect(g);
+      if(p){ g.connect(p); p.connect(AU.sfx); } else g.connect(AU.sfx);
+      AU.humVoices.push({g,p});
+    }
+  }
 
   /* drone pad (MUSIC bus) */
   const dg=C.createGain(); dg.gain.value=0.192;
@@ -652,8 +730,6 @@ function audioInit(){
     src.start();
   }
 
-  /* sparse eerie events (MUSIC bus) */
-  setInterval(()=>{ if(STATE.playing&&!STATE.paused&&Math.random()<0.55) eerieTone(); },16000);
   /* faint melodic layer: slow sour phrases that never resolve */
   setInterval(()=>{ if(STATE.playing&&!STATE.paused&&Math.random()<0.7) musicPhrase(); },8000);
   /* rare slow minor-chord swell underneath everything */
@@ -743,16 +819,6 @@ function subPulse(){
 function env(g,t0,a,peak,d){
   g.gain.cancelScheduledValues(t0); g.gain.setValueAtTime(0.0001,t0);
   g.gain.linearRampToValueAtTime(peak,t0+a); g.gain.exponentialRampToValueAtTime(0.0001,t0+a+d);
-}
-function eerieTone(){
-  const C=AU.ctx,t=C.currentTime;
-  const o=C.createOscillator(); o.type="sine"; o.frequency.value=rand(300,900);
-  o.frequency.exponentialRampToValueAtTime(o.frequency.value*rand(0.5,0.8),t+4);
-  const g=C.createGain(); env(g,t,2.2,0.06,3.5);
-  const p=C.createStereoPanner?C.createStereoPanner():null;
-  if(p){p.pan.value=rand(-0.8,0.8);o.connect(g);g.connect(p);p.connect(AU.music);}
-  else {o.connect(g);g.connect(AU.music);}
-  o.start(t); o.stop(t+6);
 }
 function noiseBurst(dur,filterFreq,peak,type="lowpass"){
   if(!AU.ctx) return;
@@ -881,22 +947,27 @@ function sfxFlickTick(vol,pan){
   src.start(t);
 }
 function sfxKnock(vol,raps,pan=0){
-  /* the classic: deliberate raps on drywall — thump body + knuckle click */
+  /* knuckles on wood/drywall: two fast-decaying mid partials + a sharp tap,
+     rather than a bassy thump */
   if(!AU.ctx)return; const C=AU.ctx;
   const p=C.createStereoPanner?C.createStereoPanner():null;
   const out=C.createGain(); out.gain.value=1;
   if(p){p.pan.value=pan; out.connect(p); p.connect(AU.sfx);} else out.connect(AU.sfx);
   for(let i=0;i<raps;i++){
     const t=C.currentTime + 0.05 + i*0.27 + rand(-0.02,0.03);
-    const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(120,t);
-    o.frequency.exponentialRampToValueAtTime(62,t+0.09);
-    const g=C.createGain();env(g,t,0.003,vol,0.14);
-    o.connect(g);g.connect(out);o.start(t);o.stop(t+0.25);
-    const len=Math.floor(C.sampleRate*0.04), buf=C.createBuffer(1,len,C.sampleRate);
+    // wood body resonances — short, dry
+    [[185+rand(-12,18),0.9,0.075],[322+rand(-20,28),0.5,0.05],[96,0.3,0.09]].forEach(([f,v,dec])=>{
+      const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(f,t);
+      o.frequency.exponentialRampToValueAtTime(f*0.92,t+dec);
+      const g=C.createGain();env(g,t,0.002,vol*v,dec);
+      o.connect(g);g.connect(out);o.start(t);o.stop(t+dec+0.08);
+    });
+    // sharp tap transient
+    const len=Math.floor(C.sampleRate*0.018), buf=C.createBuffer(1,len,C.sampleRate);
     const dd=buf.getChannelData(0); for(let j=0;j<len;j++)dd[j]=(Math.random()*2-1)*(1-j/len);
     const src=C.createBufferSource();src.buffer=buf;
-    const f=C.createBiquadFilter();f.type="bandpass";f.frequency.value=900;f.Q.value=1.2;
-    const g2=C.createGain();g2.gain.value=vol*0.8;
+    const f=C.createBiquadFilter();f.type="bandpass";f.frequency.value=1350;f.Q.value=1.4;
+    const g2=C.createGain();g2.gain.value=vol*0.7;
     src.connect(f);f.connect(g2);g2.connect(out);src.start(t);
   }
 }
@@ -1033,12 +1104,34 @@ $("btnRespawn").onclick=()=>{
 };
 $("btnAgain").onclick=()=>location.reload();
 
+/* ---- settings persistence (volumes + mouse sensitivity) ---- */
+const SETTINGS_KEY="noclip_settings_v1";
+function saveSettings(){
+  try{ localStorage.setItem(SETTINGS_KEY, JSON.stringify({vol:AU.vol, sens:STATE.sens})); }catch(e){}
+}
+function loadSettings(){
+  try{
+    const s=JSON.parse(localStorage.getItem(SETTINGS_KEY)||"null");
+    if(s){
+      if(s.vol) for(const k of["master","music","sound"]) if(typeof s.vol[k]==="number") AU.vol[k]=clamp(s.vol[k],0,1);
+      if(typeof s.sens==="number") STATE.sens=clamp(s.sens,0.1,4);
+    }
+  }catch(e){}
+}
+loadSettings();
+/* sync slider UI to loaded values */
+[["volMaster","master"],["volMusic","music"],["volSound","sound"]].forEach(([id,key])=>{
+  $(id).value=Math.round(AU.vol[key]*100); $(id+"V").value=Math.round(AU.vol[key]*100);
+});
+$("sensSlider").value=Math.round(STATE.sens*100);
+$("sensV").value=STATE.sens.toFixed(1)+"x";
+
 /* mixer wiring */
 [["volMaster","master"],["volMusic","music"],["volSound","sound"]].forEach(([id,key])=>{
   const el=$(id), out=$(id+"V");
   el.addEventListener("input",()=>{
     AU.vol[key]=el.value/100; out.value=el.value;
-    applyVolumes();
+    applyVolumes(); saveSettings();
   });
 });
 /* mouse sensitivity: 0.1x – 4x */
@@ -1047,6 +1140,7 @@ $("btnAgain").onclick=()=>location.reload();
   el.addEventListener("input",()=>{
     STATE.sens=el.value/100;
     out.value=STATE.sens.toFixed(1)+"x";
+    saveSettings();
   });
 }
 
@@ -1164,7 +1258,6 @@ function wakeMonster(){
   monster.pos.set(p.x,0,p.z);
   monster.groanT=2.5;
   toast("…Something, far off, has shifted. It knows things are being moved.",4200);
-  eerieTone();
 }
 function monsterCanSee(){
   const d=monster.pos.distanceTo(STATE.pos);
@@ -1436,8 +1529,6 @@ function panelValue(L,t){
 }
 function updateLights(dt,t){
   const px=STATE.pos.x, pz=STATE.pos.z;
-  const monNear = monster.active? clamp(1-monster.pos.distanceTo(STATE.pos)/16,0,1):0;
-  let nearBurst=false;
   for(const L of lights){
     const dl=Math.hypot(L.world.x-px,L.world.z-pz);
     /* the AOE is centered on the ENTITY: panels near IT misbehave,
@@ -1466,7 +1557,6 @@ function updateLights(dt,t){
       if(L.burstT<=0) L.mode="steady";
     }
     const v=panelValue(L,t);
-    if(L.mode==="burst"&&dl<12) nearBurst=true;
     if(Math.abs(v-L.on)>0.04){
       /* ballast tick fires WITH the visible transition, from the fixture's
          direction, fading with distance — classic fluorescent static */
@@ -1476,7 +1566,7 @@ function updateLights(dt,t){
         sfxFlickTick(0.075*fall, panTo(L.world.x,L.world.z));
       }
       L.on=v;
-      L.mesh.material.color.setRGB(v, 0.965*v, 0.81*v);
+      L.glowMat.color.setRGB(v, 0.965*v, 0.81*v);
     }
   }
 
@@ -1490,7 +1580,7 @@ function updateLights(dt,t){
     if(d2<R2) cand.push([d2,L]);
   }
   cand.sort((a,b)=>a[0]-b[0]);
-  const base = STATE.powerOn? 1.5 : 1.25;   // steeper decay needs more punch at the source
+  const base = STATE.powerOn? 1.43 : 1.19;   // −5% peak fixture brightness
   const band = LIGHT_BIND_RADIUS-LIGHT_FADE_START;
   for(let i=0;i<lightPool.length;i++){
     const pl=lightPool[i];
@@ -1504,12 +1594,19 @@ function updateLights(dt,t){
     } else pl.intensity=0;
   }
 
-  /* hum reacts when a fixture near the player is actually misbehaving */
-  if(AU.humGain&&AU.ctx){
-    if(nearBurst||monNear>0.4){
-      AU.humGain.gain.setTargetAtTime(0.0396+Math.random()*0.0144,AU.ctx.currentTime,0.05);
-    } else {
-      AU.humGain.gain.setTargetAtTime(0.0252,AU.ctx.currentTime,0.4);
+  /* positional fluorescent buzz: bind hum voices to the nearest fixtures.
+     Volume falls off with distance, pans to the fixture's direction, and
+     follows L.on — a tube that flickers dark goes silent with it. */
+  if(AU.humVoices&&AU.ctx){
+    const tN=AU.ctx.currentTime;
+    for(let i=0;i<AU.humVoices.length;i++){
+      const hv=AU.humVoices[i];
+      if(i<cand.length){
+        const L=cand[i][1], dist=Math.sqrt(cand[i][0]);
+        const att=Math.pow(clamp(1-dist/16,0,1),1.6);
+        hv.g.gain.setTargetAtTime(0.85*att*L.on, tN, 0.07);
+        if(hv.p) hv.p.pan.setTargetAtTime(panTo(L.world.x,L.world.z), tN, 0.09);
+      } else hv.g.gain.setTargetAtTime(0, tN, 0.15);
     }
   }
   hemi.intensity = lerp(hemi.intensity, STATE.powerOn? 0.50:0.42, 0.1);
