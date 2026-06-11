@@ -1,7 +1,7 @@
 /* ---------------- map generation ---------------- */
 import { lerp, srand } from "./utils.js";
 
-export const W=33, H=33, CELL=4, WALL_H=3.6;
+export const W=33, H=33, CELL=4, WALL_H=3.97;
 export let grid;                // 1 = wall, 0 = open
 export function genMap(){
   grid = Array.from({length:H},()=>Array(W).fill(1));

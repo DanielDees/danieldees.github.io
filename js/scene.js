@@ -77,23 +77,54 @@ export function buildLevel(){
   /* fluorescent fixtures: a shallow housing with an OPEN bottom face —
      tubes and diffuse backplate sit recessed inside it, and the grille is
      inset flush with the bottom rim, exactly like a real troffer */
-  const grateTex = makeCanvas(64,64,(g,w,h)=>{
+  /* single full-cover texture (no tiling) so the grate can close with a
+     rail on ALL four edges — a repeating tile always ends on a gap at the
+     far side, leaving the grate visually open on two sides */
+  const grateTex = makeCanvas(256,128,(g,w,h)=>{
     g.clearRect(0,0,w,h);
     g.fillStyle="rgba(22,19,11,0.96)";
-    for(let x=0;x<w;x+=8) g.fillRect(x,0,2,h);       // long grille vanes
-    for(let y=0;y<h;y+=16) g.fillRect(0,y,w,2);      // cross ribs
+    /* exact division: rails on both edges with N uniform cells between,
+       so the pattern closes flush on every side — fixed-step spacing left
+       a partial sliver cell against the far rails */
+    const NX=32, NY=8;
+    for(let i=0;i<=NX;i++) g.fillRect(i*(w-2)/NX,0,2,h);   // grille vanes
+    for(let j=0;j<=NY;j++) g.fillRect(0,j*(h-2)/NY,w,2);   // cross ribs
   });
-  grateTex.repeat.set(4,2);
   const HOUSE_D=0.096;                               // 20% shallower than before
   const housingGeo=new THREE.BoxGeometry(CELL*0.66,HOUSE_D,CELL*0.34);
-  const housingSide=new THREE.MeshPhongMaterial({color:0x8e8568,specular:0x111108,shininess:8});
-  const housingOpen=new THREE.MeshBasicMaterial({visible:false});
-  // box face order: +x,-x,+y,-y,+z,-z — bottom (-y) is open so we can see inside
-  const housingMats=[housingSide,housingSide,housingSide,housingOpen,housingSide,housingSide];
+  /* galvanized-steel fixture frame — clearly a piece of metal hardware,
+     not a patch of ceiling; faint emissive keeps it readable right next
+     to its own glowing tubes */
+  const housingSide=new THREE.MeshPhongMaterial({color:0xb4b2aa,emissive:0x0d0d0b,
+    specular:0x6a6960,shininess:55});
+  /* bottom face: metallic trim flange with the centre punched out via
+     alphaTest so the grate & glow show through — keeps the fixture visible
+     from directly underneath without transparency-sorting issues */
+  const rimTex=makeCanvas(256,128,(g,w,h)=>{
+    g.clearRect(0,0,w,h);
+    g.fillStyle="#a8a69d";
+    g.fillRect(0,0,w,8);g.fillRect(0,h-8,w,8);g.fillRect(0,0,8,h);g.fillRect(w-8,0,8,h);
+    g.fillStyle="rgba(30,28,22,0.85)";                 // shadowed inner lip
+    g.fillRect(8,8,w-16,2);g.fillRect(8,h-10,w-16,2);g.fillRect(8,8,2,h-16);g.fillRect(w-10,8,2,h-16);
+  });
+  const housingRim=new THREE.MeshPhongMaterial({map:rimTex,alphaTest:0.5,
+    specular:0x55534a,shininess:45});
+  // box face order: +x,-x,+y,-y,+z,-z — bottom (-y) carries the trim flange
+  const housingMats=[housingSide,housingSide,housingSide,housingRim,housingSide,housingSide];
   const tubeGeo=new THREE.CylinderGeometry(0.042,0.042,CELL*0.55,8);
   tubeGeo.rotateZ(Math.PI/2);                        // lie along x
-  const glowGeo=new THREE.PlaneGeometry(CELL*0.6,CELL*0.28);
-  const grateGeo=new THREE.PlaneGeometry(CELL*0.62,CELL*0.3);
+  /* backplate fills the housing opening edge-to-edge: the box's top face is
+     back-face culled from below, so any gap around the backplate would show
+     straight through to the ceiling plane — ceiling texture inside the
+     fixture. Full coverage seals the interior. */
+  const glowGeo=new THREE.PlaneGeometry(CELL*0.66,CELL*0.34);
+  /* the grate must line up with the rim flange's inner opening
+     (0.61875 × 0.2975 of CELL — the rim border is 8px of its 256×128
+     texture). Sized a hair larger so the grate's outer rails tuck just
+     under the rim: the first visible cell inside the rim is then always
+     a full one. A larger grate hides its rails deeper under the rim and
+     exposes a glowing sliver of part-cell instead. */
+  const grateGeo=new THREE.PlaneGeometry(CELL*0.625,CELL*0.305);
   const grateMat=new THREE.MeshBasicMaterial({map:grateTex,transparent:true});
   for(let y=1;y<H-1;y+=2)for(let x=1;x<W-1;x+=2){
     if(grid[y][x]===0 && Math.random()<0.85){
