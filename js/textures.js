@@ -147,6 +147,10 @@ export function makeMoldTextures(wid,hgt,dep){
     lobes.push({x, s:(0.45+Math.random()*0.55)*(1-Math.abs(x-cx0)*0.45)});
   }
   const dab=(g,x,y,r,boost=1)=>{
+    /* clamp sideways so no blob crosses the canvas border — a clipped blob
+       leaves a dead-straight cut along the decal edge. Top/bottom edges are
+       left alone: they meet the floor seam / fade out by design. */
+    x=Math.min(g.canvas.width-r,Math.max(r,x));
     const col=Math.random()<0.4? "26,46,22" : "10,14,9";
     const a=(0.26+Math.random()*0.38)*boost;
     const gr=g.createRadialGradient(x,y,0.3,x,y,r);
@@ -166,7 +170,8 @@ export function makeMoldTextures(wid,hgt,dep){
         const r=n.r*(0.55+Math.random()*0.4);
         if(r<1) continue;
         const a=-Math.PI/2+(Math.random()-0.5)*2.8;     // climbs, creeps sideways
-        nodes.push({x:n.x+Math.cos(a)*n.r*1.4, y:Math.min(h,n.y+Math.sin(a)*n.r*1.4), r});
+        nodes.push({x:Math.min(w-r,Math.max(r,n.x+Math.cos(a)*n.r*1.4)),
+                    y:Math.min(h,Math.max(r,n.y+Math.sin(a)*n.r*1.4)), r});
       }
       for(const n of nodes) dab(g,n.x,n.y,n.r, 0.55+0.45*(n.y/h));   // thins with height
       /* heavier rot right at the seam, only under this lobe — never a

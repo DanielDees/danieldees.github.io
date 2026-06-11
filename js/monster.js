@@ -7,8 +7,13 @@ import { ui, toast } from "./ui.js";
 import { die } from "./lifecycle.js";
 
 export function makeMonster(){
-  const skin=new THREE.MeshPhongMaterial({color:0x5d513a, specular:0x131008, shininess:10});
-  const dark=new THREE.MeshPhongMaterial({color:0x2c2418, specular:0x000000, shininess:1});
+  /* near-black body: a faint warm specular sheen (not diffuse colour) is
+     what defines its shape when fixture light rakes across it */
+  const skin=new THREE.MeshPhongMaterial({color:0x121110, specular:0x1c1712, shininess:16});
+  /* mouth & eyes: black with the faintest red ember — emissive so the hint
+     survives against the black body even in deep murk */
+  const dark=new THREE.MeshPhongMaterial({color:0x050101, emissive:0x100303,
+    specular:0x000000, shininess:1});
   const g=new THREE.Group();
   const torso=new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.3,1.5,8),skin);
   torso.position.y=1.9; torso.scale.z=0.7; g.add(torso);
@@ -18,6 +23,10 @@ export function makeMonster(){
   g.userData.head=head;
   const mouth=new THREE.Mesh(new THREE.SphereGeometry(0.09,8,8),dark);
   mouth.scale.set(0.8,1.6,0.5); mouth.position.set(0,2.86,0.17); g.add(mouth);
+  for(const ex of[-0.075,0.075]){
+    const eye=new THREE.Mesh(new THREE.SphereGeometry(0.032,8,8),dark);
+    eye.scale.set(1,1.3,0.6); eye.position.set(ex,3.07,0.16); g.add(eye);
+  }
   const armG=new THREE.CylinderGeometry(0.055,0.045,1.8,6);
   armG.translate(0,-0.9,0); // shoulder pivot (shared by both arms)
   const aL=new THREE.Mesh(armG,skin), aR=new THREE.Mesh(armG,skin);
