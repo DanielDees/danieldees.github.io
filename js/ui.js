@@ -83,22 +83,26 @@ export function openPause(){
   setPaused(true);
   if(document.pointerLockElement) document.exitPointerLock();
 }
-$("btnMenu").onclick=()=>openPause();
-$("btnHow2").onclick=()=>{ui.pause.classList.add("hide");ui.how.classList.remove("hide");};
-$("btnSound2").onclick=()=>toggleSound(true);
-$("btnSoundClose").onclick=()=>toggleSound(soundFromPause);
-$("btnResume").onclick=()=>{ui.how.classList.add("hide");setPaused(false);lockPointer();};
-$("btnUnpause").onclick=()=>{ui.pause.classList.add("hide");setPaused(false);lockPointer();};
-$("btnStart").onclick=()=>{
+/* fail-soft wiring: a missing button logs a warning instead of throwing —
+   one stale file in a partial deploy (html/js out of sync) used to crash
+   this whole module graph and brick the page */
+const wire=(id,fn)=>{const el=$(id); if(el) el.onclick=fn; else console.warn(`[ui] missing #${id}`);};
+wire("btnMenu",()=>openPause());
+wire("btnHow2",()=>{ui.pause.classList.add("hide");ui.how.classList.remove("hide");});
+wire("btnSound2",()=>toggleSound(true));
+wire("btnSoundClose",()=>toggleSound(soundFromPause));
+wire("btnResume",()=>{ui.how.classList.add("hide");setPaused(false);lockPointer();});
+wire("btnUnpause",()=>{ui.pause.classList.add("hide");setPaused(false);lockPointer();});
+wire("btnStart",()=>{
   audioInit();
   ui.start.classList.add("hide");
   startGame();
-};
-$("btnRespawn").onclick=()=>{
+});
+wire("btnRespawn",()=>{
   ui.death.classList.add("hide");
   respawn(); setPaused(false); lockPointer();
-};
-$("btnAgain").onclick=()=>location.reload();
+});
+wire("btnAgain",()=>location.reload());
 
 /* ---- settings persistence (volumes + mouse sensitivity) ---- */
 const SETTINGS_KEY="noclip_settings_v1";
