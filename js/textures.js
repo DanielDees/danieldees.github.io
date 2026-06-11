@@ -59,3 +59,153 @@ export const texCeil = makeCanvas(256,256,(g,w,h)=>{
   for(let i=0;i<1800;i++){g.fillStyle=`rgba(90,80,50,${Math.random()*0.1})`;
     g.fillRect(Math.random()*w,Math.random()*h,2,2);}
 });
+/* ceiling stains: a mixed population of irregular dried rings, soft filled
+   blotches, and dark mold clusters. Lives on its own overlay plane tiled at
+   a non-integer rate so a tile's stains never visibly repeat on the grid.
+   Shapes come from a wobbling closed loop (radius varies with angle by a
+   couple of sine harmonics) rather than perfect circles. */
+export const texCeilStains = makeCanvas(512,512,(g,w,h)=>{
+  g.clearRect(0,0,w,h);
+  /* stamp soft dabs along (or inside) one irregular loop */
+  const stampLoop=(x,y,r,sx,col,alpha,thick,fill)=>{
+    const p1=Math.random()*7,p2=Math.random()*7;
+    const h1=0.10+Math.random()*0.20, h2=0.06+Math.random()*0.16;
+    const rot=Math.random()*Math.PI;
+    for(let a=0;a<Math.PI*2;a+=0.09){
+      const rr=r*(1+h1*Math.sin(a*2+p1)+h2*Math.sin(a*3+p2))*(fill? Math.sqrt(Math.random()):1);
+      const ex=Math.cos(a)*rr*sx, ey=Math.sin(a)*rr;
+      const px=x+ex*Math.cos(rot)-ey*Math.sin(rot), py=y+ex*Math.sin(rot)+ey*Math.cos(rot);
+      const sr=thick*(0.7+Math.random()*0.6);
+      const gr=g.createRadialGradient(px,py,0.4,px,py,sr);
+      gr.addColorStop(0,`rgba(${col},${alpha*(0.7+Math.random()*0.5)})`);
+      gr.addColorStop(1,`rgba(${col},0)`);
+      g.fillStyle=gr;g.beginPath();g.arc(px,py,sr,0,7);g.fill();
+    }
+  };
+  for(let i=0;i<18;i++){
+    const r=16+Math.random()*64, sx=0.55+Math.random()*0.8;
+    const kind=Math.random();
+    /* keep every stamp fully inside the canvas: a stain crossing the wrap
+       seam reappears in-game as a hard cut line along a tile boundary */
+    const m=(kind<0.45? 34 : r*1.5)+4;
+    const x=m+Math.random()*(w-2*m), y=m+Math.random()*(h-2*m);
+    if(kind<0.45){            // dried water ring: dark crinkled rim, faint wash inside
+      /* rings run far smaller than the blotches (max −80%): big tide lines
+         read as massive on the ceiling, real ones stay under a metre */
+      const rr=5+Math.random()*11;
+      const a=0.13+Math.random()*0.14;
+      stampLoop(x,y,rr,sx,"94,68,28",a*1.5,rr*0.22+1,false);
+      stampLoop(x,y,rr*0.85,sx,"118,92,44",a*0.5,rr*0.3+1,true);
+      if(Math.random()<0.6)   // older inner tide line
+        stampLoop(x,y,rr*(0.4+Math.random()*0.25),sx,"94,68,28",a,rr*0.16+1,false);
+    } else if(kind<0.8){      // soft filled blotch — kept faint, it covers a lot of area
+      const a=0.045+Math.random()*0.06;
+      stampLoop(x,y,r*0.9,sx,"108,84,40",a,r*0.34,true);
+      stampLoop(x+r*0.25,y+r*0.15,r*0.5,sx,"88,66,28",a*0.9,r*0.22,true);
+    } else {                  // mold cluster: tight dark speckles, greenish-black
+      const n=24+Math.random()*26;
+      for(let j=0;j<n;j++){
+        const aa=Math.random()*Math.PI*2, rr=Math.pow(Math.random(),1.6)*r*0.8;
+        const px=x+Math.cos(aa)*rr*sx, py=y+Math.sin(aa)*rr;
+        const sr=1.2+Math.random()*3.4;
+        const col=Math.random()<0.4? "34,40,22":"26,24,14";
+        const gr=g.createRadialGradient(px,py,0.3,px,py,sr);
+        gr.addColorStop(0,`rgba(${col},${0.16+Math.random()*0.2})`);
+        gr.addColorStop(1,`rgba(${col},0)`);
+        g.fillStyle=gr;g.beginPath();g.arc(px,py,sr,0,7);g.fill();
+      }
+    }
+  }
+});
+
+/* slime-mold for the baseboards: blackish with hints of dark green. Each
+   call grows ONE unique colony and renders it onto a paired wall canvas and
+   floor canvas: the same lobes appear in both, so the growth visibly wraps
+   the wall/floor seam instead of reading as two unrelated decals.
+   Wall canvas: dense at the bottom edge (= wall base, flipY).
+   Floor canvas: dense at the top edge (= laid against the wall).
+   Canvas resolution tracks the decal's WORLD size (~72 px/m), so the colony
+   is grown at its final aspect ratio — stretching a fixed canvas onto an
+   arbitrary rectangle squashed the blobs into a photoshop-resize look. */
+export function makeMoldTextures(wid,hgt,dep){
+  const PPM=72;
+  const wW=Math.round(Math.min(256,Math.max(48,wid*PPM)));
+  const wH=Math.round(Math.min(128,Math.max(20,hgt*PPM)));
+  const fH=Math.round(Math.min(64, Math.max(12,dep*PPM)));
+  /* lobes: anchors along the seam, CHAINED outward from one colony centre
+     in small steps so neighbouring lobes always overlap — independent
+     scatter let big colonies split into separate-looking growths */
+  const cx0=0.3+Math.random()*0.4;
+  const lobes=[{x:cx0, s:0.75+Math.random()*0.25}];     // dominant central lobe
+  const nL=Math.max(3,Math.round(wid*2.2+Math.random()*2));
+  let xL=cx0, xR=cx0;
+  for(let i=1;i<nL;i++){
+    const step=0.06+Math.random()*0.10;
+    let x;
+    if(Math.random()<0.5){ xL=Math.max(0.08,xL-step); x=xL; }
+    else                 { xR=Math.min(0.92,xR+step); x=xR; }
+    lobes.push({x, s:(0.45+Math.random()*0.55)*(1-Math.abs(x-cx0)*0.45)});
+  }
+  const dab=(g,x,y,r,boost=1)=>{
+    const col=Math.random()<0.4? "26,46,22" : "10,14,9";
+    const a=(0.26+Math.random()*0.38)*boost;
+    const gr=g.createRadialGradient(x,y,0.3,x,y,r);
+    gr.addColorStop(0,`rgba(${col},${a})`);gr.addColorStop(1,`rgba(${col},0)`);
+    g.fillStyle=gr;g.beginPath();g.arc(x,y,r,0,7);g.fill();
+  };
+  const wall=makeCanvas(wW,wH,(g,w,h)=>{
+    g.clearRect(0,0,w,h);
+    for(const lo of lobes){
+      /* branching walk climbing up from the seam; a wide angle fan lets it
+         also creep sideways so neighboring lobes knit together */
+      const nodes=[{x:lo.x*w, y:h, r:h*(0.11+Math.random()*0.13)*lo.s+3}];
+      for(let i=0;i<60;i++){
+        /* parent choice biased to early (big, low) nodes: growth stays
+           bottom-heavy instead of spraying fine speckles up the wall */
+        const n=nodes[Math.floor(Math.pow(Math.random(),1.6)*nodes.length)];
+        const r=n.r*(0.55+Math.random()*0.4);
+        if(r<1) continue;
+        const a=-Math.PI/2+(Math.random()-0.5)*2.8;     // climbs, creeps sideways
+        nodes.push({x:n.x+Math.cos(a)*n.r*1.4, y:Math.min(h,n.y+Math.sin(a)*n.r*1.4), r});
+      }
+      for(const n of nodes) dab(g,n.x,n.y,n.r, 0.55+0.45*(n.y/h));   // thins with height
+      /* heavier rot right at the seam, only under this lobe — never a
+         uniform full-width band (that read as a hard slab edge) */
+      for(let i=0;i<8;i++)
+        dab(g, lo.x*w+(Math.random()-0.5)*w*0.16*lo.s, h-Math.random()*3, (2.5+Math.random()*4*lo.s)*h/64+1, 1.25);
+    }
+    /* connective crust: low dabs strung between the outermost lobes so the
+       colony stays one organism, thinning toward its edges */
+    const lx=lobes.map(l=>l.x), x0=Math.min(...lx), x1=Math.max(...lx);
+    const span=(x1-x0)*w;
+    for(let i=0,n=10+span/9;i<n;i++){
+      const t=Math.random(), x=(x0+(x1-x0)*t)*w;
+      const edge=1-Math.abs(t-0.5)*1.2;
+      dab(g, x+(Math.random()-0.5)*6, h-Math.random()*h*0.16*edge,
+          (1.5+Math.random()*3.5)*edge*h/40+1, 0.8*edge);
+    }
+  });
+  const floor=makeCanvas(wW,fH,(g,w,h)=>{
+    g.clearRect(0,0,w,h);
+    for(const lo of lobes){
+      /* the same lobe spilling outward: speckles crowd the wall edge and
+         thin out across the carpet */
+      const n=24+Math.random()*18;
+      for(let i=0;i<n;i++){
+        const y=Math.pow(Math.random(),2)*h*lo.s;
+        const x=lo.x*w+(Math.random()-0.5)*w*(0.10+0.14*lo.s)*(0.4+y/h);
+        dab(g, x, y, (1.2+Math.random()*4.2*lo.s)*(1.1-y/h*0.6), 1.15);
+      }
+      for(let i=0;i<6;i++)   // seam crust mirroring the wall side
+        dab(g, lo.x*w+(Math.random()-0.5)*w*0.14*lo.s, Math.random()*2.5, 2+Math.random()*3.5*lo.s, 1.2);
+    }
+  });
+  /* decals never tile and their canvases aren't power-of-two: clamp +
+     mipmap-free filtering keeps WebGL1 from resizing (and blurring) them */
+  for(const t of [wall,floor]){
+    t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping;
+    t.minFilter=THREE.LinearFilter;
+    t.generateMipmaps=false;
+  }
+  return {wall,floor};
+}

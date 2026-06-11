@@ -10,7 +10,7 @@ export const ui={
   hud:$("hud"), objList:$("objList"), stats:$("stats"),
   stamWrap:$("staminaWrap"), stam:$("stamina"), stamPct:$("stamPct"),
   prompt:$("prompt"), hidden:$("hiddenTag"), toast:$("toast"),
-  dread:$("dread"), flash:$("flash"),
+  dread:$("dread"), flash:$("flash"), staticfx:$("staticfx"),
   start:$("startOverlay"), how:$("howOverlay"), pause:$("pauseOverlay"),
   sound:$("soundOverlay"), death:$("deathOverlay"), win:$("winOverlay"),
 };
@@ -75,9 +75,16 @@ export function toggleSound(fromPause=false){
     else { setPaused(false); lockPointer(); }
   }
 }
-$("btnHow").onclick=()=>toggleHow();
+/* the single MENU [ESC] HUD button opens the pause sheet, which already
+   links out to HOW TO PLAY and SOUND */
+export function openPause(){
+  ui.how.classList.add("hide"); ui.sound.classList.add("hide");
+  ui.pause.classList.remove("hide");
+  setPaused(true);
+  if(document.pointerLockElement) document.exitPointerLock();
+}
+$("btnMenu").onclick=()=>openPause();
 $("btnHow2").onclick=()=>{ui.pause.classList.add("hide");ui.how.classList.remove("hide");};
-$("btnSound").onclick=()=>toggleSound(false);
 $("btnSound2").onclick=()=>toggleSound(true);
 $("btnSoundClose").onclick=()=>toggleSound(soundFromPause);
 $("btnResume").onclick=()=>{ui.how.classList.add("hide");setPaused(false);lockPointer();};

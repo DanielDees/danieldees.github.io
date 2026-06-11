@@ -1,12 +1,17 @@
 /* ---------------- three.js scene & level geometry ---------------- */
-import { rand } from "./utils.js";
+import { rand, clamp } from "./utils.js";
 import { W, H, CELL, WALL_H, grid, genMap, cellToWorld, isWall } from "./map.js";
-import { makeCanvas, texWall, texCarpet, texStains, texCeil } from "./textures.js";
+import { makeCanvas, texWall, texCarpet, texStains, texCeil, texCeilStains,
+         makeMoldTextures } from "./textures.js";
 import { $ } from "./utils.js";
 
-export const FOG_COLOR = 0x26241b;       // blackish-grey murk with a trace of yellow
+export const FOG_COLOR = 0x050402;       // ~98% black, a whisper of yellow: full darkness, never backlit
 export const scene = new THREE.Scene();
-scene.fog = new THREE.FogExp2(FOG_COLOR, 0.048);
+/* linear fog: explicit start/end so the transition band is tunable.
+   Start 5.4m (two 10% pulls from the original ≈6.7m exp2 onset), end 55m
+   (two 20% stretches) — a long readable band where a silhouette survives
+   deep into the murk before it's swallowed. */
+scene.fog = new THREE.Fog(FOG_COLOR, 5.4, 55);
 scene.background = new THREE.Color(FOG_COLOR);
 export const camera = new THREE.PerspectiveCamera(72, innerWidth/innerHeight, 0.1, 200);
 export const renderer = new THREE.WebGLRenderer({antialias:true});
@@ -16,10 +21,12 @@ $("game").appendChild(renderer.domElement);
 addEventListener("resize",()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
   renderer.setSize(innerWidth,innerHeight);});
 
-/* modest base light — the fixture pool below does the real work */
-export const hemi = new THREE.HemisphereLight(0xffe9b0, 0x2c2414, 0.42);
+/* modest base light — the fixture pool below does the real work.
+   Kept LOW: this pair is the brightness floor for corridors far from any
+   fixture, and those should sit in real murk (another −40% from v1.2). */
+export const hemi = new THREE.HemisphereLight(0xffe9b0, 0x2c2414, 0.08);
 scene.add(hemi);
-const amb = new THREE.AmbientLight(0x6b5d35, 0.25);
+const amb = new THREE.AmbientLight(0x6b5d35, 0.05);
 scene.add(amb);
 export const playerLight = new THREE.PointLight(0xffeeb0, 0.12, 9, 1.8); // faint readability fill
 scene.add(playerLight);
@@ -60,7 +67,9 @@ export function buildLevel(){
     }
   }
   const SZ=W*CELL;
-  texCarpet.repeat.set(W/2,H/2); texCeil.repeat.set(W*2,H*2);
+  /* ceiling tiles at W,H (not W*2,H*2): doubles the grid squares to 1m —
+     exactly two wall-paper stripes wide, the classic drop-tile size */
+  texCarpet.repeat.set(W/2,H/2); texCeil.repeat.set(W,H);
   const floor=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),
     new THREE.MeshPhongMaterial({map:texCarpet, specular:0x000000, shininess:1}));
   floor.rotation.x=-Math.PI/2; scene.add(floor);
@@ -73,6 +82,48 @@ export function buildLevel(){
   const ceil=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),
     new THREE.MeshPhongMaterial({map:texCeil, specular:0x050503, shininess:2}));
   ceil.rotation.x=Math.PI/2; ceil.position.y=WALL_H; scene.add(ceil);
+  /* rare water stains: overlay tiled at a non-integer rate (same trick as
+     the carpet stains) so they never line up with the tile grid */
+  texCeilStains.repeat.set(4.07,3.77);
+  const ceilStains=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),
+    new THREE.MeshPhongMaterial({map:texCeilStains, transparent:true, depthWrite:false,
+      specular:0x000000, shininess:1}));
+  ceilStains.rotation.x=Math.PI/2; ceilStains.position.y=WALL_H-0.012; scene.add(ceilStains);
+
+  /* ---- slime-mold at the baseboards: decals on random wall faces, each a
+     UNIQUE procedurally grown colony rendered onto a paired wall+floor
+     texture so the growth wraps the seam. Width 20–80% of a wall section
+     (averaging ~50%); height FOLLOWS width at a 3.3–5.5:1 ratio (clamped to
+     4–18% of the wall) so colonies read low and wide, never square. */
+  const moldMat=t=>new THREE.MeshPhongMaterial({map:t,
+    transparent:true, depthWrite:false, specular:0x000000, shininess:1});
+  for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
+    if(grid[y][x]!==0) continue;
+    for(const[dx,dz]of[[1,0],[-1,0],[0,1],[0,-1]]){
+      if(!isWall(x+dx,y+dz)||Math.random()>=0.30) continue;
+      const p=cellToWorld(x,y);
+      const wid=CELL*rand(0.20,0.80);
+      const hgt=clamp(wid*rand(0.18,0.30), WALL_H*0.04, WALL_H*0.18);
+      const dep=WALL_H*rand(0.025,0.06);
+      const tex=makeMoldTextures(wid,hgt,dep);
+      const off=rand(-1,1)*(CELL/2-wid/2-0.15);
+      const inset=CELL/2-0.02;
+      const wallM=new THREE.Mesh(new THREE.PlaneGeometry(wid,hgt), moldMat(tex.wall));
+      if(dx){ wallM.position.set(p.x+dx*inset, hgt/2, p.z+off); wallM.rotation.y=dx>0? -Math.PI/2: Math.PI/2; }
+      else  { wallM.position.set(p.x+off, hgt/2, p.z+dz*inset); wallM.rotation.y=dz>0? Math.PI: 0; }
+      scene.add(wallM);
+      /* the same colony's spill, flush against the wall base */
+      const f=new THREE.Mesh(new THREE.PlaneGeometry(wid,dep), moldMat(tex.floor));
+      /* Euler XYZ applies Z first: spin the decal so its dense edge meets
+         the wall, then X lays it flat on the carpet */
+      f.rotation.x=-Math.PI/2;
+      f.rotation.z = dx>0? -Math.PI/2 : dx<0? Math.PI/2 : dz>0? Math.PI : 0;
+      const fInset=CELL/2-dep/2-0.025;
+      if(dx) f.position.set(p.x+dx*fInset, 0.022, p.z+off);
+      else   f.position.set(p.x+off, 0.022, p.z+dz*fInset);
+      scene.add(f);
+    }
+  }
 
   /* fluorescent fixtures: a shallow housing with an OPEN bottom face —
      tubes and diffuse backplate sit recessed inside it, and the grille is
@@ -174,9 +225,14 @@ export function buildLevel(){
       grate.rotation.x=Math.PI/2; grate.position.y=WALL_H-HOUSE_D+0.004; fix.add(grate); // flush with the rim
       fix.position.set(p.x,0,p.z);
       scene.add(fix);
+      /* healthy panels idle at 85–100% of max; dimY (0 at full, 1 at the
+         floor) faintly yellows the dimmer ones — same idea as the dying
+         tubes' orange gradient, far subtler */
+      const bright=warm? 1 : rand(0.85,1);
       lights.push({glowMat:glowMat, tubeMat:tubeMat, cx:x, cy:y, world:p,
         flickery:Math.random()<0.22,
-        warm:warm, warmth:warm?1:0, phase:Math.random()*100, on:1,
+        warm:warm, warmth:warm?1:0, bright:bright, dimY:warm?0:(1-bright)/0.15,
+        phase:Math.random()*100, on:1,
         mode:"steady", timer:rand(1,12), pattern:0, rate:20,
         burstDur:0, burstT:0, descT:2, riseT:0.5, seed:Math.random()*1000, lastTick:0});
     }

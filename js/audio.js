@@ -6,8 +6,8 @@ export const AU = {
   ctx:null, started:false,
   master:null, music:null, sfx:null,
   vol:{master:0.90, music:0.75, sound:0.90},
-  humVoices:null, proxGain:null, proxOsc:null,
-  breathGain:null,
+  humVoices:null, proxGain:null, proxOsc:null, proxPan:null,
+  breathGain:null, breathPan:null,
   heartTimer:0, stepTimer:0,
 };
 export function applyVolumes(){
@@ -59,12 +59,14 @@ export function audioInit(){
   const lfoG=C.createGain(); lfoG.gain.value=160;
   lfo.connect(lfoG); lfoG.connect(lp.frequency); lfo.start();
 
-  /* entity proximity bed (SOUND bus) */
+  /* entity proximity bed (SOUND bus) — panned toward the entity each frame */
   const pg=AU.proxGain=C.createGain(); pg.gain.value=0;
   const po=AU.proxOsc=C.createOscillator(); po.type="sawtooth"; po.frequency.value=46;
   const po2=C.createOscillator(); po2.type="square"; po2.frequency.value=49.3;
   const pf=C.createBiquadFilter(); pf.type="lowpass"; pf.frequency.value=240;
-  po.connect(pf); po2.connect(pf); pf.connect(pg); pg.connect(AU.sfx);
+  po.connect(pf); po2.connect(pf); pf.connect(pg);
+  const pp=AU.proxPan=C.createStereoPanner?C.createStereoPanner():null;
+  if(pp){ pg.connect(pp); pp.connect(AU.sfx); } else pg.connect(AU.sfx);
   po.start(); po2.start();
 
   /* entity breathing loop (SOUND bus): looped noise, slow LFO amplitude */
@@ -79,7 +81,9 @@ export function audioInit(){
     const blfoG=C.createGain(); blfoG.gain.value=0.45;
     blfo.connect(blfoG); blfoG.connect(breathe.gain); blfo.start();
     const bg=AU.breathGain=C.createGain(); bg.gain.value=0;
-    src.connect(bp); bp.connect(breathe); breathe.connect(bg); bg.connect(AU.sfx);
+    src.connect(bp); bp.connect(breathe); breathe.connect(bg);
+    const bpan=AU.breathPan=C.createStereoPanner?C.createStereoPanner():null;
+    if(bpan){ bg.connect(bpan); bpan.connect(AU.sfx); } else bg.connect(AU.sfx);
     src.start();
   }
 
@@ -223,15 +227,18 @@ export function sfxPowerOn(){
   const f=C.createBiquadFilter();f.type="lowpass";f.frequency.value=800;
   o.connect(f);f.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+2);
 }
-export function sfxAlert(){ // the entity notices you: short guttural rising cry
+export function sfxAlert(pan=0){ // the entity notices you: short guttural rising cry
   if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  const p=C.createStereoPanner?C.createStereoPanner():null;
+  const out=C.createGain(); out.gain.value=1;
+  if(p){p.pan.value=pan*0.8; out.connect(p); p.connect(AU.sfx);} else out.connect(AU.sfx);
   [[70,180,"sawtooth",0.22],[105,290,"square",0.10]].forEach(([f0,f1,type,v])=>{
     const o=C.createOscillator();o.type=type;
     o.frequency.setValueAtTime(f0,t);
     o.frequency.exponentialRampToValueAtTime(f1,t+0.55);
     const bp=C.createBiquadFilter();bp.type="bandpass";bp.frequency.value=300;bp.Q.value=2.5;
     const g=C.createGain();env(g,t,0.05,v,0.75);
-    o.connect(bp);bp.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+1);
+    o.connect(bp);bp.connect(g);g.connect(out);o.start(t);o.stop(t+1);
   });
   noiseBurst(0.4,1200,0.08,"highpass");
 }
@@ -246,7 +253,7 @@ export function sfxStinger(){ // the chase begins
   }
   noiseBurst(0.6,2400,0.18,"highpass");
 }
-export function sfxGroan(vol){ // distant wandering vocalization
+export function sfxGroan(vol,pan=0){ // distant wandering vocalization, panned to its source
   if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
   const o=C.createOscillator();o.type="sawtooth";
   o.frequency.setValueAtTime(rand(64,86),t);
@@ -254,7 +261,9 @@ export function sfxGroan(vol){ // distant wandering vocalization
   const o2=C.createOscillator();o2.type="triangle";o2.frequency.value=rand(96,130);
   const bp=C.createBiquadFilter();bp.type="bandpass";bp.frequency.value=210;bp.Q.value=3.5;
   const g=C.createGain();env(g,t,0.18,vol,1.6);
-  o.connect(bp);o2.connect(bp);bp.connect(g);g.connect(AU.sfx);
+  const p=C.createStereoPanner?C.createStereoPanner():null;
+  o.connect(bp);o2.connect(bp);bp.connect(g);
+  if(p){p.pan.value=pan; g.connect(p); p.connect(AU.sfx);} else g.connect(AU.sfx);
   o.start(t);o.stop(t+2);o2.start(t);o2.stop(t+2);
 }
 export function sfxDeath(){
@@ -282,9 +291,13 @@ export function sfxDoor(){
   const g=C.createGain();env(g,t,0.05,0.07,1.0);o.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+1.2);
 }
 export function panTo(x,z){
-  /* stereo pan (-1..1) of a world point relative to where the player is facing */
+  /* stereo pan (-1..1) of a world point relative to where the player is facing.
+     A sub-linear power curve widens oblique angles: raw sin clusters
+     anything not hard-left/right near the centre, which made sources
+     hard to localize. */
   const rel=((Math.atan2(x-STATE.pos.x,z-STATE.pos.z)-(STATE.yaw+Math.PI))%(Math.PI*2)+Math.PI*3)%(Math.PI*2)-Math.PI;
-  return clamp(-Math.sin(rel),-1,1)*0.9;
+  const s=Math.sin(rel);
+  return clamp(-Math.sign(s)*Math.pow(Math.abs(s),0.62),-1,1)*0.95;
 }
 export function sfxFlickTick(vol,pan){
   /* fluorescent ballast tick: tiny band-passed static snap, panned to the fixture */

@@ -1,7 +1,7 @@
 /* ---------------- the entity ---------------- */
 import { clamp, lerp, angLerp, rand } from "./utils.js";
 import { STATE, monster } from "./state.js";
-import { W, H, cellToWorld, worldToCell, isWall, losCells, bfsPath, randomOpenCell, farOpenWorldPoint } from "./map.js";
+import { W, H, CELL, cellToWorld, worldToCell, isWall, losCells, bfsPath, randomOpenCell, farOpenWorldPoint } from "./map.js";
 import { AU, panTo, sfxAlert, sfxStinger, sfxGroan, sfxHeartbeat, sfxKnock } from "./audio.js";
 import { ui, toast } from "./ui.js";
 import { die } from "./lifecycle.js";
@@ -58,18 +58,61 @@ function monsterHears(){
   if(!STATE.crouch) return d<8;
   return false;
 }
+/* clearance test for path straightening: samples the line at 1m steps with
+   a body-width shoulder either side, so a shortcut never clips a corner */
+function corridorClear(ax,az,bx,bz){
+  const dx=bx-ax, dz=bz-az, len=Math.hypot(dx,dz);
+  if(len<0.001) return true;
+  const ox=-dz/len*0.5, oz=dx/len*0.5;
+  const steps=Math.ceil(len);
+  for(let i=1;i<=steps;i++){
+    const t=i/steps, x=lerp(ax,bx,t), z=lerp(az,bz,t);
+    for(const[sx,sz]of[[0,0],[ox,oz],[-ox,-oz]]){
+      const c=worldToCell(x+sx,z+sz);
+      if(isWall(c.cx,c.cy)) return false;
+    }
+  }
+  return true;
+}
+/* BFS is 4-connected, so raw paths stair-step diagonally cell by cell.
+   Pull the string taut: greedily keep only the farthest waypoint reachable
+   in a straight walk from the previous kept one. */
+function smoothPath(path){
+  if(path.length<3) return path;
+  const out=[];
+  let cx=monster.pos.x, cz=monster.pos.z, i=0;
+  while(i<path.length){
+    let j=path.length-1;
+    while(j>i && !corridorClear(cx,cz,path[j].x,path[j].z)) j--;
+    out.push(path[j]); cx=path[j].x; cz=path[j].z; i=j+1;
+  }
+  return out;
+}
 function setPathTo(wx,wz){
   const a=worldToCell(monster.pos.x,monster.pos.z), b=worldToCell(wx,wz);
   const p=bfsPath(a.cx,a.cy,clamp(b.cx,0,W-1),clamp(b.cy,0,H-1));
   monster.path = p? p.map(c=>cellToWorld(c.cx,c.cy)) : [];
   if(monster.path.length>1) monster.path.shift();
+  monster.path=smoothPath(monster.path);
+}
+/* marginal awareness: pick a wander destination in the player's general
+   direction — a cone around the bearing to them, not their position */
+function openCellToward(from,to){
+  const base=Math.atan2(to.x-from.x,to.z-from.z);
+  for(let t=0;t<24;t++){
+    const a=base+rand(-0.8,0.8), r=rand(10,28);
+    const c=worldToCell(from.x+Math.sin(a)*r, from.z+Math.cos(a)*r);
+    if(!isWall(c.cx,c.cy)) return c;
+  }
+  return randomOpenCell(0);
 }
 function startAlert(){
   monster.state="alert";
   monster.alertT=rand(0.55,0.9);
   monster.path=[];
-  sfxAlert();
+  sfxAlert(panTo(monster.pos.x,monster.pos.z));
 }
+const hash=n=>{const s=Math.sin(n)*43758.5453;return s-Math.floor(s);};
 const SPEED_TARGETS={wander:2.0, investigate:3.4, alert:0, chase:6.4, hunt:3.4};
 export function updateMonster(dt){
   if(!monster.active||STATE.dead||STATE.won) return;
@@ -123,12 +166,18 @@ export function updateMonster(dt){
     if(m.repath<=0&&m.lastSeen){ setPathTo(m.lastSeen.x,m.lastSeen.z); m.repath=0.8; }
   } else if(m.state==="wander"){
     if(m.pauseT>0){ m.pauseT-=dt; }                 // it sometimes just… stands there
-    else if(m.path.length===0&&m.repath<=0){
+    else if(m.path.length===0&&m.repath<=0&&!m.knockMove){
       const cc=worldToCell(m.pos.x,m.pos.z);
       const byWall=isWall(cc.cx+1,cc.cy)||isWall(cc.cx-1,cc.cy)||isWall(cc.cx,cc.cy+1)||isWall(cc.cx,cc.cy-1);
       if(Math.random()<(byWall?0.6:0.4)){ m.pauseT=rand(2,5.5); m.repath=0.2; }
       else {
-        const c=randomOpenCell(0), p=cellToWorld(c.cx,c.cy);
+        /* marginal awareness: it drifts toward the player's side of the map
+           more often than chance — strongly so from very far away. It never
+           paths AT the player, just into their general direction. */
+        const farAway = d > W*CELL*0.65;
+        const c = Math.random()<(farAway? 0.65 : 0.28)
+          ? openCellToward(m.pos,STATE.pos) : randomOpenCell(0);
+        const p=cellToWorld(c.cx,c.cy);
         setPathTo(p.x,p.z); m.repath=1.5;
       }
     }
@@ -136,8 +185,20 @@ export function updateMonster(dt){
 
   /* ---- movement (real displacement drives the animation) ---- */
   const prevX=m.pos.x, prevZ=m.pos.z;
-  if(m.curSpeed>0.05){
+  if(m.knockMove && !m.path.length){
+    /* sidle up to the wall it intends to rap on (animated like any walk).
+       Checked before curSpeed: in wander the speed target never drops, so
+       a paused entity still carries a nonzero curSpeed. */
+    const kx=m.knockMove.x-m.pos.x, kz=m.knockMove.z-m.pos.z, kl=Math.hypot(kx,kz);
+    if(kl>0.15){
+      const step=Math.min(1.1*dt,kl);
+      m.pos.x+=kx/kl*step; m.pos.z+=kz/kl*step; m.faceAng=Math.atan2(kx,kz);
+    }
+  } else if(m.curSpeed>0.05){
     if(m.path.length){
+      /* live straightening: hop to the next waypoint as soon as the walk
+         there is clear — repaths mid-chase otherwise re-introduce zig-zag */
+      if(m.path.length>1 && corridorClear(m.pos.x,m.pos.z,m.path[1].x,m.path[1].z)) m.path.shift();
       const wp=m.path[0], wx=wp.x-m.pos.x, wz=wp.z-m.pos.z, wl=Math.hypot(wx,wz);
       if(wl<0.5) m.path.shift();
       else { m.pos.x+=wx/wl*m.curSpeed*dt; m.pos.z+=wz/wl*m.curSpeed*dt; m.faceAng=Math.atan2(wx,wz); }
@@ -159,28 +220,58 @@ export function updateMonster(dt){
   const breath=1+Math.sin(tNow*1.1)*0.025*(1-sp01); // idle breathing only when still
   u.torso.scale.set(1,breath,0.7);
   u.head.rotation.z = 0.16 + Math.sin(tNow*0.6)*0.07*(1-sp01) + Math.sin(m.anim*0.5)*0.08*sp01;
+  /* head twitch: snappy stepped jolts of the head — occasional bursts when
+     it's alone, near-constant while it's coming for you */
+  const agitated = m.state==="chase"||m.state==="alert";
+  if(m.twitchDur>0){
+    m.twitchDur-=dt;
+    const j=Math.floor(tNow*16)+m.twitchSeed;
+    u.head.rotation.y = (hash(j)-0.5)*1.0;
+    u.head.rotation.x = (hash(j*2.3+71)-0.5)*0.35;
+    u.head.rotation.z += (hash(j*1.7+13)-0.5)*0.6;
+    if(m.twitchDur<=0) m.twitchT = agitated? rand(0.12,0.55) : rand(3.5,9);
+  } else {
+    const settle=Math.pow(0.001,dt);          // snap back to rest fast
+    u.head.rotation.y*=settle; u.head.rotation.x*=settle;
+    m.twitchT-=dt;
+    if(m.twitchT<=0){
+      m.twitchDur = agitated? rand(0.5,1.3) : rand(0.25,0.7);
+      m.twitchSeed = Math.floor(Math.random()*1e4);
+    }
+  }
   m.mesh.position.set(m.pos.x, Math.abs(Math.sin(m.anim))*0.06*sp01, m.pos.z);
   const turnRate = m.state==="alert"? 0.16 : 0.1;   // deliberate, unsettling turn
   m.mesh.rotation.y = angLerp(m.mesh.rotation.y, m.faceAng, 1-Math.pow(1-turnRate,dt*60));
 
   if(d<1.25) die();
 
-  /* ---- wall knocking: when it lingers, it raps on the nearest wall ---- */
-  const stationary = movedSpeed<0.25 && (m.state==="wander"||m.state==="hunt");
-  if(stationary){
+  /* ---- wall knocking: when it lingers, it walks up close to the nearest
+     wall and raps on it ---- */
+  const calm = m.state==="wander"||m.state==="hunt";
+  if(!calm) m.knockMove=null;
+  if(m.knockMove){
+    if(Math.hypot(m.knockMove.x-m.pos.x,m.knockMove.z-m.pos.z)<=0.15){
+      m.faceAng=m.knockMove.face;
+      /* near-global volume: gentle falloff keeps a sense of distance &
+         direction without ever making the knocks easy to miss */
+      const vol=0.6*(0.45+0.55*clamp(1-d/80,0,1));
+      sfxKnock(vol, 2+Math.floor(Math.random()*3), panTo(m.pos.x,m.pos.z));
+      m.knockMove=null;
+      m.knockT=rand(2.2,5.2);
+    }
+  } else if(calm && movedSpeed<0.25){
     m.knockT-=dt;
     if(m.knockT<=0){
-      m.knockT=rand(2.5,6);
+      m.knockT=rand(2.2,5.2);
       const c=worldToCell(m.pos.x,m.pos.z);
       let wallDir=null;
       for(const[wx,wy]of[[1,0],[-1,0],[0,1],[0,-1]])
         if(isWall(c.cx+wx,c.cy+wy)){wallDir=[wx,wy];break;}
       if(wallDir){
-        m.faceAng=Math.atan2(wallDir[0],wallDir[1]);     // turns to the wall first
-        /* near-global volume: gentle falloff keeps a sense of distance &
-           direction without ever making the knocks easy to miss */
-        const vol=0.5*(0.45+0.55*clamp(1-d/80,0,1));
-        sfxKnock(vol, 2+Math.floor(Math.random()*3), panTo(m.pos.x,m.pos.z));
+        /* step in close to the wall face before rapping on it */
+        const cw=cellToWorld(c.cx,c.cy);
+        m.knockMove={x:cw.x+wallDir[0]*(CELL/2-0.55), z:cw.z+wallDir[1]*(CELL/2-0.55),
+                     face:Math.atan2(wallDir[0],wallDir[1])};
       }
     }
   } else m.knockT=Math.max(m.knockT,1.4);   // brief settle time after it stops
@@ -189,18 +280,27 @@ export function updateMonster(dt){
   const prox = clamp(1 - d/22, 0, 1);
   if(AU.ctx){
     const t=AU.ctx.currentTime;
-    const bedGain = (m.state==="chase"||m.state==="alert")? prox*0.30 : prox*0.14;
+    /* calm-state levels +20% (0.14→0.17, 0.20→0.24); chase levels untouched */
+    const bedGain = (m.state==="chase"||m.state==="alert")? prox*0.30 : prox*0.17;
     AU.proxGain.gain.setTargetAtTime(bedGain, t, 0.25);
     AU.proxOsc.frequency.setTargetAtTime(46+prox*30, t, 0.4);
-    const breathTarget = (m.state==="chase")? clamp(1-d/28,0,1)*0.45 : clamp(1-d/18,0,1)*0.20;
+    const breathTarget = (m.state==="chase")? clamp(1-d/28,0,1)*0.45 : clamp(1-d/18,0,1)*0.24;
     AU.breathGain.gain.setTargetAtTime(breathTarget, t, 0.35);
+    /* keep its constant sounds glued to its true direction */
+    const entPan=panTo(m.pos.x,m.pos.z);
+    if(AU.breathPan) AU.breathPan.pan.setTargetAtTime(entPan, t, 0.15);
+    if(AU.proxPan)   AU.proxPan.pan.setTargetAtTime(entPan*0.7, t, 0.2);
   }
   m.groanT-=dt;
   if(m.groanT<=0){
-    m.groanT=rand(7,15);
-    if(d<48) sfxGroan(clamp(1-d/48,0.04,1)*(m.state==="chase"?0.45:0.25));
+    m.groanT=rand(5.5,12);
+    if(d<48) sfxGroan(clamp(1-d/48,0.04,1)*(m.state==="chase"?0.45:0.30),
+                      panTo(m.pos.x,m.pos.z));
   }
   ui.dread.style.opacity = m.state==="chase"? (0.35+prox*0.6) : prox*0.55;
+  /* analogue static climbs as it closes in — strongest when it could touch you */
+  ui.staticfx.style.opacity = prox<=0? 0
+    : Math.pow(prox,1.6)*0.5 + (d<2.6? (1-d/2.6)*0.32 : 0);
   AU.heartTimer-=dt;
   if(prox>0.25 && AU.heartTimer<=0){ sfxHeartbeat(); AU.heartTimer = lerp(1.4,0.45,prox); }
 }

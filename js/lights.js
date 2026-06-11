@@ -49,10 +49,10 @@ export function updateLights(dt,t){
     let near=0;
     if(monster.active){
       const dm=Math.hypot(L.world.x-monster.pos.x,L.world.z-monster.pos.z);
-      near=clamp(1-dm/16,0,1);   // +15% reach over the original 14
+      near=clamp(1-dm/20,0,1);   // disruption AOE +25% (16 → 20)
     }
     L.timer-=dt;
-    if(near>0.2) L.timer-=dt*near*7;       // its approach collapses calm periods already in progress
+    if(near>0.2) L.timer-=dt*near*7.7;     // its approach collapses calm periods already in progress
     if(L.mode==="steady"){
       if(L.timer<=0){
         const canBurst = L.flickery || L.warm || near>0.2;   // healthy panels only misbehave near the entity
@@ -63,14 +63,14 @@ export function updateLights(dt,t){
           if(L.warm){
             // dying cycle: ~2s hilly descent, a strobe at the bottom, ~0.5s flickering climb back
             L.descT=rand(1.7,2.3); L.riseT=rand(0.4,0.6);
-            L.burstDur=L.burstT=L.descT+rand(0.7,1.6)*(1+near*0.8)+L.riseT;
+            L.burstDur=L.burstT=L.descT+rand(0.7,1.6)*(1+near*0.88)+L.riseT;
           } else {
             // everyone bursts longer near the entity
-            L.burstDur=L.burstT=rand(0.25,1.4)*(1+near*0.8);
+            L.burstDur=L.burstT=rand(0.25,1.4)*(1+near*0.88);
           }
         }
         // long natural calms; the entity's presence shreds them
-        L.timer = (L.warm? rand(6,12) : L.flickery? rand(4,14) : rand(7,20)) * clamp(1-near*0.9, 0.06, 1);
+        L.timer = (L.warm? rand(6,12) : L.flickery? rand(4,14) : rand(7,20)) * clamp(1-near*0.99, 0.05, 1);
       }
     } else {
       L.burstT-=dt;
@@ -80,23 +80,29 @@ export function updateLights(dt,t){
     /* warmth 0→1 drags the tube color toward end-of-life orange. Dying
        fixtures sit at 1 permanently; healthy ones get pushed there by the
        entity's proximity — an extra tell on top of the flickering */
-    const warmth = L.warm? 1 : clamp(near*1.4,0,1);
+    const warmth = L.warm? 1 : clamp(near*1.55,0,1);
     if(Math.abs(v-L.on)>0.04 || Math.abs(warmth-L.warmth)>0.02){
       /* ballast tick fires WITH the visible transition, from the fixture's
          direction, fading with distance — classic fluorescent static */
-      if(Math.abs(v-L.on)>0.35 && dl<30 && t-L.lastTick>0.09 && Math.random()<0.75){
+      if(Math.abs(v-L.on)>0.35 && dl<27 && t-L.lastTick>0.09 && Math.random()<0.75){
         L.lastTick=t;
-        const fall=Math.pow(clamp(1-dl/30,0,1),1.4);
+        const fall=Math.pow(clamp(1-dl/27,0,1),1.4);
         sfxFlickTick(0.075*fall, panTo(L.world.x,L.world.z));
       }
       L.on=v; L.warmth=warmth;
       /* backplate is spill: dimmer than the tubes it reflects, but on healthy
          fixtures a bright near-white wash (less saturated hue than the tubes)
-         so the interior reads painted white steel, not grey */
+         so the interior reads painted white steel, not grey.
+         dimY drags the white point of a below-max panel faintly yellow. */
       const bp = L.warm? 0.30 : 0.72;
-      L.glowMat.color.setRGB(v*bp, lerp(0.97,0.60,warmth)*v*bp, lerp(0.88,0.26,warmth)*v*bp);
+      const vb = v*L.bright;
+      L.glowMat.color.setRGB(vb*bp,
+        lerp(lerp(0.97,0.90,L.dimY),0.60,warmth)*vb*bp,
+        lerp(lerp(0.88,0.62,L.dimY),0.26,warmth)*vb*bp);
       if(L.warm) L.tubeMat.color.setRGB(v,v,v);   // gradient map supplies the hue
-      else L.tubeMat.color.setRGB(v, lerp(0.965,0.60,warmth)*v, lerp(0.81,0.26,warmth)*v);
+      else L.tubeMat.color.setRGB(vb,
+        lerp(lerp(0.965,0.89,L.dimY),0.60,warmth)*vb,
+        lerp(lerp(0.81,0.56,L.dimY),0.26,warmth)*vb);
     }
   }
 
@@ -123,7 +129,7 @@ export function updateLights(dt,t){
     const dist=Math.sqrt(d2);
     let fade=clamp((LIGHT_BIND_RADIUS-dist)/band,0,1);
     fade=fade*fade*(3-2*fade); // smoothstep
-    const I=base*L.on*fade*(L.warm? 0.5:1);   // dying tubes cast half the light
+    const I=base*L.on*fade*(L.warm? 0.5:L.bright);   // dying tubes cast half the light
     if(dist<TUBE_SPLIT_D && jobs.length+2<=lightPool.length){
       jobs.push({x:L.world.x, z:L.world.z-0.32, I:I*0.55, L:L});
       jobs.push({x:L.world.x, z:L.world.z+0.32, I:I*0.55, L:L});
@@ -135,7 +141,9 @@ export function updateLights(dt,t){
       const j=jobs[i];
       pl.position.x=j.x; pl.position.z=j.z;
       pl.intensity=j.I;
-      pl.color.setRGB(1, lerp(0.933,0.55,j.L.warmth), lerp(0.753,0.20,j.L.warmth));
+      pl.color.setRGB(1,
+        lerp(lerp(0.933,0.875,j.L.dimY),0.55,j.L.warmth),
+        lerp(lerp(0.753,0.55,j.L.dimY),0.20,j.L.warmth));
     } else pl.intensity=0;
   }
 
@@ -148,11 +156,13 @@ export function updateLights(dt,t){
       const hv=AU.humVoices[i];
       if(i<cand.length){
         const L=cand[i][1], dist=Math.sqrt(cand[i][0]);
-        const att=Math.pow(clamp(1-dist/16,0,1),1.6);
+        /* falloff radius trimmed 10% (16 → 14.4): the steeper roll-off makes
+           walking past a fixture read more clearly as approach/retreat */
+        const att=Math.pow(clamp(1-dist/14.4,0,1),1.6);
         hv.g.gain.setTargetAtTime(0.85*att*L.on, tN, 0.07);
         if(hv.p) hv.p.pan.setTargetAtTime(panTo(L.world.x,L.world.z), tN, 0.09);
       } else hv.g.gain.setTargetAtTime(0, tN, 0.15);
     }
   }
-  hemi.intensity = lerp(hemi.intensity, STATE.powerOn? 0.50:0.42, 0.1);
+  hemi.intensity = lerp(hemi.intensity, STATE.powerOn? 0.10:0.08, 0.1);   // murk floor halved again: true dark away from fixtures
 }

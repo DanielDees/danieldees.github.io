@@ -13,6 +13,7 @@ export const KEYS={};
 export const monster={
   active:false, mesh:null, pos:new THREE.Vector3(),
   state:"wander", path:[], repath:0,
-  lastSeen:null, searchT:0, alertT:0, pauseT:0, knockT:4,
+  lastSeen:null, searchT:0, alertT:0, pauseT:0, knockT:4, knockMove:null,
   curSpeed:0, faceAng:0, anim:0, groanT:6,
+  twitchT:5, twitchDur:0, twitchSeed:0,
 };

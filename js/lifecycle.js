@@ -30,6 +30,7 @@ export function respawn(){
     monster.state="wander"; monster.path=[]; monster.lastSeen=null; monster.curSpeed=0;
   }
   ui.dread.style.opacity=0;
+  ui.staticfx.style.opacity=0;
 }
 export function die(){
   if(STATE.dead) return;
