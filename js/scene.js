@@ -28,7 +28,7 @@ scene.add(playerLight);
    Per-pixel (Phong) materials + decay give a smooth radial gradient that
    reaches the carpet; intensity fades out across the outer band of the
    bind radius so fixtures ease in at a distance instead of popping. */
-export const LIGHT_POOL_N = 20, LIGHT_BIND_RADIUS = 27, LIGHT_FADE_START = 17;
+export const LIGHT_POOL_N = 30, LIGHT_BIND_RADIUS = 27, LIGHT_FADE_START = 17;
 export const lightPool=[];
 for(let i=0;i<LIGHT_POOL_N;i++){
   /* tight falloff (range 11, decay 2.2): each fixture owns a pool a few
@@ -90,6 +90,17 @@ export function buildLevel(){
     for(let i=0;i<=NX;i++) g.fillRect(i*(w-2)/NX,0,2,h);   // grille vanes
     for(let j=0;j<=NY;j++) g.fillRect(0,j*(h-2)/NY,w,2);   // cross ribs
   });
+  /* end-of-life tubes: a gentle hue drift — yellower at the ends, a touch
+     more orange at the center where the phosphor has worn the most.
+     CylinderGeometry's v axis runs end-to-end, so a vertical gradient maps
+     along the tube. */
+  const warmTubeTex = makeCanvas(4,64,(g,w,h)=>{
+    const gr=g.createLinearGradient(0,0,0,h);
+    gr.addColorStop(0,  "#ffdf94");
+    gr.addColorStop(0.5,"#ff9742");
+    gr.addColorStop(1,  "#ffdf94");
+    g.fillStyle=gr; g.fillRect(0,0,w,h);
+  });
   const HOUSE_D=0.096;                               // 20% shallower than before
   const housingGeo=new THREE.BoxGeometry(CELL*0.66,HOUSE_D,CELL*0.34);
   /* galvanized-steel fixture frame — clearly a piece of metal hardware,
@@ -126,9 +137,29 @@ export function buildLevel(){
      exposes a glowing sliver of part-cell instead. */
   const grateGeo=new THREE.PlaneGeometry(CELL*0.625,CELL*0.305);
   const grateMat=new THREE.MeshBasicMaterial({map:grateTex,transparent:true});
+  /* ~30% of fixture slots stay dark. A truly independent per-slot roll
+     produces runs of adjacent misses, which read as whole missing ROWS at
+     this 8m slot spacing — so a slot may only go dark if its left and up
+     neighbors spawned, and the base rate is raised to keep net density
+     near 30%. Same average, no long gaps. */
+  const darkSlots=new Set(), slotKey=(sx,sy)=>sy*W+sx;
   for(let y=1;y<H-1;y+=2)for(let x=1;x<W-1;x+=2){
-    if(grid[y][x]===0 && Math.random()<0.85){
-      const glowMat=new THREE.MeshBasicMaterial({color:0xfff6cf});
+    if(grid[y][x]!==0) continue;
+    if(Math.random()<0.55 && !darkSlots.has(slotKey(x-2,y)) && !darkSlots.has(slotKey(x,y-2))){
+      darkSlots.add(slotKey(x,y));
+      continue;
+    }
+    /* ~10% of fixtures are end-of-life: warm orange, half brightness,
+       slower dim-down cycles instead of random flicker bursts */
+    {
+      const warm=Math.random()<0.10;
+      /* the TUBES are the light source — the housing interior only catches
+         spill, so every backplate sits darker than its tubes: a faint glow
+         on dying fixtures, a brighter (but still secondary) wash on healthy
+         ones. glowMat = backplate, tubeMat = tubes. */
+      const glowMat=new THREE.MeshBasicMaterial({color: warm?0x4d3419:0xb8b2a2});
+      const tubeMat=warm? new THREE.MeshBasicMaterial({map:warmTubeTex})
+                        : new THREE.MeshBasicMaterial({color:0xfff6cf});
       const p=cellToWorld(x,y);
       const fix=new THREE.Group();
       const housing=new THREE.Mesh(housingGeo,housingMats);
@@ -136,17 +167,18 @@ export function buildLevel(){
       const backplate=new THREE.Mesh(glowGeo,glowMat);
       backplate.rotation.x=Math.PI/2; backplate.position.y=WALL_H-0.014; fix.add(backplate);
       for(const tz of[-0.32,0.32]){
-        const tube=new THREE.Mesh(tubeGeo,glowMat);
+        const tube=new THREE.Mesh(tubeGeo,tubeMat);
         tube.position.set(0,WALL_H-0.05,tz); fix.add(tube);   // recessed inside the housing
       }
       const grate=new THREE.Mesh(grateGeo,grateMat);
       grate.rotation.x=Math.PI/2; grate.position.y=WALL_H-HOUSE_D+0.004; fix.add(grate); // flush with the rim
       fix.position.set(p.x,0,p.z);
       scene.add(fix);
-      lights.push({glowMat:glowMat, cx:x, cy:y, world:p, flickery:Math.random()<0.22,
-        phase:Math.random()*100, on:1,
+      lights.push({glowMat:glowMat, tubeMat:tubeMat, cx:x, cy:y, world:p,
+        flickery:Math.random()<0.22,
+        warm:warm, warmth:warm?1:0, phase:Math.random()*100, on:1,
         mode:"steady", timer:rand(1,12), pattern:0, rate:20,
-        burstDur:0, burstT:0, seed:Math.random()*1000, lastTick:0});
+        burstDur:0, burstT:0, descT:2, riseT:0.5, seed:Math.random()*1000, lastTick:0});
     }
   }
 }

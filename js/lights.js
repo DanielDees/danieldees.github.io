@@ -11,6 +11,26 @@ const hash=n=>{const s=Math.sin(n)*43758.5453;return s-Math.floor(s);};
 const FLICKER_PATTERNS=5; // 0 strobe · 1 stutter · 2 brown-out sag · 3 blink-off · 4 dying sputter
 function panelValue(L,t){
   if(L.mode==="steady") return 0.92+Math.sin(t*1.7+L.phase)*0.06;
+  if(L.warm){
+    /* end-of-life cycle in three acts: a ~2s hilly dim-down (the arc keeps
+       half-catching, so brightness recovers a little in sub-second steps on
+       the way down, never back to full), a normal-style strobe pinned at the
+       dim floor, then a ~0.5s flickering climb back to full brightness */
+    const e=L.burstDur-L.burstT;                      // elapsed burst time
+    if(e<L.descT){                                    // act 1: the descent
+      const d=e/L.descT;
+      const sag=1-0.62*d;                                          // slide toward ~0.38
+      const hill=Math.max(0,Math.sin(d*23+L.phase))*0.34*d*(1-d);  // brief partial recoveries
+      const jit=(hash(Math.floor(t*7)+L.seed)-0.5)*0.05;           // fine instability
+      return clamp(sag+hill+jit,0.3,1);
+    }
+    const riseAt=L.burstDur-L.riseT;
+    if(e<riseAt)                                      // act 2: strobe at the floor
+      return hash(Math.floor(t*L.rate)+L.seed)>0.45? 0.38:0.05;
+    const q=clamp((e-riseAt)/L.riseT,0,1);            // act 3: flicker back up
+    const env=lerp(0.38,1,q);
+    return hash(Math.floor(t*22)+L.seed)<0.35? env*0.25:env;
+  }
   const p=clamp(1-L.burstT/L.burstDur,0,1);   // burst progress 0→1
   switch(L.pattern){
     case 0: return hash(Math.floor(t*L.rate)+L.seed)>0.45? 1:0.07;          // hard strobe
@@ -29,28 +49,39 @@ export function updateLights(dt,t){
     let near=0;
     if(monster.active){
       const dm=Math.hypot(L.world.x-monster.pos.x,L.world.z-monster.pos.z);
-      near=clamp(1-dm/14,0,1);
+      near=clamp(1-dm/16,0,1);   // +15% reach over the original 14
     }
     L.timer-=dt;
     if(near>0.2) L.timer-=dt*near*7;       // its approach collapses calm periods already in progress
     if(L.mode==="steady"){
       if(L.timer<=0){
-        const canBurst = L.flickery || near>0.2;   // healthy panels only misbehave near the entity
+        const canBurst = L.flickery || L.warm || near>0.2;   // healthy panels only misbehave near the entity
         if(canBurst){
           L.mode="burst";
           L.pattern=Math.floor(Math.random()*FLICKER_PATTERNS);
           L.rate=rand(14,30);
-          L.burstDur=L.burstT=rand(0.25,1.4)*(1+near*0.8);
+          if(L.warm){
+            // dying cycle: ~2s hilly descent, a strobe at the bottom, ~0.5s flickering climb back
+            L.descT=rand(1.7,2.3); L.riseT=rand(0.4,0.6);
+            L.burstDur=L.burstT=L.descT+rand(0.7,1.6)*(1+near*0.8)+L.riseT;
+          } else {
+            // everyone bursts longer near the entity
+            L.burstDur=L.burstT=rand(0.25,1.4)*(1+near*0.8);
+          }
         }
         // long natural calms; the entity's presence shreds them
-        L.timer = (L.flickery? rand(4,14) : rand(7,20)) * clamp(1-near*0.9, 0.06, 1);
+        L.timer = (L.warm? rand(6,12) : L.flickery? rand(4,14) : rand(7,20)) * clamp(1-near*0.9, 0.06, 1);
       }
     } else {
       L.burstT-=dt;
       if(L.burstT<=0) L.mode="steady";
     }
     const v=panelValue(L,t);
-    if(Math.abs(v-L.on)>0.04){
+    /* warmth 0→1 drags the tube color toward end-of-life orange. Dying
+       fixtures sit at 1 permanently; healthy ones get pushed there by the
+       entity's proximity — an extra tell on top of the flickering */
+    const warmth = L.warm? 1 : clamp(near*1.4,0,1);
+    if(Math.abs(v-L.on)>0.04 || Math.abs(warmth-L.warmth)>0.02){
       /* ballast tick fires WITH the visible transition, from the fixture's
          direction, fading with distance — classic fluorescent static */
       if(Math.abs(v-L.on)>0.35 && dl<30 && t-L.lastTick>0.09 && Math.random()<0.75){
@@ -58,8 +89,14 @@ export function updateLights(dt,t){
         const fall=Math.pow(clamp(1-dl/30,0,1),1.4);
         sfxFlickTick(0.075*fall, panTo(L.world.x,L.world.z));
       }
-      L.on=v;
-      L.glowMat.color.setRGB(v, 0.965*v, 0.81*v);
+      L.on=v; L.warmth=warmth;
+      /* backplate is spill: dimmer than the tubes it reflects, but on healthy
+         fixtures a bright near-white wash (less saturated hue than the tubes)
+         so the interior reads painted white steel, not grey */
+      const bp = L.warm? 0.30 : 0.72;
+      L.glowMat.color.setRGB(v*bp, lerp(0.97,0.60,warmth)*v*bp, lerp(0.88,0.26,warmth)*v*bp);
+      if(L.warm) L.tubeMat.color.setRGB(v,v,v);   // gradient map supplies the hue
+      else L.tubeMat.color.setRGB(v, lerp(0.965,0.60,warmth)*v, lerp(0.81,0.26,warmth)*v);
     }
   }
 
@@ -75,15 +112,30 @@ export function updateLights(dt,t){
   cand.sort((a,b)=>a[0]-b[0]);
   const base = STATE.powerOn? 1.43 : 1.19;   // −5% peak fixture brightness
   const band = LIGHT_BIND_RADIUS-LIGHT_FADE_START;
+  /* each fixture holds two tubes 0.64m apart. Near the player that split is
+     visible, so close fixtures get one pool light PER TUBE at just over half
+     power; far ones collapse to a single centered light so the pool still
+     stretches across the bind radius. */
+  const TUBE_SPLIT_D=10;
+  const jobs=[];
+  for(const [d2,L] of cand){
+    if(jobs.length>=lightPool.length) break;
+    const dist=Math.sqrt(d2);
+    let fade=clamp((LIGHT_BIND_RADIUS-dist)/band,0,1);
+    fade=fade*fade*(3-2*fade); // smoothstep
+    const I=base*L.on*fade*(L.warm? 0.5:1);   // dying tubes cast half the light
+    if(dist<TUBE_SPLIT_D && jobs.length+2<=lightPool.length){
+      jobs.push({x:L.world.x, z:L.world.z-0.32, I:I*0.55, L:L});
+      jobs.push({x:L.world.x, z:L.world.z+0.32, I:I*0.55, L:L});
+    } else jobs.push({x:L.world.x, z:L.world.z, I:I, L:L});
+  }
   for(let i=0;i<lightPool.length;i++){
     const pl=lightPool[i];
-    if(i<cand.length){
-      const L=cand[i][1];
-      const dist=Math.sqrt(cand[i][0]);
-      let fade=clamp((LIGHT_BIND_RADIUS-dist)/band,0,1);
-      fade=fade*fade*(3-2*fade); // smoothstep
-      pl.position.x=L.world.x; pl.position.z=L.world.z;
-      pl.intensity=base*L.on*fade;
+    if(i<jobs.length){
+      const j=jobs[i];
+      pl.position.x=j.x; pl.position.z=j.z;
+      pl.intensity=j.I;
+      pl.color.setRGB(1, lerp(0.933,0.55,j.L.warmth), lerp(0.753,0.20,j.L.warmth));
     } else pl.intensity=0;
   }
 
