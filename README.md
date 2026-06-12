@@ -1,6 +1,6 @@
 # NOCLIP — Escape the Backrooms
 
-**Version: v2.0.0**
+**Version: v2.1.0**
 
 A browser-based survival horror game, playable at
 [danieldees.github.io](https://danieldees.github.io). Vanilla JS ES modules built
@@ -23,8 +23,8 @@ final dash, because by then you cannot outrun it on legs alone. The elevator rid
 down is not the clean escape it looks like.
 
 **THE END — the infinite library.** The brakes never caught. You wake in the wreck
-of the cab on the floor of a vast, dim library: bare shelves, dead machines, and a
-horse-sized blind spider that pads between the stacks. It cannot see you — it
+of the cab on the floor of a vast, dim library: half-abandoned stacks, dead
+machines, and a horse-sized blind spider that pads between the shelves. It cannot see you — it
 **hears** you. Every footfall above a crouch, every floppy disk you pull from a
 shelf, draws it closer. Find the scattered disks and feed them to the terminal at
 the heart of the room while staying quiet and using the tables for cover. Fifty-five
@@ -46,6 +46,33 @@ Headphones recommended — audio is positional, and both monsters are far easier
 track by ear.
 
 ## Changelog
+
+### v2.1.0 (2026-06-12)
+- **Real 3D books.** The library's flat-colored box "books" are replaced by a pool
+  of 16 distinct, properly 3D volumes — cover boards with fore-edge overhang, a
+  rounded spine, a recessed page block — each with its own procedural cover and
+  **legible backrooms titles** in gilt serif on both the spine (top-to-bottom,
+  raised bands, some with volume numbers) and a framed front-cover plate with a
+  line-art motif (an eye, a door ajar, a spiral, an hourglass, a key, a descending
+  stair) and author. Cover canvases are laid out per design at uniform
+  pixels-per-meter, so titles map 1:1 with no stretching or blur.
+- **Lived-in, half-abandoned stacks.** Every shelf board rolls its own 0–12 book
+  budget (~4 on average, so a four-row bookcase carries ~16 volumes) in natural
+  arrangements: lone survivors sometimes slumped sideways, short rows with one
+  more book tipped against the end, books left lying cover-up, small stacks,
+  bookend pairs still clamping a few spines, and books abandoned open mid-read —
+  a splayed spread with an italic epigraph over two columns of faded lines. Return
+  carts carry 2–12 real volumes plus a push handle and a stencilled RETURNS
+  plaque; some lecterns still hold what their reader walked away from. Floppy
+  disks only ever spawn on shelf space the books left open.
+- **Coherent posters.** Wall notices and clippings are now ~80% readable signage
+  written for this place — several lines double as honest gameplay advice (crouch
+  beneath the reading tables, the librarian hunts by sound, return all disks to
+  the terminal) — with one line in five still sliding off into the old madlib
+  nonsense. A new MISSING-patron notice layout joins the official notice and the
+  newspaper clipping.
+- The wall around the crashed arrival elevator is a no-spawn zone for posters,
+  artwork, and cracks.
 
 ### v2.0.0 (2026-06-12)
 - **THE END — the infinite library (Level 2).** The failed elevator drops you into
@@ -82,8 +109,6 @@ track by ear.
 - Still zero-dependency vanilla JS. Hidden debug warps for testing: tap `6` ×3 to
   jump to the Level 0 endgame, `7` ×3 to drop into THE END (or, once there, to pocket
   every remaining disk).
-
-### v1.5.0 (2026-06-12)
 
 ### v1.5.0 (2026-06-12)
 - **The exit elevator.** The exit door is now a recessed, two-leaf elevator
