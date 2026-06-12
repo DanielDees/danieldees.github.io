@@ -165,13 +165,25 @@ function genLibrary(){
       if(cur===0) grid2[y][x]=axis===0?2:3;
     }
   }
-  /* tables: scattered islands, never in the protected clearings */
+  /* tables: stratified over a coarse zone grid so every quarter of the
+     room gets at least a refuge or two — pure uniform rolls clumped them
+     and left whole stretches of open floor with nowhere to hide */
   const tables=[];
-  for(let t=0;t<60&&tables.length<15;t++){
-    const x=2+Math.floor(srand()*(LW-4)), y=2+Math.floor(srand()*(LH-4));
-    if(grid2[y][x]!==0||prot.has(K(x,y))) continue;
-    grid2[y][x]=4; tables.push({x,y});
-  }
+  const farFromTables=(x,y,min)=>tables.every(t=>Math.hypot(t.x-x,t.y-y)>=min);
+  const tryTable=(x0,x1,y0,y1,minD)=>{
+    for(let t=0;t<14;t++){
+      const x=Math.floor(x0+srand()*(x1-x0)), y=Math.floor(y0+srand()*(y1-y0));
+      if(x<2||y<2||x>=LW-2||y>=LH-2) continue;
+      if(grid2[y][x]!==0||prot.has(K(x,y))) continue;
+      if(!farFromTables(x,y,minD)) continue;
+      grid2[y][x]=4; tables.push({x,y}); return true;
+    }
+    return false;
+  };
+  const ZN=4, zw=(LW-4)/ZN, zh=(LH-4)/ZN;
+  for(let zy=0;zy<ZN;zy++)for(let zx=0;zx<ZN;zx++)
+    tryTable(2+zx*zw, 2+(zx+1)*zw, 2+zy*zh, 2+(zy+1)*zh, 3);
+  for(let i=0;i<5;i++) tryTable(2,LW-2,2,LH-2,4);   // a few free-roaming extras
   /* connectivity repair: flood the open floor from the spawn apron; any
      shelf or table cutting off an open pocket gets a cell knocked out
      ("some shelves may collapse under slight pressure") */
@@ -272,17 +284,46 @@ function makeShelfRun(run){
     const sp=new THREE.Mesh(new THREE.BoxGeometry(len,H-0.2,0.04),shelfMat);
     sp.position.y=H/2; g.add(sp);
   }
-  /* lone forgotten books */
-  const nB=Math.random()<0.55? 1+Math.floor(Math.random()*3) : 0;
+  /* lone forgotten books — still "virtually devoid", just less sterile */
+  const bookCol=()=>[0x5a3a2a,0x32402e,0x3a3046,0x53503c][Math.floor(Math.random()*4)];
+  const shelfY=()=>[0.66,1.2,1.74][Math.floor(Math.random()*3)];
+  const nB=Math.random()<0.75? 1+Math.floor(Math.random()*4) : 0;
   for(let i=0;i<nB;i++){
     const bw=0.05+Math.random()*0.2;
     const book=new THREE.Mesh(new THREE.BoxGeometry(bw,0.30,0.2),
-      new THREE.MeshPhongMaterial({color:[0x5a3a2a,0x32402e,0x3a3046,0x53503c][Math.floor(Math.random()*4)],
-        specular:0x111111, shininess:6}));
+      new THREE.MeshPhongMaterial({color:bookCol(), specular:0x111111, shininess:6}));
     const lean=Math.random()<0.5? (Math.random()-0.5)*0.5 : 0;
-    book.position.set(rand(-len/2+0.4,len/2-0.4), [0.66,1.2,1.74][Math.floor(Math.random()*3)]+0.155, rand(-0.4,0.4));
+    book.position.set(rand(-len/2+0.4,len/2-0.4), shelfY()+0.155, rand(-0.4,0.4));
     book.rotation.z=lean;
     g.add(book);
+  }
+  /* a short stack lying flat */
+  if(Math.random()<0.4){
+    const sx=rand(-len/2+0.4,len/2-0.4), sy=shelfY(), sz=rand(-0.35,0.35);
+    const n=1+Math.floor(Math.random()*3);
+    for(let i=0;i<n;i++){
+      const b=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.045,0.3),
+        new THREE.MeshPhongMaterial({color:bookCol(), specular:0x111111, shininess:6}));
+      b.position.set(sx+rand(-0.02,0.02), sy+0.0275+i*0.047, sz+rand(-0.02,0.02));
+      b.rotation.y=(Math.random()-0.5)*0.4;
+      g.add(b);
+    }
+  }
+  /* misc abandoned things: an archive box or a dusty jar */
+  if(Math.random()<0.45){
+    const sx=rand(-len/2+0.4,len/2-0.4), sy=shelfY();
+    if(Math.random()<0.55){
+      const box=new THREE.Mesh(new THREE.BoxGeometry(0.32,0.24,0.26),
+        new THREE.MeshPhongMaterial({color:0x6e5a40, specular:0x161208, shininess:5}));
+      box.position.set(sx,sy+0.1475,rand(-0.3,0.3)); box.rotation.y=(Math.random()-0.5)*0.5;
+      g.add(box);
+    } else {
+      const jar=new THREE.Mesh(new THREE.CylinderGeometry(0.085,0.085,0.24,10),
+        new THREE.MeshPhongMaterial({color:0x5e665c, specular:0x3a4038, shininess:50,
+          transparent:true, opacity:0.85}));
+      jar.position.set(sx,sy+0.1475,rand(-0.3,0.3));
+      g.add(jar);
+    }
   }
   /* temporal decay: a collapsed board leaning inside the frame */
   if(Math.random()<0.30){
@@ -550,7 +591,7 @@ export function buildLibrary(){
   for(const run of LIB.runs) scene.add(makeShelfRun(run));
   /* tables + chairs + the occasional vintage machine */
   const pcTables=new Set();
-  while(pcTables.size<Math.min(3,tables.length)) pcTables.add(Math.floor(srand()*tables.length));
+  while(pcTables.size<Math.min(5,tables.length)) pcTables.add(Math.floor(srand()*tables.length));
   let eggArmed=false;
   tables.forEach((tc,i)=>{
     const p=cellToWorld2(tc.x,tc.y);
@@ -591,7 +632,7 @@ export function buildLibrary(){
   }
   /* ladders & lecterns */
   let placed=0;
-  for(let t=0;t<200&&placed<6;t++){
+  for(let t=0;t<300&&placed<9;t++){
     const run=LIB.runs[Math.floor(srand()*LIB.runs.length)];
     if(!run) break;
     const c=run.cells[Math.floor(srand()*run.cells.length)];
@@ -604,7 +645,7 @@ export function buildLibrary(){
     scene.add(lad); placed++;
     LIB.obstacles.push({x:lad.position.x, z:lad.position.z, r:0.42});
   }
-  for(let i=0;i<8;i++){
+  for(let i=0;i<12;i++){
     const c=LIB.reachList[Math.floor(srand()*LIB.reachList.length)];
     const p=cellToWorld2(c.cx,c.cy);
     const lec=makeLectern();
@@ -641,7 +682,7 @@ export function buildLibrary(){
     else txt.rotation.z=(srand()-0.5)*0.06;
     scene.add(txt);
   }
-  for(let i=0;i<13;i++){
+  for(let i=0;i<17;i++){
     const f=take();
     const po=new THREE.Mesh(new THREE.PlaneGeometry(0.92,1.24),
       new THREE.MeshPhongMaterial({map:makePosterTexture(), specular:0x000000, shininess:2}));
