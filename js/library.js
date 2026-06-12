@@ -19,7 +19,8 @@ import { STATE } from "./state.js";
 import { scene, lights, hemi, amb, makeLightRecord } from "./scene.js";
 import { makeCanvas, texLibWall, texLibCarpet, texLibCeil, texShelfWood, texDeskWood,
          makeCrackTexture, makeEndTextTexture, makePosterTexture, makeArtTexture,
-         makeBookAtlasTexture, BOOK_UV, scaleBoxUV } from "./textures.js";
+         makeBookCoverTexture, BOOK_COVER_UV, BOOK_TITLES, BOOK_BASES,
+         texPages, texPagesAged, makeOpenPagesTexture, scaleBoxUV } from "./textures.js";
 import { makeElevator, ELEV, addInteractable } from "./props.js";
 import { sfxLightsOut, escalateLibraryAmbience, sfxComputerBoot, sfxComputerStatic } from "./audio.js";
 
@@ -301,12 +302,12 @@ const beigePlasticDark=new THREE.MeshPhongMaterial({color:0x8e8672, specular:0x2
 const plasticWrap=new THREE.MeshPhongMaterial({color:0xcfd6da, specular:0x888d92, shininess:60,
   transparent:true, opacity:0.18, depthWrite:false});
 
-/* ---- books: every shelf block samples a window of a shared spine atlas,
-   and all of a run's blocks merge into ONE mesh — whole walls of books for
-   a single draw call. A couple of atlas variants keep runs from rhyming. */
-const bookMats=[0,1].map(()=>new THREE.MeshPhongMaterial({
-  map:makeBookAtlasTexture(), specular:0x141210, shininess:10}));
-const BLOCK_H=0.33, BLOCK_D=0.21;
+/* ---- the books: a pool of distinct, properly 3D volumes ----
+   Every design is a real closed book — two cover boards with fore-edge
+   overhang, a shallow rounded spine wrapped in its own legible title strip,
+   and a recessed page block — merged into one two-material geometry that
+   each spawned copy shares. The pool is built once, lazily, on the first
+   visit to THE END. */
 /* rewrite one BoxGeometry face's UVs to a [u0,v0]-[u1,v1] window
    (face order: +x,−x,+y,−y,+z,−z; default per-face vertex pattern) */
 function setFaceUV(geo,f,u0,v0,u1,v1){
@@ -314,9 +315,7 @@ function setFaceUV(geo,f,u0,v0,u1,v1){
   uv.setXY(f*4  ,u0,v1); uv.setXY(f*4+1,u1,v1);
   uv.setXY(f*4+2,u0,v0); uv.setXY(f*4+3,u1,v0);
 }
-const darkUV=(geo,faces)=>{for(const f of faces)
-  setFaceUV(geo,f,0.1,BOOK_UV.dark[0],0.2,BOOK_UV.dark[1]);};
-/* accumulates translated BoxGeometries into one indexed BufferGeometry */
+/* accumulates translated geometries into one indexed BufferGeometry */
 class GeoAcc{
   constructor(){this.pos=[];this.nor=[];this.uv=[];this.idx=[];this.vc=0;}
   add(geo){
@@ -329,113 +328,131 @@ class GeoAcc{
     for(let i=0;i<ix.count;i++) this.idx.push(ix.getX(i)+this.vc);
     this.vc+=p.count; geo.dispose();
   }
-  build(){
-    const g=new THREE.BufferGeometry();
-    g.setAttribute("position",new THREE.Float32BufferAttribute(this.pos,3));
-    g.setAttribute("normal",new THREE.Float32BufferAttribute(this.nor,3));
-    g.setAttribute("uv",new THREE.Float32BufferAttribute(this.uv,2));
-    g.setIndex(this.idx);
-    return g;
+}
+/* concat two accumulators into one geometry with two material groups */
+function mergeGroups(a,b){
+  const g=new THREE.BufferGeometry();
+  g.setAttribute("position",new THREE.Float32BufferAttribute([...a.pos,...b.pos],3));
+  g.setAttribute("normal",new THREE.Float32BufferAttribute([...a.nor,...b.nor],3));
+  g.setAttribute("uv",new THREE.Float32BufferAttribute([...a.uv,...b.uv],2));
+  g.setIndex([...a.idx,...b.idx.map(i=>i+a.vc)]);
+  g.addGroup(0,a.idx.length,0);
+  g.addGroup(a.idx.length,b.idx.length,1);
+  return g;
+}
+let BOOKS=null;                 // [{geo, mats, h, tx, d}] — the design pool
+let OPEN_BOOK=null;             // prototype group, cloned per placement
+let pageMats=null;
+function buildBookDesign(title,author,vol){
+  const base=BOOK_BASES[Math.floor(Math.random()*BOOK_BASES.length)];
+  const h=0.20+Math.random()*0.10;        // page length (standing height)
+  const tx=0.025+Math.random()*0.04;      // thickness
+  const d=0.14+Math.random()*0.05;        // cover width (depth on the shelf)
+  const UV=BOOK_COVER_UV;
+  const cover=new GeoAcc(), pages=new GeoAcc();
+  const plainAll=geo=>{for(let f=0;f<6;f++)
+    setFaceUV(geo,f,UV.plain[0]+0.02,0.3,UV.plain[1]-0.02,0.7);};
+  /* boards: the front (+x) carries the cover plate, the back stays plain */
+  for(const sx of[-1,1]){
+    const b=new THREE.BoxGeometry(0.006,h,d);
+    plainAll(b);
+    if(sx>0) setFaceUV(b,0,UV.front[0],0,UV.front[1],1);
+    b.translate(sx*(tx/2-0.003),h/2,0.004);
+    cover.add(b);
+  }
+  /* rounded spine: a shallow half-ellipse wrapped in the title strip,
+     hugging the boards' back edge */
+  const sp=new THREE.CylinderGeometry(tx/2+0.0015,tx/2+0.0015,h,10,1,true,Math.PI/2,Math.PI);
+  {
+    const uv=sp.attributes.uv;
+    for(let i=0;i<uv.count;i++) uv.setX(i,UV.spine[0]+uv.getX(i)*(UV.spine[1]-UV.spine[0]));
+  }
+  sp.scale(1,1,0.42);
+  sp.translate(0,h/2,-d/2+0.004);
+  cover.add(sp);
+  /* page block, recessed behind every cover edge */
+  const pg=new THREE.BoxGeometry(tx-0.014,h-0.012,d-0.014);
+  pg.translate(0,h/2,0.001);
+  pages.add(pg);
+  const coverMat=new THREE.MeshPhongMaterial({
+    map:makeBookCoverTexture(title,author,base,Math.floor(Math.random()*6),vol),
+    specular:0x1a1610, shininess:14});
+  return {geo:mergeGroups(cover,pages),
+          mats:[coverMat,pageMats[Math.floor(Math.random()*pageMats.length)]],
+          h,tx,d};
+}
+function ensureBooks(){
+  if(BOOKS) return;
+  pageMats=[texPages,texPagesAged,texPagesAged].map(t=>
+    new THREE.MeshPhongMaterial({map:t, specular:0x1c1812, shininess:8}));
+  const titles=[...BOOK_TITLES];
+  for(let i=titles.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));[titles[i],titles[j]]=[titles[j],titles[i]];
+  }
+  BOOKS=[];
+  for(let i=0;i<16;i++){
+    const [title,author]=titles[i%titles.length];
+    const vol=Math.random()<0.2? "VOL. "+["I","II","III","IV","VII"][Math.floor(Math.random()*5)] : null;
+    BOOKS.push(buildBookDesign(title,author,vol));
+  }
+  /* the open book: covers splayed flat, two page slabs meeting at a gutter */
+  const od=0.165, oh=0.235;
+  const leather=new THREE.MeshPhongMaterial({color:0x3a2c20, specular:0x161208, shininess:12});
+  OPEN_BOOK=new THREE.Group();
+  const cov=new THREE.Mesh(new THREE.BoxGeometry(od*2+0.012,0.006,oh+0.006),leather);
+  cov.position.y=0.003; OPEN_BOOK.add(cov);
+  const openTex=makeOpenPagesTexture();
+  for(const sx of[-1,1]){
+    const slab=new THREE.BoxGeometry(od-0.008,0.013,oh-0.01);
+    setFaceUV(slab,2, sx<0?0:0.5,0, sx<0?0.5:1,1);     // top face = its half of the spread
+    const m=new THREE.Mesh(slab,[
+      pageMats[0],pageMats[0],
+      new THREE.MeshPhongMaterial({map:openTex, specular:0x14100a, shininess:4}),
+      pageMats[0],pageMats[0],pageMats[0]]);
+    m.position.set(sx*(od/2-0.001),0.013,0);
+    m.rotation.z=sx*-0.045;                            // both halves dip to the gutter
+    OPEN_BOOK.add(m);
   }
 }
-/* one run of shelved books: spines face outward (side s), fore-edges show
-   from above and behind, undersides stay dark. x0 = left edge along the run */
-function accBookBlock(acc,x0,w,y,z,s){
-  const geo=new THREE.BoxGeometry(w,BLOCK_H,BLOCK_D);
-  const span=w/BOOK_UV.mPerU;
-  const u0=Math.random()*Math.max(0,1-span);
-  setFaceUV(geo,s>0?4:5,u0,BOOK_UV.spine[0],u0+span,BOOK_UV.spine[1]);
-  const pu=Math.random()*Math.max(0,1-span);
-  setFaceUV(geo,s>0?5:4,pu,BOOK_UV.pagesV[0],pu+span,BOOK_UV.pagesV[1]);   // backs read as fore-edges
-  setFaceUV(geo,2,pu,BOOK_UV.pagesV[0],pu+span,BOOK_UV.pagesV[1]);         // tops too
-  darkUV(geo,[0,1,3]);
-  geo.translate(x0+w/2,y+BLOCK_H/2,z);
-  acc.add(geo);
-}
-/* a short pile of books lying flat — page layers on the sides, dark covers */
-function accBookStack(acc,x,y,z){
-  const n=1+Math.floor(Math.random()*3);
-  let cy=y;
-  for(let i=0;i<n;i++){
-    const bw=0.18+Math.random()*0.12, bd=0.24+Math.random()*0.08, bh=0.035+Math.random()*0.025;
-    const geo=new THREE.BoxGeometry(bw,bh,bd);
-    const pu=Math.random()*0.8;
-    const v1=BOOK_UV.pagesH[0]+(BOOK_UV.pagesH[1]-BOOK_UV.pagesH[0])*Math.min(1,bh/0.06);
-    for(const f of[0,1,4,5]) setFaceUV(geo,f,pu,BOOK_UV.pagesH[0],pu+0.07,v1);
-    darkUV(geo,[2,3]);
-    geo.rotateY((Math.random()-0.5)*0.5);
-    geo.translate(x+(Math.random()-0.5)*0.03,cy+bh/2,z+(Math.random()-0.5)*0.03);
-    acc.add(geo);
-    cy+=bh;
+const pickBook=()=>BOOKS[Math.floor(Math.random()*BOOKS.length)];
+/* drop one copy of a design. Canonical pose: standing, base at y=0, spine
+   facing −z; side s yaws it so the spine faces the aisle. flat lays it
+   cover-up (the roll happens in local space — order YXZ, like the ladders) */
+function spawnBook(g,des,x,yTop,z,s,opts={}){
+  const m=new THREE.Mesh(des.geo,des.mats);
+  m.rotation.order="YXZ";
+  const yaw=(s>0?Math.PI:0)+(opts.yaw!==undefined?opts.yaw:(Math.random()-0.5)*0.07);
+  if(opts.flat){
+    m.rotation.set(0,yaw,Math.PI/2);
+    m.position.set(x-s*des.h/2, yTop+(opts.lift||0)+des.tx/2, z);
+  } else {
+    m.rotation.set(0,yaw,opts.lean||0);
+    m.position.set(x,yTop,z);
   }
-}
-/* standalone textured book block (the carts borrow it): spines on BOTH
-   long faces, fore-edges on top, dark ends */
-function makeBookBlockMesh(w,d){
-  const geo=new THREE.BoxGeometry(w,BLOCK_H,d);
-  const span=w/BOOK_UV.mPerU;
-  for(const f of[4,5]){
-    const u0=Math.random()*Math.max(0,1-span);
-    setFaceUV(geo,f,u0,BOOK_UV.spine[0],u0+span,BOOK_UV.spine[1]);
-  }
-  const pu=Math.random()*Math.max(0,1-span);
-  setFaceUV(geo,2,pu,BOOK_UV.pagesV[0],pu+span,BOOK_UV.pagesV[1]);
-  darkUV(geo,[0,1,3]);
-  return new THREE.Mesh(geo,bookMats[Math.floor(Math.random()*bookMats.length)]);
+  g.add(m);
+  return m;
 }
 
-/* shared loose-book materials: muted cloth bindings */
-const looseBookMats=[0x6e3a32,0x32402e,0x3a3046,0x53503c,0x7a5a30,0x2e3a46]
-  .map(c=>new THREE.MeshPhongMaterial({color:c, specular:0x111111, shininess:6}));
-const looseBookMat=()=>looseBookMats[Math.floor(Math.random()*looseBookMats.length)];
 const bookendMat=new THREE.MeshPhongMaterial({color:0x2e3236, specular:0x4a4e52, shininess:42});
 const accentWood=new THREE.MeshPhongMaterial({color:0x4a3522, specular:0x161208, shininess:10});
 const accentBrass=new THREE.MeshPhongMaterial({color:0x6e5a2e, specular:0x8a7340, shininess:55});
-/* a non-book accent sitting in line with the book rows: leaning strays,
-   archive boxes, dusty jars, bookend sets, hourglasses, candle stubs —
-   library things, abandoned mid-task. (sx,yTop,sz) = spot on the board. */
+/* a non-book accent sitting in line with the books: archive boxes, dusty
+   jars, hourglasses, candle stubs — library things, abandoned mid-task.
+   (sx,yTop,sz) = spot on the board. */
 function placeAccent(g,sx,yTop,sz){
   const r=Math.random();
-  if(r<0.28){
-    /* stray volumes left leaning where someone stopped shelving */
-    const n=1+Math.floor(Math.random()*3);
-    let bx=sx-n*0.05;
-    for(let i=0;i<n;i++){
-      const bw=0.04+Math.random()*0.06;
-      const book=new THREE.Mesh(new THREE.BoxGeometry(bw,0.27,0.18),looseBookMat());
-      const lean=Math.random()<0.6? (Math.random()-0.5)*0.5 : 0;
-      book.position.set(bx,yTop+0.135,sz);
-      book.rotation.z=lean;
-      g.add(book); bx+=bw+0.03;
-    }
-  } else if(r<0.46){
+  if(r<0.32){
     const box=new THREE.Mesh(new THREE.BoxGeometry(0.32,0.24,0.26),
       new THREE.MeshPhongMaterial({color:0x6e5a40, specular:0x161208, shininess:5}));
     box.position.set(sx,yTop+0.12,sz); box.rotation.y=(Math.random()-0.5)*0.5;
     g.add(box);
-  } else if(r<0.58){
+  } else if(r<0.52){
     const jar=new THREE.Mesh(new THREE.CylinderGeometry(0.085,0.085,0.24,10),
       new THREE.MeshPhongMaterial({color:0x5e665c, specular:0x3a4038, shininess:50,
         transparent:true, opacity:0.85}));
     jar.position.set(sx,yTop+0.12,sz);
     g.add(jar);
-  } else if(r<0.76){
-    /* bookends still clamping a few spines upright — the most organized
-       thing left in the building */
-    const n=2+Math.floor(Math.random()*3), bw=0.07;
-    for(const side of[-1,1]){
-      const ex=sx+side*(n*bw/2+0.025);
-      const up=new THREE.Mesh(new THREE.BoxGeometry(0.035,0.22,0.14),bookendMat);
-      up.position.set(ex,yTop+0.11,sz); g.add(up);
-      const ft=new THREE.Mesh(new THREE.BoxGeometry(0.12,0.015,0.14),bookendMat);
-      ft.position.set(ex-side*0.045,yTop+0.0075,sz); g.add(ft);
-    }
-    for(let i=0;i<n;i++){
-      const b=new THREE.Mesh(new THREE.BoxGeometry(bw-0.012,0.21,0.15),looseBookMat());
-      b.position.set(sx-(n-1)*bw/2+i*bw,yTop+0.105,sz);
-      g.add(b);
-    }
-  } else if(r<0.88){
+  } else if(r<0.78){
     /* an hourglass, long since run out */
     const hg=new THREE.Group();
     for(const cy of[0.01,0.27]){
@@ -486,47 +503,109 @@ function makeShelfRun(run){
     const u=new THREE.Mesh(upGeo,shelfMat);
     u.position.set(-len/2+i*CELL,H/2,0); g.add(u);
   }
-  if(Math.random()<0.5){                       // a thin centre spine on some runs
+  if(Math.random()<0.75){                      // a thin centre back panel, most runs
     const sp=new THREE.Mesh(new THREE.BoxGeometry(len,H-0.2,0.04),shelfMat);
     sp.position.y=H/2; g.add(sp);
   }
   /* ---- the books ----
-     Each side of each board is walked left to right, laying down runs of
-     shelved books (merged into one mesh for the whole stack), breathing
-     gaps, and the occasional non-book accent sitting in line with the rows.
+     The stacks are nearly empty — whatever happened here, the collection
+     left first. Each run holds 0–12 real volumes in small arrangements:
+     lone survivors, short rows, a leaner, books left flat or open mid-read.
      Every occupied interval is recorded in run.occ so the floppy disks can
      later pick spots the books left open. */
   run.occ={};
-  const acc=new GeoAcc();
-  const sparse=Math.random()<0.12;              // the odd run was emptied long ago
-  const density=sparse? rand(0.05,0.16) : rand(0.5,0.88);
-  let accents=0;
   const Y=[0.10,0.53,0.96,1.39];
-  for(const s of[1,-1]) for(let lv=0;lv<4;lv++){
-    const fill=density*(lv===0?0.45:1);          // the bottom board runs lighter
-    const yTop=Y[lv]+0.0275, z=s*0.255;
-    const occ=run.occ[s+"|"+lv]=[];
-    let x=-len/2+0.10;
-    const xEnd=len/2-0.10;
-    while(x<xEnd-0.2){
-      if(Math.random()<fill){
-        const w=Math.min(rand(0.45,2.2), xEnd-x);
-        accBookBlock(acc,x,w,yTop,z,s);
-        occ.push([x,x+w]);
-        x+=w+rand(0.02,0.25);
-      } else {
-        const gw=rand(0.3,1.1);
-        if(!sparse&&accents<9&&gw>0.5&&Math.random()<0.45){
-          const ax=x+gw/2;
-          if(Math.random()<0.45) accBookStack(acc,ax,yTop,z);
-          else placeAccent(g,ax,yTop,z+rand(-0.03,0.03));
-          occ.push([ax-0.2,ax+0.2]); accents++;
-        }
-        x+=gw;
+  const occAt=(s,lv)=>run.occ[s+"|"+lv]||(run.occ[s+"|"+lv]=[]);
+  const claim=(occ,x0,x1)=>{
+    if(x0<-len/2+0.10||x1>len/2-0.10) return false;
+    if(occ.some(([a,b])=>a<x1+0.06&&b>x0-0.06)) return false;
+    occ.push([x0,x1]); return true;
+  };
+  let budget=Math.floor(Math.pow(Math.random(),1.25)*13);   // 0–12, lighter more often
+  let tries=46;
+  while(budget>0&&tries-->0){
+    const s=Math.random()<0.5?1:-1;
+    const lv=1+Math.floor(Math.random()*3);                  // books survive at eye level
+    const occ=occAt(s,lv), yTop=Y[lv]+0.0275, z=s*0.20;
+    const x=rand(-len/2+0.35,len/2-0.35);
+    const r=Math.random();
+    if(r<0.32){
+      /* a lone survivor, sometimes slumped sideways */
+      const des=pickBook();
+      if(!claim(occ,x-des.tx/2-0.02,x+des.tx/2+0.02)) continue;
+      spawnBook(g,des,x,yTop,z,s,{lean:Math.random()<0.3?(Math.random()-0.5)*0.4:0});
+      budget--;
+    } else if(r<0.56){
+      /* a tight little row, often with one more leaning on its end */
+      const n=Math.min(budget,2+Math.floor(Math.random()*3));
+      const row=[];let w=0;
+      for(let i=0;i<n;i++){const des=pickBook();row.push(des);w+=des.tx;}
+      const leanOne=budget>n&&Math.random()<0.55;
+      const lw=leanOne? 0.14:0;
+      if(!claim(occ,x-w/2-0.02,x+w/2+lw+0.02)) continue;
+      let bx=x-w/2;
+      for(const des of row){ spawnBook(g,des,bx+des.tx/2,yTop,z,s,{yaw:0}); bx+=des.tx; }
+      budget-=n;
+      if(leanOne){
+        /* tilts back onto the row's end — the local lean sign flips with
+           the side yaw so it always falls TOWARD the row in world space */
+        const des=pickBook(), th=0.32+Math.random()*0.12;
+        spawnBook(g,des,bx+des.tx/2+des.h*Math.sin(th)*0.85,yTop,z,s,{lean:-s*th,yaw:0});
+        budget--;
       }
+    } else if(r<0.72){
+      /* left lying flat, cover up */
+      const des=pickBook();
+      if(!claim(occ,x-des.h/2-0.02,x+des.h/2+0.02)) continue;
+      spawnBook(g,des,x,yTop,z,s,{flat:true,yaw:(Math.random()-0.5)*0.3});
+      budget--;
+    } else if(r<0.85){
+      /* a small abandoned stack */
+      const n=Math.min(budget,2+Math.floor(Math.random()*2));
+      if(!claim(occ,x-0.17,x+0.17)) continue;
+      let lift=0;
+      for(let i=0;i<n;i++){
+        const des=pickBook();
+        spawnBook(g,des,x+rand(-0.02,0.02),yTop,z+rand(-0.02,0.02),s,
+          {flat:true,lift,yaw:(Math.random()-0.5)*0.4});
+        lift+=des.tx;
+      }
+      budget-=n;
+    } else if(r<0.94&&budget>=2){
+      /* bookends still clamping the last few spines upright */
+      const n=Math.min(budget,2+Math.floor(Math.random()*3));
+      const row=[];let w=0;
+      for(let i=0;i<n;i++){const des=pickBook();row.push(des);w+=des.tx;}
+      if(!claim(occ,x-w/2-0.09,x+w/2+0.09)) continue;
+      for(const side of[-1,1]){
+        const ex=x+side*(w/2+0.022);
+        const up=new THREE.Mesh(new THREE.BoxGeometry(0.035,0.22,0.14),bookendMat);
+        up.position.set(ex,yTop+0.11,z); g.add(up);
+        const ft=new THREE.Mesh(new THREE.BoxGeometry(0.12,0.015,0.14),bookendMat);
+        ft.position.set(ex-side*0.045,yTop+0.0075,z); g.add(ft);
+      }
+      let bx=x-w/2;
+      for(const des of row){ spawnBook(g,des,bx+des.tx/2,yTop,z,s,{yaw:0}); bx+=des.tx; }
+      budget-=n;
+    } else {
+      /* abandoned open, mid-read */
+      if(!claim(occ,x-0.20,x+0.20)) continue;
+      const ob=OPEN_BOOK.clone();
+      ob.position.set(x,yTop,z);
+      ob.rotation.y=(s>0?Math.PI:0)+(Math.random()-0.5)*0.5;
+      g.add(ob);
+      budget--;
     }
   }
-  g.add(new THREE.Mesh(acc.build(),bookMats[Math.floor(Math.random()*bookMats.length)]));
+  /* sparse non-book clutter — a couple of things per run at most */
+  const nAcc=Math.random()<0.7? 1+Math.floor(Math.random()*2):0;
+  for(let i=0;i<nAcc;i++){
+    const s=Math.random()<0.5?1:-1, lv=1+Math.floor(Math.random()*3);
+    const occ=occAt(s,lv), yTop=Y[lv]+0.0275;
+    const x=rand(-len/2+0.35,len/2-0.35);
+    if(!claim(occ,x-0.18,x+0.18)) continue;
+    placeAccent(g,x,yTop,s*0.20+rand(-0.03,0.03));
+  }
   /* temporal decay: a collapsed board leaning inside the frame */
   if(Math.random()<0.30){
     const fall=new THREE.Mesh(new THREE.BoxGeometry(CELL*0.9,0.05,D*0.9),shelfMat);
@@ -598,6 +677,13 @@ function makeLectern(){
   foot.position.y=0.03; g.add(foot);
   const top=new THREE.Mesh(new THREE.BoxGeometry(0.62,0.04,0.48),deskMat);
   top.position.y=1.16; top.rotation.x=-0.25; g.add(top);
+  /* some still hold what their reader walked away from */
+  if(OPEN_BOOK&&Math.random()<0.4){
+    const ob=OPEN_BOOK.clone();
+    ob.position.set(0,1.185,0);
+    ob.rotation.x=-0.25; ob.rotation.z=(Math.random()-0.5)*0.1;
+    g.add(ob);
+  }
   return g;
 }
 /* display mannequins, procedurally varied: build, tilt, which limbs are
@@ -677,22 +763,25 @@ function makeBookCart(){
     const caster=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,0.04,8),darkMetalMat);
     caster.rotation.z=Math.PI/2; caster.position.set(sx,0.05,sz); g.add(caster);
   }
-  /* its last load: a packed run of spines on one or both lower decks… */
-  for(const sy of[0.16,0.52]) if(Math.random()<0.8){
-    const w=rand(0.3,0.7);
-    const blk=makeBookBlockMesh(w,0.19);
-    blk.position.set(rand(-1,1)*(0.82-w)/2, sy+0.0175+BLOCK_H/2, rand(-0.13,0.13));
-    blk.rotation.y=(Math.random()-0.5)*0.08;
-    g.add(blk);
-  }
-  /* …and strays leaning on the top deck, waiting to be reshelved */
-  const n=Math.floor(Math.random()*4);
-  for(let i=0;i<n;i++){
-    const lean=Math.random()<0.5? (Math.random()-0.5)*0.6 : 0;
-    const b=new THREE.Mesh(new THREE.BoxGeometry(0.04+Math.random()*0.1,0.26,0.17),looseBookMat());
-    b.position.set(rand(-0.34,0.34),0.88+0.0175+0.13,rand(-0.14,0.14));
-    b.rotation.z=lean;
-    g.add(b);
+  /* its last load: 0–5 real volumes nobody reshelved — a couple standing
+     (one usually slumped), the rest lying flat on the decks */
+  let load=Math.floor(Math.random()*6);
+  const decks=[0.16,0.52,0.88];
+  let guard=12;
+  const used=[];                       // [deckY, x0, x1] claims
+  while(load>0&&guard-->0){
+    const sy=decks[Math.floor(Math.random()*decks.length)]+0.0175;
+    const s=Math.random()<0.5?1:-1;
+    const des=pickBook();
+    const flat=Math.random()<0.45;
+    const hw=flat? des.h/2+0.02 : des.tx/2+0.02;
+    const bx=rand(-0.34+hw,0.34-hw);
+    if(used.some(([uy,a,b])=>uy===sy&&a<bx+hw&&b>bx-hw)) continue;
+    used.push([sy,bx-hw,bx+hw]);
+    spawnBook(g,des,bx,sy,rand(-0.08,0.08),s,
+      flat? {flat:true,yaw:(Math.random()-0.5)*0.5}
+          : {lean:Math.random()<0.5?(Math.random()-0.5)*0.5:0});
+    load--;
   }
   /* a stencilled RETURNS plaque hanging off the handle end */
   const plq=new THREE.Mesh(new THREE.PlaneGeometry(0.42,0.105),
@@ -868,6 +957,7 @@ function makeFixture(wx,wz,alongZ){
 
 /* ---------------- build ---------------- */
 export function buildLibrary(){
+  ensureBooks();                       // the design pool, built on first visit
   LIB.obstacles=[]; LIB.pcAnims=[]; LIB.blackT=0; LIB.nextBlack=45;
   const {cx0,cy0,spawnC,tables}=genLibrary();
   const SZ=LW*CELL;

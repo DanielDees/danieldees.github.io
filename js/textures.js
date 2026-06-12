@@ -383,109 +383,192 @@ function woodTex(base,dark,light){
 }
 export const texShelfWood = woodTex("#43321f","26,17,9","96,74,46");
 export const texDeskWood  = woodTex("#5a452c","36,24,12","122,96,58");
-/* ---- the book atlas: one canvas every shelf block samples a window of ----
-   Regions (in v, flipY): a long row of varied book spines along the bottom,
-   a fore-edge/pages strip seen from the top of a standing row, a stacked-
-   pages strip for books lying flat, and a plain dark patch for undersides.
-   Guard bands of background dark separate the strips so mipmapping never
-   bleeds one region into its neighbour. 1024px ≅ 4m of books. */
-export const BOOK_UV={
-  spine:[0.0,0.65],        // canvas y 90..256
-  pagesV:[0.715,0.80],     // canvas y 48..76 — vertical fore-edges (row tops/backs)
-  pagesH:[0.87,0.955],     // canvas y 8..36 — horizontal page layers (flat stacks)
-  dark:[0.985,0.998],      // canvas y 0..4 — plain shadow
-  mPerU:4.0,
+/* ---- proper 3D books ----
+   Each book DESIGN gets its own cover canvas: a cloth/leather base shared
+   across the whole canvas (so mipmap bleed between regions is invisible),
+   with three UV regions — the spine strip, the front-cover plate, and a
+   plain patch for back cover, board edges and endpapers. Titles are real,
+   legible, and very much of this place. */
+export const BOOK_COVER_UV={
+  spine:[0.0,52/256],
+  front:[56/256,192/256],
+  plain:[200/256,250/256],
 };
-const SPINE_COLS=[[122,46,40],[88,38,34],[52,72,52],[38,56,66],[64,52,86],[110,84,44],
-  [70,50,34],[46,40,36],[126,108,72],[58,66,80],[96,64,52],[42,52,42]];
-export function makeBookAtlasTexture(){
-  return makeCanvas(1024,256,(g,w,h)=>{
-    g.fillStyle="#16100b";g.fillRect(0,0,w,h);          // shelf shadow everywhere
-    /* pagesH strip: page layers of books lying flat */
-    g.fillStyle="#c7bb9b";g.fillRect(0,8,w,28);
-    for(let yy=9;yy<36;yy+=2){
-      g.fillStyle=`rgba(92,78,54,${0.10+Math.random()*0.22})`;g.fillRect(0,yy,w,1);
+export const BOOK_TITLES=[
+  ["HOW TO LEAVE","ANON"],
+  ["ROOMS WITHOUT DOORS","E. VOSS"],
+  ["THE LOWER FLOORS","M. ASHWORTH"],
+  ["THE SILENT PATRON","L. HALE"],
+  ["WHAT THE WALLS REMEMBER","I. MERCER"],
+  ["NOTES ON THE HUM","DR. P. FINCH"],
+  ["EXIT","ANON"],
+  ["THE ART OF STANDING STILL","B. QUILL"],
+  ["BELOW THE BELOW","M. ASHWORTH"],
+  ["THE LAST BORROWER","C. WREN"],
+  ["INDEX OF UNMARKED HOURS","THE DESK"],
+  ["MAPS FOR LOST PLACES","T. LOOM"],
+  ["THE SECOND SILENCE","L. HALE"],
+  ["ON BEING FOLLOWED","J. KEEN"],
+  ["THE YELLOW MAZE","S. OKEN"],
+  ["DO NOT READ ALOUD","ANON"],
+  ["EIGHT QUIET FEET","DR. P. FINCH"],
+  ["WHERE THE CARPET ENDS","T. LOOM"],
+  ["LIGHT MAINTENANCE","FACILITIES"],
+  ["FORGOTTEN RETURNS","C. WREN"],
+  ["A FIELD GUIDE TO ABSENCE","I. MERCER"],
+  ["THE SHELVER'S HYMNAL","CHOIR OF ∅"],
+];
+/* muted cloth and leather bindings */
+export const BOOK_BASES=[[110,44,38],[84,36,32],[52,74,54],[40,58,70],[66,54,90],
+  [112,86,46],[72,52,36],[48,42,38],[120,104,70],[58,66,82],[96,62,50],[44,54,44]];
+/* fit-and-draw a line of text, shrinking the font until it fits maxW */
+function fitText(g,txt,x,y,maxW,size,minSize,font){
+  for(let s=size;s>=minSize;s--){
+    g.font=`${font[0]} ${s}px ${font[1]}`;
+    if(g.measureText(txt).width<=maxW){ g.fillText(txt,x,y); return s; }
+  }
+  g.font=`${font[0]} ${minSize}px ${font[1]}`;
+  g.fillText(txt,x,y); return minSize;
+}
+export function makeBookCoverTexture(title,author,base,motif,vol){
+  const t=makeCanvas(256,256,(g,w,h)=>{
+    const [br,bg,bb]=base;
+    g.fillStyle=`rgb(${br},${bg},${bb})`;g.fillRect(0,0,w,h);
+    for(let i=0;i<900;i++){                       // cloth weave / leather grain
+      const v=Math.random()<0.5?-18:14;
+      g.fillStyle=`rgba(${br+v},${bg+v},${bb+v},${0.05+Math.random()*0.10})`;
+      g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*3,1+Math.random()*4);
     }
-    for(let i=0;i<260;i++){                              // worn flecks
-      g.fillStyle=`rgba(70,58,38,${0.1+Math.random()*0.25})`;
-      g.fillRect(Math.random()*w,8+Math.random()*28,2+Math.random()*8,1);
+    const gilt="rgba(206,172,96,0.92)", giltDim="rgba(206,172,96,0.55)";
+    const shadow="rgba(0,0,0,0.4)";
+    const serif=["bold","Georgia, 'Times New Roman', serif"];
+    /* ---- spine strip (x 0..52) ---- */
+    g.save();g.beginPath();g.rect(0,0,52,h);g.clip();
+    g.fillStyle="rgba(0,0,0,0.18)";g.fillRect(0,0,52,h);         // spine sits darker
+    /* raised bands: highlight over shadow */
+    for(const by of[16,34,h-34,h-16]){
+      g.fillStyle="rgba(0,0,0,0.35)";g.fillRect(4,by+2,44,2);
+      g.fillStyle=giltDim;g.fillRect(4,by,44,2);
     }
-    /* pagesV strip: fore-edges of an upright row seen from above/behind */
-    g.fillStyle="#c9bd9d";g.fillRect(0,48,w,28);
-    for(let xx=0;xx<w;xx+=2){
-      g.fillStyle=`rgba(90,76,54,${0.08+Math.random()*0.2})`;g.fillRect(xx,48,1,28);
+    /* title reading top-to-bottom */
+    g.fillStyle=gilt;g.textAlign="center";g.textBaseline="middle";
+    g.save();g.translate(27,h/2);g.rotate(Math.PI/2);
+    g.shadowColor=shadow;g.shadowOffsetX=1;g.shadowOffsetY=1;g.shadowBlur=0;
+    fitText(g,title,0,1,h-110,22,11,serif);
+    g.restore();
+    if(vol){ g.font="bold 13px Georgia";g.fillStyle=giltDim;g.fillText(vol,26,h-44); }
+    g.restore();
+    /* ---- front cover plate (x 56..192) ---- */
+    const fx=56,fw=136;
+    g.save();g.beginPath();g.rect(fx,0,fw,h);g.clip();
+    g.strokeStyle=giltDim;g.lineWidth=2;
+    g.strokeRect(fx+8,10,fw-16,h-20);
+    g.strokeStyle="rgba(206,172,96,0.3)";g.lineWidth=1;
+    g.strokeRect(fx+13,15,fw-26,h-30);
+    g.fillStyle=gilt;g.textAlign="center";g.textBaseline="alphabetic";
+    g.shadowColor=shadow;g.shadowOffsetX=1;g.shadowOffsetY=1;
+    /* wrap the title into the plate */
+    g.font="bold 19px Georgia";
+    const words=title.split(" "),lines=[];let ln="";
+    for(const wd of words){
+      const tl=ln? ln+" "+wd:wd;
+      if(g.measureText(tl).width>fw-40&&ln){lines.push(ln);ln=wd;}else ln=tl;
     }
-    for(let i=0;i<150;i++){                              // dark seams between books
-      g.fillStyle="rgba(28,22,14,0.6)";
-      g.fillRect(Math.random()*w,48,1.5+Math.random()*2.5,28);
+    if(ln)lines.push(ln);
+    let ty=46;
+    for(const l of lines){ fitText(g,l,fx+fw/2,ty,fw-36,19,12,serif); ty+=24; }
+    if(vol){ g.font="bold 13px Georgia";g.fillText(vol,fx+fw/2,ty+2); ty+=18; }
+    g.strokeStyle=giltDim;g.lineWidth=1.5;
+    g.beginPath();g.moveTo(fx+34,ty+2);g.lineTo(fx+fw-34,ty+2);g.stroke();
+    /* central gilt motif */
+    const mx=fx+fw/2,my=h*0.62;
+    g.strokeStyle=gilt;g.lineWidth=2;g.shadowColor="rgba(0,0,0,0)";
+    if(motif===0){            // an eye
+      g.beginPath();g.ellipse(mx,my,24,13,0,0,7);g.stroke();
+      g.beginPath();g.arc(mx,my,6,0,7);g.stroke();
+    } else if(motif===1){     // a door, ajar
+      g.strokeRect(mx-14,my-22,28,44);
+      g.beginPath();g.moveTo(mx-14,my-22);g.lineTo(mx+4,my-16);g.lineTo(mx+4,my+28);g.lineTo(mx-14,my+22);g.closePath();g.stroke();
+    } else if(motif===2){     // a spiral
+      g.beginPath();
+      for(let a=0;a<Math.PI*5;a+=0.25) g.lineTo(mx+Math.cos(a)*a*1.6,my+Math.sin(a)*a*1.6);
+      g.stroke();
+    } else if(motif===3){     // an hourglass
+      g.beginPath();g.moveTo(mx-16,my-20);g.lineTo(mx+16,my-20);g.lineTo(mx-16,my+20);g.lineTo(mx+16,my+20);g.closePath();g.stroke();
+    } else if(motif===4){     // a key
+      g.beginPath();g.arc(mx-10,my,9,0,7);g.stroke();
+      g.beginPath();g.moveTo(mx-1,my);g.lineTo(mx+20,my);g.moveTo(mx+13,my);g.lineTo(mx+13,my+8);g.moveTo(mx+19,my);g.lineTo(mx+19,my+8);g.stroke();
+    } else {                  // a stair descending
+      g.beginPath();let sx=mx-20,sy=my-16;
+      for(let i=0;i<4;i++){g.lineTo(sx,sy);sx+=10;g.lineTo(sx,sy);sy+=9;}
+      g.lineTo(sx,sy);g.stroke();
     }
-    g.fillStyle="rgba(40,32,20,0.4)";g.fillRect(0,48,w,3);g.fillRect(0,73,w,3);
-    /* the spine row: walk left to right, mixing upright spines, matched
-       sets, leaning books, small flat piles and breathing gaps */
-    const col=()=>{const c=SPINE_COLS[Math.floor(Math.random()*SPINE_COLS.length)];
-      const j=()=>Math.max(0,Math.min(255,(Math.random()*26-13)|0));
-      return [c[0]+j(),c[1]+j(),c[2]+j()];};
-    const spine=(x,bw,bh,c)=>{
-      g.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;g.fillRect(x,h-bh,bw,bh);
-      g.fillStyle="rgba(0,0,0,0.30)";g.fillRect(x,h-bh,1.5,bh);          // left shade
-      g.fillStyle="rgba(255,255,255,0.10)";g.fillRect(x+bw-1.5,h-bh,1.5,bh);
-      g.fillStyle="rgba(0,0,0,0.38)";g.fillRect(x,h-bh,bw,2);            // top edge
-      if(Math.random()<0.62){                                            // gilt/cream bands
-        const n=1+(Math.random()<0.4?1:0);
-        for(let i=0;i<n;i++){
-          const by=h-bh+5+Math.random()*bh*0.34;
-          g.fillStyle=Math.random()<0.5?"rgba(190,160,92,0.8)":"rgba(216,206,178,0.7)";
-          g.fillRect(x+1,by,bw-2,1.5+Math.random()*2);
-        }
+    g.shadowColor=shadow;
+    g.font="bold 12px Georgia";g.fillStyle=giltDim;
+    fitText(g,author,mx,h-22,fw-40,12,9,serif);
+    g.restore();
+    /* corner & edge wear over everything */
+    g.shadowColor="rgba(0,0,0,0)";
+    for(let i=0;i<70;i++){
+      g.fillStyle=`rgba(${br+30},${bg+30},${bb+26},${0.08+Math.random()*0.14})`;
+      const ex=Math.random()<0.5? Math.random()*22 : w-Math.random()*22;
+      g.fillRect(ex,Math.random()*h,1+Math.random()*3,1+Math.random()*6);
+    }
+    const vg=g.createRadialGradient(w/2,h/2,h*0.35,w/2,h/2,h*0.75);
+    vg.addColorStop(0,"rgba(0,0,0,0)");vg.addColorStop(1,"rgba(0,0,0,0.22)");
+    g.fillStyle=vg;g.fillRect(0,0,w,h);
+  });
+  return t;
+}
+/* page-block edges: fine layered striations. The leaves laminate through
+   the book's THICKNESS, which maps to u on the exposed faces — so the
+   lines run vertically in the canvas. */
+export const texPages = makeCanvas(64,64,(g,w,h)=>{
+  g.fillStyle="#cfc4a4";g.fillRect(0,0,w,h);
+  for(let x=0;x<w;x+=2){
+    g.fillStyle=`rgba(96,82,58,${0.08+Math.random()*0.2})`;g.fillRect(x,0,1,h);
+  }
+  for(let i=0;i<40;i++){
+    g.fillStyle=`rgba(70,58,38,${0.1+Math.random()*0.2})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1,3+Math.random()*9);
+  }
+});
+export const texPagesAged = makeCanvas(64,64,(g,w,h)=>{
+  g.fillStyle="#a89a76";g.fillRect(0,0,w,h);
+  for(let x=0;x<w;x+=2){
+    g.fillStyle=`rgba(70,58,38,${0.1+Math.random()*0.24})`;g.fillRect(x,0,1,h);
+  }
+  for(let i=0;i<60;i++){
+    g.fillStyle=`rgba(54,42,26,${0.12+Math.random()*0.2})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1,3+Math.random()*9);
+  }
+});
+/* an open spread: two columns of unreadable lines under one legible epigraph */
+export function makeOpenPagesTexture(){
+  return makeCanvas(256,160,(g,w,h)=>{
+    g.fillStyle="#d4c9a8";g.fillRect(0,0,w,h);
+    for(let i=0;i<500;i++){
+      g.fillStyle=`rgba(120,104,72,${Math.random()*0.1})`;
+      g.fillRect(Math.random()*w,Math.random()*h,2,2);
+    }
+    g.fillStyle="rgba(60,50,34,0.35)";g.fillRect(w/2-1,8,2,h-16);   // gutter
+    const phrases=["and the lights went out.","no one was shelving.","the hum stopped.",
+      "it reads us back.","quiet, quiet, quiet.","the floor forgot us."];
+    const ph=phrases[Math.floor(Math.random()*phrases.length)];
+    g.fillStyle="rgba(54,44,30,0.8)";g.font="italic 11px Georgia";g.textAlign="center";
+    g.fillText("— "+ph,w*0.25,24);
+    for(const x0 of[14,w/2+10]){
+      let y=x0<w/2? 36:20;
+      while(y<h-14){
+        g.fillStyle=`rgba(58,48,34,${0.4+Math.random()*0.25})`;
+        g.fillRect(x0,y,(w/2-26)*(0.6+Math.random()*0.4),1.6);
+        y+=6+Math.random()*3;
       }
-      if(bw>9&&Math.random()<0.8){                                       // title dashes
-        g.fillStyle=Math.random()<0.6?"rgba(214,202,170,0.75)":"rgba(20,16,12,0.6)";
-        let ty=h-bh+14+Math.random()*12;
-        const n=2+Math.floor(Math.random()*4);
-        for(let i=0;i<n&&ty<h-40;i++){
-          g.fillRect(x+bw/2-1.2,ty,2.4,5+Math.random()*9);ty+=11+Math.random()*7;
-        }
-      }
-      if(Math.random()<0.34){                                            // call-number label
-        g.fillStyle="rgba(222,214,190,0.92)";g.fillRect(x+1.5,h-26,bw-3,14);
-        g.fillStyle="rgba(60,52,40,0.8)";
-        g.fillRect(x+3,h-22,Math.max(2,bw-7),1.6);
-        g.fillRect(x+3,h-18,Math.max(2,bw-9),1.6);
-      }
-    };
-    let x=2;
-    while(x<w-26){
-      const r=Math.random();
-      if(r<0.05){ x+=6+Math.random()*22; continue; }     // gap of bare shelf
-      if(r<0.13){                                        // small flat pile
-        const pw=26+Math.random()*34;let py=h;
-        const n=2+Math.floor(Math.random()*3);
-        for(let i=0;i<n;i++){
-          const ph=7+Math.random()*6,off=(Math.random()-0.5)*6;py-=ph;
-          const c=col();
-          g.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;g.fillRect(x+off,py,pw,ph);
-          g.fillStyle="rgba(216,206,178,0.8)";g.fillRect(x+off+2,py+ph*0.3,pw-4,ph*0.4);
-          g.fillStyle="rgba(0,0,0,0.3)";g.fillRect(x+off,py,pw,1.5);
-        }
-        x+=pw+8;
-      } else if(r<0.21){                                 // a book leaning into a gap
-        const bw=8+Math.random()*10,bh=96+Math.random()*52;
-        const lean=0.14+Math.random()*0.24;
-        /* spine() draws against the canvas baseline — move the origin to the
-           cursor, tilt, then shift so its baseline lands back on ours */
-        g.save();g.translate(x,h);g.rotate(-lean);g.translate(0,-h);
-        spine(0,bw,bh,col());
-        g.restore();
-        x+=bw+Math.sin(lean)*bh*0.5+4;
-      } else if(r<0.36){                                 // a matched set of volumes
-        const c=col(),bw=8+Math.random()*8,bh=104+Math.random()*52;
-        const n=3+Math.floor(Math.random()*4);
-        for(let i=0;i<n&&x<w-bw-2;i++){ spine(x,bw,bh+(Math.random()-0.5)*4,c); x+=bw; }
-        x+=1+Math.random()*3;
-      } else {                                           // lone upright spine
-        const bw=7+Math.random()*15,bh=92+Math.random()*66;
-        spine(x,bw,bh,col());x+=bw;
-      }
+    }
+    /* a margin note nobody signed */
+    if(Math.random()<0.5){
+      g.fillStyle="rgba(70,44,30,0.6)";g.font="italic 9px Georgia";
+      g.save();g.translate(w-10,h*0.55);g.rotate(-0.16);g.fillText("why",0,0);g.restore();
     }
   });
 }
