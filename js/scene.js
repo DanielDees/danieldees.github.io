@@ -224,7 +224,7 @@ export function buildLevel(){
   const dripMat=t=>new THREE.MeshPhongMaterial({map:t,
     transparent:true, depthWrite:false, specular:0x000000, shininess:1});
   const dripCells=new Set();
-  let dQuota=Math.max(10,Math.round(moldFaces.length*0.05));
+  let dQuota=Math.max(20,Math.round(moldFaces.length*0.10));   // 2× the count
   for(const fc of moldFaces){
     if(dQuota<=0) break;
     let near=false;
@@ -233,8 +233,8 @@ export function buildLevel(){
     if(near) continue;
     const {x,y,dx,dz}=fc;
     const p=cellToWorld(x,y);
-    const wid=rand(0.25,0.6);
-    const len=Math.min(WALL_H*0.72, rand(0.9,2.6));
+    const wid=rand(0.5,1.2);                                   // 2× the size
+    const len=Math.min(WALL_H*0.9, rand(1.8,5.2));
     const off=rand(-1,1)*(E-wid/2-0.2);          // anywhere along the section, fully inside
     const tex=makeDripTextures(wid,len);
     const ry = dx? (dx>0?-Math.PI/2:Math.PI/2) : (dz>0?Math.PI:0);
@@ -246,7 +246,7 @@ export function buildLevel(){
     wp.userData.wallKeys=[mKey(x+dx,y+dz)]; wallDecals.push(wp);
     scene.add(wp);
     /* the ceiling blotch sits against the wall, directly over the run */
-    const cw=wid*rand(1.1,1.6), cd=rand(0.18,0.4);
+    const cw=wid*rand(1.1,1.6), cd=rand(0.36,0.8);
     const cp=new THREE.Mesh(new THREE.PlaneGeometry(cw,cd),dripMat(tex.ceil));
     cp.rotation.x=Math.PI/2;
     cp.rotation.z = dx? (dx>0?-Math.PI/2:Math.PI/2) : (dz>0?Math.PI:0);
