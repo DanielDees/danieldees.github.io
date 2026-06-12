@@ -1,11 +1,12 @@
 /* ---------------- player movement, jumping & collision ---------------- */
 import { lerp } from "./utils.js";
-import { STATE, KEYS, monster } from "./state.js";
+import { STATE, KEYS, monster, spider } from "./state.js";
 import { CELL, cellToWorld, worldToCell, isWall } from "./map.js";
 import { AU, sfxStep, sfxJump, sfxLand } from "./audio.js";
 import { camera, playerLight } from "./scene.js";
 import { ui } from "./ui.js";
 import { monsterCanSee } from "./monster.js";
+import { libCollide, underTable } from "./library.js";
 
 const GRAV=13.5, JUMP_V=4.9;
 function collide(px,pz,r){
@@ -26,7 +27,10 @@ function collide(px,pz,r){
   return {x:nx,z:nz};
 }
 export function updatePlayer(dt){
-  STATE.crouch = STATE.grounded && !!(KEYS["KeyC"]||KEYS["ControlLeft"]);
+  const wantCrouch = STATE.grounded && !!(KEYS["KeyC"]||KEYS["ControlLeft"]);
+  /* in the library you cannot stand up with a tabletop over your head */
+  STATE.crouch = wantCrouch ||
+    (STATE.level===1 && STATE.crouch && underTable(STATE.pos.x,STATE.pos.z));
   const wantSprint = !!(KEYS["ShiftLeft"]||KEYS["ShiftRight"]);
   let fwd=0,str=0;
   if(KEYS["KeyW"])fwd++; if(KEYS["KeyS"])fwd--;
@@ -44,7 +48,11 @@ export function updatePlayer(dt){
     if(STATE.y<=0){ STATE.y=0; STATE.vy=0; STATE.grounded=true; sfxLand(); }
   }
 
-  let speed = STATE.crouch? 2.2 : STATE.sprinting? 8.0 : 4.6;
+  /* adrenaline: from the moment the breaker surges until the doors close
+     behind you, the body stops negotiating — bottomless sprint, +10% pace.
+     (The fold-capable entity is unoutrunnable on raw legs by then.) */
+  const adren = STATE.level===0 && STATE.powerOn;
+  let speed = STATE.crouch? 2.2 : STATE.sprinting? (adren?9.6:8.0) : 4.6;
   const sin=Math.sin(STATE.yaw),cos=Math.cos(STATE.yaw);
   let vx=(-sin*fwd + cos*str), vz=(-cos*fwd - sin*str);
   const vl=Math.hypot(vx,vz)||1; vx/=vl; vz/=vl;
@@ -60,13 +68,16 @@ export function updatePlayer(dt){
     STATE.velZ+=(desZ-STATE.velZ)*k;
   }
   const tx=STATE.pos.x+STATE.velX*dt, tz=STATE.pos.z+STATE.velZ*dt;
-  const solved=collide(tx,tz,0.42);
+  const solved = STATE.level===1? libCollide(tx,tz,0.42,STATE.crouch) : collide(tx,tz,0.42);
   STATE.moving = (movingInput||!STATE.grounded) &&
     (Math.abs(solved.x-STATE.pos.x)>1e-4||Math.abs(solved.z-STATE.pos.z)>1e-4);
   STATE.pos.x=solved.x; STATE.pos.z=solved.z;
 
-  /* stamina: airborne sprinting drains at half rate */
-  if(STATE.sprinting&&STATE.moving){
+  /* stamina: airborne sprinting drains at half rate — unless adrenaline
+     holds the bar pinned blue and full */
+  if(adren){
+    STATE.stamina=1;
+  } else if(STATE.sprinting&&STATE.moving){
     const drain = 0.30 * (STATE.grounded? 1 : 0.5);
     STATE.stamina=Math.max(0,STATE.stamina-dt*drain);
   } else {
@@ -74,14 +85,16 @@ export function updatePlayer(dt){
   }
   ui.stam.style.width=(STATE.stamina*100)+"%";
   ui.stamPct.textContent=Math.round(STATE.stamina*100)+"%";
-  ui.stamWrap.classList.toggle("show", STATE.stamina<0.999);
-  ui.stamWrap.classList.toggle("low", STATE.stamina<0.25);
+  ui.stamName.textContent= adren? "ADRENALINE":"STAMINA";
+  ui.stamWrap.classList.toggle("adren", adren);
+  ui.stamWrap.classList.toggle("show", adren || STATE.stamina<0.999);
+  ui.stamWrap.classList.toggle("low", !adren && STATE.stamina<0.25);
 
   /* footsteps + bob, only with feet on the carpet */
   if(STATE.moving&&STATE.grounded){
     STATE.bob += dt*(STATE.sprinting?13:STATE.crouch?6:9);
     AU.stepTimer-=dt*speed;
-    if(AU.stepTimer<=0){ sfxStep(STATE.crouch,STATE.sprinting); AU.stepTimer=2.4; }
+    if(AU.stepTimer<=0){ sfxStep(STATE.crouch,STATE.sprinting,STATE.level===1); AU.stepTimer=2.4; }
   }
   const targetEye = STATE.crouch? 0.85 : 1.62;
   STATE.curEyeH = lerp(STATE.curEyeH, targetEye, dt*9);
@@ -89,8 +102,22 @@ export function updatePlayer(dt){
   camera.position.set(STATE.pos.x, STATE.y+STATE.curEyeH+bobY, STATE.pos.z);
   camera.rotation.order="YXZ";
   camera.rotation.y=STATE.yaw; camera.rotation.x=STATE.pitch;
+  camera.rotation.z=0;
+  /* post-drop ambience: a sway so slow and small you doubt it's there */
+  if(STATE.shakeAmp>0.0005){
+    const ts=performance.now()/1000;
+    camera.position.x+=Math.sin(ts*2.1)*STATE.shakeAmp;
+    camera.position.y+=Math.sin(ts*2.9+1.7)*STATE.shakeAmp*0.6;
+    camera.position.z+=Math.cos(ts*2.5+0.6)*STATE.shakeAmp;
+    camera.rotation.z=Math.sin(ts*1.7)*STATE.shakeAmp*0.16;
+  }
   playerLight.position.set(STATE.pos.x,2.4,STATE.pos.z);
 
-  const hidden = STATE.crouch && monster.active && !monsterCanSee();
-  ui.hidden.classList.toggle("show", hidden && monster.pos.distanceTo(STATE.pos)<20);
+  if(STATE.level===1){
+    const hid = STATE.crouch && spider.active && underTable(STATE.pos.x,STATE.pos.z);
+    ui.hidden.classList.toggle("show", hid && spider.pos.distanceTo(STATE.pos)<25);
+  } else {
+    const hidden = STATE.crouch && monster.active && !monsterCanSee();
+    ui.hidden.classList.toggle("show", hidden && monster.pos.distanceTo(STATE.pos)<20);
+  }
 }

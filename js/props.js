@@ -1,11 +1,14 @@
 /* ---------------- props ---------------- */
 import { rand } from "./utils.js";
-import { W, H, CELL, WALL_H, cellToWorld, randomOpenCell, isWall } from "./map.js";
-import { makeCanvas, texWall } from "./textures.js";
+import { W, H, CELL, WALL_H as WALL_H0, cellToWorld, randomOpenCell, isWall } from "./map.js";
+import { makeCanvas, texWall, scaleBoxUV } from "./textures.js";
 import { scene, wallMeshes, removeDecalsOnWall } from "./scene.js";
 
 export let interactables=[];    // {kind, mesh, label, taken}
 export let exitDoor=null;
+/* level changes rebuild the prop set from scratch */
+export function clearInteractables(){ interactables.length=0; exitDoor=null; }
+export function addInteractable(it){ interactables.push(it); }
 
 function makeBottle(){
   const g=new THREE.Group();
@@ -82,25 +85,34 @@ function makeBreaker(p,facing){
   return g;
 }
 export const ELEV={OPEN_W:2.0, OPEN_H:2.6, DEPTH:2.6};   // cab dimensions, shared with the cutscene
-function makeElevator(p,facing){
+export function makeElevator(p,facing,opts={}){
   /* the exit elevator, carved INTO its wall cell: placeProps removes that
      cell's wall box and this rebuilds it as flanks + header around a
      recessed cab. Local frame: origin at the centre of the doorway face at
      floor level, +z pointing out into the room. The grid cell stays solid,
      so collision still keeps the player out — only the cutscene camera
-     ever goes inside. */
+     ever goes inside. THE END reuses this builder for the CRASHED arrival
+     cab, passing its own (taller) wall height and wall material. */
   const {OPEN_W,OPEN_H,DEPTH}=ELEV;
+  const WALL_H=opts.wallH||WALL_H0;
   const g=new THREE.Group();
-  const wallM=new THREE.MeshPhongMaterial({map:texWall, specular:0x0d0c07, shininess:6});
+  const wallM=opts.wallMat||new THREE.MeshPhongMaterial({map:texWall, specular:0x0d0c07, shininess:6});
   const metal=new THREE.MeshPhongMaterial({color:0x9aa0a4, specular:0x222426, shininess:22});
   const darkMetal=new THREE.MeshPhongMaterial({color:0x53585c, specular:0x303336, shininess:40});
   const add=(geo,mat,x,y,z)=>{const m=new THREE.Mesh(geo,mat);m.position.set(x,y,z);g.add(m);return m;};
-  /* rebuilt wall around the opening */
+  /* rebuilt wall around the opening. With opts.uvTile the odd-sized flank/
+     header boxes map the wall texture at a fixed world scale, so they sit
+     seamlessly beside the regular full-size wall cells. */
+  const wallGeo=(w,h,d)=>{
+    const geo=new THREE.BoxGeometry(w,h,d);
+    if(opts.uvTile) scaleBoxUV(geo,w,h,d,opts.uvTile);
+    return geo;
+  };
   const flankW=(CELL-OPEN_W)/2;
-  add(new THREE.BoxGeometry(flankW,WALL_H,CELL),wallM,-(OPEN_W/2+flankW/2),WALL_H/2,-CELL/2);
-  add(new THREE.BoxGeometry(flankW,WALL_H,CELL),wallM, (OPEN_W/2+flankW/2),WALL_H/2,-CELL/2);
-  add(new THREE.BoxGeometry(OPEN_W,WALL_H-OPEN_H,CELL),wallM,0,(WALL_H+OPEN_H)/2,-CELL/2);
-  add(new THREE.BoxGeometry(OPEN_W,OPEN_H,CELL-DEPTH),wallM,0,OPEN_H/2,-(DEPTH+(CELL-DEPTH)/2));
+  add(wallGeo(flankW,WALL_H,CELL),wallM,-(OPEN_W/2+flankW/2),WALL_H/2,-CELL/2);
+  add(wallGeo(flankW,WALL_H,CELL),wallM, (OPEN_W/2+flankW/2),WALL_H/2,-CELL/2);
+  add(wallGeo(OPEN_W,WALL_H-OPEN_H,CELL),wallM,0,(WALL_H+OPEN_H)/2,-CELL/2);
+  add(wallGeo(OPEN_W,OPEN_H,CELL-DEPTH),wallM,0,OPEN_H/2,-(DEPTH+(CELL-DEPTH)/2));
   /* ---- cab shell: brushed panelled walls, speckled vinyl floor ---- */
   const cabWallTex=makeCanvas(256,256,(gx,w,h)=>{
     gx.fillStyle="#878d91";gx.fillRect(0,0,w,h);
@@ -295,6 +307,11 @@ export function updateProps(t){
     if(it.kind==="bottle"||it.kind==="fuse"){
       it.mesh.rotation.y=t*0.8;
       it.mesh.position.y=0.12+Math.sin(t*2+it.mesh.position.x)*0.05;
+    } else if(it.kind==="disc"){
+      /* a slow turn and a whisper of a hover — enough to read as takeable
+         on a murky shelf without breaking the still-library mood */
+      it.mesh.rotation.y=t*0.55+it.baseY;
+      it.mesh.position.y=it.baseY+Math.sin(t*1.6+it.mesh.position.x*2)*0.018;
     }
   }
 }

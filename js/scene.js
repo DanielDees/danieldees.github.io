@@ -26,7 +26,7 @@ addEventListener("resize",()=>{camera.aspect=innerWidth/innerHeight;camera.updat
    fixture, and those should sit in real murk (another −40% from v1.2). */
 export const hemi = new THREE.HemisphereLight(0xffe9b0, 0x2c2414, 0.08);
 scene.add(hemi);
-const amb = new THREE.AmbientLight(0x6b5d35, 0.05);
+export const amb = new THREE.AmbientLight(0x6b5d35, 0.05);
 scene.add(amb);
 export const playerLight = new THREE.PointLight(0xffeeb0, 0.12, 9, 1.8); // faint readability fill
 scene.add(playerLight);
@@ -46,6 +46,49 @@ for(let i=0;i<LIGHT_POOL_N;i++){
   const pl=new THREE.PointLight(0xffeec0, 0, 11, 2.2);
   pl.position.y=WALL_H-0.5;
   scene.add(pl); lightPool.push(pl);
+}
+
+/* everything added so far survives a level change; buildLevel/buildLibrary
+   meshes (and the entities/props added later) don't get the tag, so
+   clearLevelScene sweeps them all without each module keeping lists */
+for(const o of scene.children) o.userData.persist=true;
+export function clearLevelScene(){
+  for(const o of [...scene.children])
+    if(!o.userData.persist) scene.remove(o);
+  lights.length=0;
+  wallMeshes=new Map();
+  wallDecals.length=0;
+}
+/* fog & ambient floor per level. THE END sits in a cooler, deeper murk:
+   its minimum ambient light level is roughly HALF of level 0's. */
+export function setLevelEnvironment(level){
+  if(level===1){
+    scene.fog.color.setHex(0x030404); scene.background.setHex(0x030404);
+    scene.fog.near=6; scene.fog.far=62;
+    hemi.color.setHex(0xe8e2d0); hemi.groundColor.setHex(0x14161c);
+    hemi.intensity=0.048;
+    amb.color.setHex(0x4a5060); amb.intensity=0.03;
+  }
+}
+/* one fixture record, one behavior: every light in the game — level-0
+   troffer or library hanging strip — is driven by the same lights.js
+   pipeline (panelValue flicker patterns, warmth hue, dimY yellowing,
+   pool binding, buzz voices). Builders only choose the knobs.
+   dimDen: how hard a below-max `bright` yellows the tube (level 0: 0.15;
+   the library's poorer current uses a wider band, so its strips idle a
+   deeper yellow before the burnout pushes them orange-red). */
+export function makeLightRecord(glowMat,tubeMat,cx,cy,world,opts={}){
+  const warm = opts.warm!==undefined? opts.warm : Math.random()<0.10;
+  const bright = opts.bright!==undefined? opts.bright : (warm?1:rand(0.85,1));
+  const dimDen = opts.dimDen||0.15;
+  return {glowMat, tubeMat, cx, cy, world,
+    fixY:opts.fixY, wakeAt:opts.wakeAt||0,
+    flickery: opts.flickery!==undefined? opts.flickery : Math.random()<0.22,
+    warm, warmth:warm?1:0, bright, dimY:warm?0:(1-bright)/dimDen,
+    phase:Math.random()*100, on:1,
+    mode:"steady", timer:rand(1,12), pattern:0, rate:20,
+    burstDur:0, burstT:0, descT:2, riseT:0.5, seed:Math.random()*1000, lastTick:0,
+    near:0, shocked:false, shockT:0};
 }
 
 /* build level meshes */
@@ -362,14 +405,7 @@ export function buildLevel(){
       /* healthy panels idle at 85–100% of max; dimY (0 at full, 1 at the
          floor) faintly yellows the dimmer ones — same idea as the dying
          tubes' orange gradient, far subtler */
-      const bright=warm? 1 : rand(0.85,1);
-      lights.push({glowMat:glowMat, tubeMat:tubeMat, cx:x, cy:y, world:p,
-        flickery:Math.random()<0.22,
-        warm:warm, warmth:warm?1:0, bright:bright, dimY:warm?0:(1-bright)/0.15,
-        phase:Math.random()*100, on:1,
-        mode:"steady", timer:rand(1,12), pattern:0, rate:20,
-        burstDur:0, burstT:0, descT:2, riseT:0.5, seed:Math.random()*1000, lastTick:0,
-        near:0, shocked:false, shockT:0});
+      lights.push(makeLightRecord(glowMat,tubeMat,x,y,p,{warm}));
     }
   }
 }

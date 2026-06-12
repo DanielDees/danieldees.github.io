@@ -1,11 +1,26 @@
 /* ---------------- the entity ---------------- */
 import { clamp, lerp, angLerp, rand } from "./utils.js";
 import { STATE, monster } from "./state.js";
+import { scene } from "./scene.js";
 import { W, H, CELL, cellToWorld, worldToCell, isWall, losCells, bfsPath, randomOpenCell, farOpenWorldPoint } from "./map.js";
-import { AU, panTo, sfxAlert, sfxStinger, sfxGroan, sfxHeartbeat, sfxKnock, sfxShockwave } from "./audio.js";
+import { AU, panTo, sfxAlert, sfxStinger, sfxGroan, sfxHeartbeat, sfxKnock, sfxShockwave,
+         sfxTeleport } from "./audio.js";
 import { makeCanvas } from "./textures.js";
-import { ui, toast } from "./ui.js";
+import { ui } from "./ui.js";
 import { die } from "./lifecycle.js";
+
+const smokeTex=()=>makeCanvas(128,128,(c,w,h)=>{
+  c.clearRect(0,0,w,h);
+  for(let i=0;i<60;i++){
+    const a=Math.random()*Math.PI*2, rr=Math.pow(Math.random(),0.7)*w*0.36;
+    const x=w/2+Math.cos(a)*rr, y=h/2+Math.sin(a)*rr;
+    const r=8+Math.random()*18;
+    const al=(0.16+0.42*(1-rr/(w*0.4)))*(0.7+Math.random()*0.5);
+    const gr=c.createRadialGradient(x,y,0.4,x,y,r);
+    gr.addColorStop(0,`rgba(4,3,5,${al})`);gr.addColorStop(1,"rgba(4,3,5,0)");
+    c.fillStyle=gr;c.beginPath();c.arc(x,y,r,0,7);c.fill();
+  }
+});
 
 export function makeMonster(){
   /* near-black body: a faint warm specular sheen (not diffuse colour) is
@@ -62,18 +77,6 @@ export function makeMonster(){
     const s=new THREE.Mesh(new THREE.SphereGeometry(r/1.12,18,12), auraMat(op));
     s.position.y=1.7; s.userData.baseOp=op; g.add(s); g.userData.aura.push(s);
   }
-  const smokeTex=()=>makeCanvas(128,128,(c,w,h)=>{
-    c.clearRect(0,0,w,h);
-    for(let i=0;i<60;i++){
-      const a=Math.random()*Math.PI*2, rr=Math.pow(Math.random(),0.7)*w*0.36;
-      const x=w/2+Math.cos(a)*rr, y=h/2+Math.sin(a)*rr;
-      const r=8+Math.random()*18;
-      const al=(0.16+0.42*(1-rr/(w*0.4)))*(0.7+Math.random()*0.5);
-      const gr=c.createRadialGradient(x,y,0.4,x,y,r);
-      gr.addColorStop(0,`rgba(4,3,5,${al})`);gr.addColorStop(1,"rgba(4,3,5,0)");
-      c.fillStyle=gr;c.beginPath();c.arc(x,y,r,0,7);c.fill();
-    }
-  });
   const mkSmoke=(sx,sy,op)=>{
     const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:smokeTex(),
       transparent:true, opacity:op, depthWrite:false}));
@@ -115,11 +118,108 @@ export function escalateMonster(){
     }
   }
 }
+/* ---- the space-fold: every ~15s (tightening 2s per objective, floored)
+   it teleports 2–4 wall segments along its current route, never landing
+   closer than one segment to the destination. Both ends of the fold poof
+   into a knot of dark fog crossed with shear lines that dissipates over a
+   second. The fold itself carries its own speed; the entity's legs were
+   never the threat. ---- */
+const TELE_BASE=13, TELE_STEP=2, TELE_MIN=7;
+const telePeriod=()=>Math.max(TELE_MIN, TELE_BASE-TELE_STEP*monster.escalation);
+const poofs=[];
+function spawnPoof(x,z,big=1){
+  const g=new THREE.Group(); g.position.set(x,0,z);
+  const sprites=[], lines=[];
+  for(let i=0;i<4;i++){
+    const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:smokeTex(),
+      transparent:true, opacity:(0.55+Math.random()*0.3), depthWrite:false}));
+    const s=(1.6+Math.random()*1.6)*big;
+    sp.scale.set(s,s*(1.1+Math.random()*0.6),1);
+    sp.position.set(rand(-0.4,0.4),1.0+Math.random()*1.6,rand(-0.4,0.4));
+    sp.userData={op:sp.material.opacity, grow:0.6+Math.random()*0.8};
+    g.add(sp); sprites.push(sp);
+  }
+  /* the shear lines: thin dark slashes through the fog, each sliding along
+     its own axis as the poof dies */
+  for(let i=0;i<10;i++){
+    const m=new THREE.Mesh(new THREE.PlaneGeometry((0.9+Math.random()*1.7)*big,0.02+Math.random()*0.035),
+      new THREE.MeshBasicMaterial({color:0x05040a, transparent:true,
+        opacity:0.5+Math.random()*0.3, side:THREE.DoubleSide, depthWrite:false}));
+    m.position.set(rand(-0.7,0.7),0.5+Math.random()*2.2,rand(-0.7,0.7));
+    m.rotation.set(rand(-0.5,0.5),Math.random()*Math.PI,rand(-1.0,1.0));
+    m.userData={op:m.material.opacity,
+      slide:new THREE.Vector3(rand(-1,1),rand(-0.3,0.6),rand(-1,1)).multiplyScalar(0.5)};
+    g.add(m); lines.push(m);
+  }
+  scene.add(g);
+  poofs.push({g,t:0,sprites,lines});
+}
+function updatePoofs(dt){
+  for(let i=poofs.length-1;i>=0;i--){
+    const p=poofs[i]; p.t+=dt;
+    if(p.t>=1){
+      scene.remove(p.g);
+      p.g.traverse(o=>{ if(o.material){ if(o.material.map) o.material.map.dispose();
+        o.material.dispose(); } if(o.geometry) o.geometry.dispose(); });
+      poofs.splice(i,1); continue;
+    }
+    for(const sp of p.sprites){
+      sp.material.opacity=sp.userData.op*(1-p.t);
+      const gr=1+sp.userData.grow*dt;
+      sp.scale.x*=gr; sp.scale.y*=gr;
+      sp.position.y+=dt*0.5;
+    }
+    for(const m of p.lines){
+      m.material.opacity=m.userData.op*Math.max(0,1-p.t*1.25);  // the shears die first
+      m.position.addScaledVector(m.userData.slide,dt);
+      m.rotation.z+=dt*0.6;
+    }
+  }
+}
+export function clearMonsterFx(){
+  for(const p of poofs) scene.remove(p.g);
+  poofs.length=0;
+}
+/* fold along the current path. Returns false when there is nowhere to go
+   (no route, or already within two segments of the destination). */
+function teleportAlongPath(m){
+  if(!m.path.length) return false;
+  const pts=[{x:m.pos.x,z:m.pos.z},...m.path];
+  let total=0;
+  for(let i=1;i<pts.length;i++) total+=Math.hypot(pts[i].x-pts[i-1].x,pts[i].z-pts[i-1].z);
+  const maxJump=total-CELL;                  // always leave one segment of approach
+  if(maxJump<CELL) return false;
+  let jump=Math.min(rand(2,4)*CELL,maxJump);
+  const fx=m.pos.x, fz=m.pos.z;
+  let i=1;
+  while(i<pts.length-1){
+    const seg=Math.hypot(pts[i].x-pts[i-1].x,pts[i].z-pts[i-1].z);
+    if(jump<=seg) break;
+    jump-=seg; i++;
+  }
+  const a=pts[i-1], b=pts[i], L=Math.hypot(b.x-a.x,b.z-a.z)||1, f=Math.min(1,jump/L);
+  const nx=lerp(a.x,b.x,f), nz=lerp(a.z,b.z,f);
+  const cc=worldToCell(nx,nz);
+  if(isWall(cc.cx,cc.cy)) return false;      // never fold into a wall
+  spawnPoof(fx,fz,1.0);
+  m.pos.x=nx; m.pos.z=nz;
+  m.path=m.path.slice(i-1);                  // resume from the landing segment
+  m.faceAng=Math.atan2(b.x-nx,b.z-nz);
+  m.mesh.position.set(nx,m.mesh.position.y,nz);
+  spawnPoof(nx,nz,0.8);
+  /* the fold's voice rises from whichever end is nearer the player */
+  const dF=Math.hypot(STATE.pos.x-fx,STATE.pos.z-fz);
+  const dN=Math.hypot(STATE.pos.x-nx,STATE.pos.z-nz);
+  const [sx,sz]=dF<=dN? [fx,fz]:[nx,nz];
+  sfxTeleport(clamp(1-Math.min(dF,dN)/52,0.06,1), panTo(sx,sz));
+  return true;
+}
 export function wakeMonster(){
   monster.active=true; monster.mesh.visible=true;
   const p=farOpenWorldPoint(STATE.pos.x,STATE.pos.z,40);
   monster.pos.set(p.x,0,p.z);
   monster.groanT=2.5;
+  monster.teleT=telePeriod()*rand(0.9,1.2);
   triggerShockwave(p.x,p.z);            // announce it from the spawn point
   monster.shockTimer=shockPeriod();     // …then recurring, tightening per objective
 }
@@ -220,6 +320,7 @@ function startAlert(){
 const hash=n=>{const s=Math.sin(n)*43758.5453;return s-Math.floor(s);};
 const SPEED_TARGETS={wander:2.0, investigate:3.4, alert:0, chase:6.4, hunt:3.4};
 export function updateMonster(dt){
+  updatePoofs(dt);
   /* delayed first wake: the almond-water grab lights a short fuse */
   if(!monster.active && monster.wakeT>0 && !STATE.dead && !STATE.won){
     monster.wakeT-=dt;
@@ -234,7 +335,17 @@ export function updateMonster(dt){
   if(m.held) return;
   /* the disruption pulse recurs from its current position */
   m.shockTimer-=dt;
-  if(m.shockTimer<=0){ triggerShockwave(m.pos.x,m.pos.z); m.shockTimer=shockPeriod(); }
+  if(m.shockTimer<=0){
+    triggerShockwave(m.pos.x,m.pos.z); m.shockTimer=shockPeriod();
+    /* every pulse after the wake one doubles as a sounding: the building
+       hands it your position at this instant and it walks the echo down */
+    if(!m.rush && m.state!=="chase" && m.state!=="alert"){
+      m.lastSeen=STATE.pos.clone();
+      m.state="hunt";
+      m.searchT=m.pos.distanceTo(m.lastSeen)/SPEED_TARGETS.hunt+6;
+      m.repath=0; m.pauseT=0; m.knockMove=null;
+    }
+  }
   const dx=STATE.pos.x-m.pos.x, dz=STATE.pos.z-m.pos.z;
   const d=Math.hypot(dx,dz);
   m.repath-=dt;
@@ -255,7 +366,7 @@ export function updateMonster(dt){
       m.alertT-=dt;
       m.faceAng=Math.atan2(dx,dz);                  // turn toward the player
       if(m.alertT<=0){
-        if(sees){ m.state="chase"; sfxStinger(); toast("RUN.",1500); }
+        if(sees){ m.state="chase"; sfxStinger(); }
         else    { m.state="hunt"; m.searchT=6; }
       }
       break;
@@ -267,7 +378,7 @@ export function updateMonster(dt){
       else {
         const arrived = m.lastSeen && m.pos.distanceTo(m.lastSeen)<1.5;
         m.searchT -= dt*(arrived?2.5:1);
-        if(m.searchT<=0){ m.state="wander"; m.rush=false; m.path=[]; toast("…it gave up. Breathe.",2600); }
+        if(m.searchT<=0){ m.state="wander"; m.rush=false; m.path=[]; }
       }
       break;
   }
@@ -288,7 +399,9 @@ export function updateMonster(dt){
     else if(m.path.length===0&&m.repath<=0&&!m.knockMove){
       const cc=worldToCell(m.pos.x,m.pos.z);
       const byWall=isWall(cc.cx+1,cc.cy)||isWall(cc.cx-1,cc.cy)||isWall(cc.cx,cc.cy+1)||isWall(cc.cx,cc.cy-1);
-      if(Math.random()<(byWall?0.6:0.4)){ m.pauseT=rand(2,5.5); m.repath=0.2; }
+      /* each objective cleared makes it linger less (−15% per step) */
+      const pauseK=Math.pow(0.85,m.escalation);
+      if(Math.random()<(byWall?0.6:0.4)*pauseK){ m.pauseT=rand(2,5.5); m.repath=0.2; }
       else {
         /* marginal awareness: it drifts toward the player's side of the map
            more often than chance — strongly so from very far away. It never
@@ -302,6 +415,13 @@ export function updateMonster(dt){
         setPathTo(p.x,p.z); m.repath=1.5;
       }
     }
+  }
+
+  /* ---- the space-fold: it periodically poofs ahead along its route ---- */
+  m.teleT-=dt;
+  if(m.teleT<=0){
+    /* a failed fold (nowhere to go) retries soon; a real one waits a period */
+    m.teleT = teleportAlongPath(m)? telePeriod()*rand(0.85,1.25) : rand(2,4);
   }
 
   /* ---- movement (real displacement drives the animation) ---- */

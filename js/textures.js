@@ -299,6 +299,336 @@ export function makeDripTextures(wid,len){
   }
   return {wall,ceil};
 }
+/* ================= THE END — the infinite library ================= */
+/* aged institutional plaster, TILEABLE: the walls are 8m boxes mixed with
+   odd-sized elevator flanks, so the texture must map at a fixed world
+   scale (scaleBoxUV below) and wrap seamlessly — no baked-in baseboard
+   (that's real geometry now), no features that betray the tile seam. */
+export const texLibWall = makeCanvas(256,256,(g,w,h)=>{
+  g.fillStyle="#878173";g.fillRect(0,0,w,h);
+  for(let i=0;i<700;i++){               // plaster mottling, low contrast
+    const v=Math.random();
+    g.fillStyle=`rgba(${v<0.5?100:134},${v<0.5?94:128},${v<0.5?82:112},${0.04+Math.random()*0.06})`;
+    g.fillRect(Math.random()*w,Math.random()*h,Math.random()*5+2,Math.random()*10+3);
+  }
+  for(let i=0;i<8;i++){                 // faint grime bands that fade in AND out (seam-safe)
+    const x=Math.random()*w, ww=2+Math.random()*6, y0=Math.random()*h*0.5;
+    const gr=g.createLinearGradient(0,y0,0,y0+h*0.45);
+    const a=0.04+Math.random()*0.07;
+    gr.addColorStop(0,"rgba(60,56,46,0)");
+    gr.addColorStop(0.5,`rgba(60,56,46,${a})`);
+    gr.addColorStop(1,"rgba(60,56,46,0)");
+    g.fillStyle=gr;g.fillRect(x,y0,ww,h*0.45);
+  }
+});
+/* rescale a BoxGeometry's per-face UVs so a RepeatWrapping texture maps at
+   `m` meters per tile on every face, whatever the box dimensions — adjacent
+   odd-sized boxes (walls, elevator flanks, headers) then share one scale */
+export function scaleBoxUV(geo,w,h,d,m){
+  const uv=geo.attributes.uv;
+  const dims=[[d,h],[d,h],[w,d],[w,d],[w,h],[w,h]];   // ±x, ±y, ±z face sizes
+  for(let f=0;f<6;f++){
+    const [fw,fh]=dims[f];
+    for(let i=0;i<4;i++){
+      const idx=f*4+i;
+      uv.setXY(idx, uv.getX(idx)*fw/m, uv.getY(idx)*fh/m);
+    }
+  }
+  uv.needsUpdate=true;
+  return geo;
+}
+/* the thick grey-blue carpet that mutes every footstep */
+export const texLibCarpet = makeCanvas(512,512,(g,w,h)=>{
+  g.fillStyle="#3a4250";g.fillRect(0,0,w,h);
+  for(let i=0;i<26000;i++){const v=Math.random();
+    g.fillStyle=`rgba(${v<.5?24:74},${v<.5?28:84},${v<.5?38:104},0.28)`;
+    g.fillRect(Math.random()*w,Math.random()*h,1.5,1.5);}
+  /* faint herringbone weave bands */
+  for(let y=0;y<h;y+=24){
+    g.fillStyle=`rgba(${(y/24)%2?28:60},${(y/24)%2?34:68},${(y/24)%2?46:88},0.07)`;
+    g.fillRect(0,y,w,12);
+  }
+  for(let i=0;i<9;i++){                 // old pressure-stains, dust shadows
+    const x=Math.random()*w,y=Math.random()*h,r=20+Math.random()*70;
+    g.save();g.translate(x,y);g.rotate(Math.random()*Math.PI);g.scale(1,0.5+Math.random()*0.8);
+    const gr=g.createRadialGradient(0,0,2,0,0,r);
+    gr.addColorStop(0,`rgba(14,16,22,${0.10+Math.random()*0.16})`);gr.addColorStop(1,"rgba(14,16,22,0)");
+    g.fillStyle=gr;g.fillRect(-r,-r,r*2,r*2);g.restore();
+  }
+});
+/* high dark ceiling: old planks, swallowed by the murk anyway */
+export const texLibCeil = makeCanvas(256,256,(g,w,h)=>{
+  g.fillStyle="#241f1a";g.fillRect(0,0,w,h);
+  for(let y=0;y<=h;y+=32){g.fillStyle="rgba(10,8,6,0.7)";g.fillRect(0,y,w,2);}
+  for(let i=0;i<1200;i++){
+    g.fillStyle=`rgba(${40+Math.random()*26|0},${34+Math.random()*20|0},${24+Math.random()*14|0},${Math.random()*0.16})`;
+    g.fillRect(Math.random()*w,Math.random()*h,Math.random()*22+4,1.5);
+  }
+});
+/* worn dark walnut for the stacks; a warmer oak for tables & the desk */
+function woodTex(base,dark,light){
+  return makeCanvas(256,256,(g,w,h)=>{
+    g.fillStyle=base;g.fillRect(0,0,w,h);
+    for(let i=0;i<420;i++){             // long vertical grain
+      const x=Math.random()*w, l=20+Math.random()*120;
+      g.fillStyle=`rgba(${Math.random()<0.5?dark:light},${0.10+Math.random()*0.18})`;
+      g.fillRect(x,Math.random()*h,1+Math.random()*1.6,l);
+    }
+    for(let i=0;i<26;i++){              // scuffs and chips
+      g.fillStyle=`rgba(16,11,7,${0.08+Math.random()*0.16})`;
+      g.save();g.translate(Math.random()*w,Math.random()*h);g.rotate((Math.random()-0.5)*0.8);
+      g.fillRect(0,0,4+Math.random()*22,1+Math.random()*2);g.restore();
+    }
+  });
+}
+export const texShelfWood = woodTex("#43321f","26,17,9","96,74,46");
+export const texDeskWood  = woodTex("#5a452c","36,24,12","122,96,58");
+/* temporal decay: a jagged dark crack wandering down a wall, with branches.
+   Alpha decal — each call grows a unique one. */
+export function makeCrackTexture(){
+  const t=makeCanvas(96,224,(g,w,h)=>{
+    g.clearRect(0,0,w,h);
+    const branch=(x,y,ang,len,wid)=>{
+      while(len>0&&y<h&&x>2&&x<w-2){
+        const nx=x+Math.sin(ang)*3, ny=y+Math.cos(ang)*3;
+        g.strokeStyle=`rgba(22,18,12,${0.5+Math.random()*0.4})`;
+        g.lineWidth=wid;
+        g.beginPath();g.moveTo(x,y);g.lineTo(nx,ny);g.stroke();
+        /* hairline halo */
+        g.strokeStyle="rgba(60,54,42,0.18)";g.lineWidth=wid+2;
+        g.beginPath();g.moveTo(x,y);g.lineTo(nx,ny);g.stroke();
+        x=nx;y=ny;len-=3;
+        ang+=(Math.random()-0.5)*0.7;
+        ang=ang*0.86;                       // keep falling mostly downward
+        if(Math.random()<0.06&&wid>0.8) branch(x,y,ang+(Math.random()<0.5?-0.9:0.9),len*0.45,wid*0.6);
+        wid*=0.995;
+      }
+    };
+    branch(w*(0.3+Math.random()*0.4),2,(Math.random()-0.5)*0.6,h*1.2,2.2+Math.random()*1.4);
+  });
+  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearFilter; t.generateMipmaps=false;
+  return t;
+}
+/* short texts and labels, meaninglessly placed — most just say the level's
+   name. Stenciled paint, eroded. */
+export function makeEndTextTexture(txt="THE END"){
+  const t=makeCanvas(512,128,(g,w,h)=>{
+    g.clearRect(0,0,w,h);
+    g.fillStyle="rgba(28,24,18,0.88)";
+    g.font="bold 86px Courier New";g.textAlign="center";g.textBaseline="middle";
+    g.fillText(txt,w/2,h/2+4);
+    /* erosion: eat random holes out of the paint */
+    g.globalCompositeOperation="destination-out";
+    for(let i=0;i<260;i++){
+      g.fillStyle=`rgba(0,0,0,${0.3+Math.random()*0.7})`;
+      g.beginPath();g.arc(Math.random()*w,Math.random()*h,Math.random()*3.2,0,7);g.fill();
+    }
+    g.globalCompositeOperation="source-over";
+  });
+  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearFilter; t.generateMipmaps=false;
+  return t;
+}
+/* faded posters: aged notices and clippings with REAL, readable text that
+   almost parses — headline, dateline, body copy, the works — and means
+   nothing at all if you actually try to follow it. */
+const P_HEAD=["ALL RETURNS ARE FINAL","THE STACKS CLOSE AT NEVER","SILENCE IS DUE BACK",
+  "RENEW YOUR SELF TODAY","LATE FEES ACCRUE INWARD","SHELVING IS A PRIVILEGE",
+  "THE CATALOG KNOWS","MIND THE AISLES","REPORT MISSING HOURS","QUIET IS MANDATORY"];
+const P_MAST=["THE DAILY STACK","THE CIRCULAR","END TIMES","THE RETURNS DESK","THE QUIET PAGE"];
+const P_SUBJ=["Patrons","Borrowers","The shelves","All visitors","Lost items","The hours",
+  "Quiet readers","Overdue persons","The aisles","Returning members","Unattended books"];
+const P_VERB=["must remain","will be considered","are reminded to become","may not exceed",
+  "should report","have always been","will be shelved as","must not describe",
+  "are encouraged to misplace","remain the property of","were never issued"];
+const P_OBJ=["the library","their own absence","section ∅","the second silence",
+  "whatever is missing","the front desk","themselves","the floor below the floor",
+  "unmarked hours","the last page","a quieter shape"];
+const P_TAIL=["until further notice.","before closing.","at all times.","without exception.",
+  "upon request.","in alphabetical order.","quietly.","as scheduled.","for your safety.","again."];
+const pick=a=>a[Math.floor(Math.random()*a.length)];
+const nonsense=()=>`${pick(P_SUBJ)} ${pick(P_VERB)} ${pick(P_OBJ)} ${pick(P_TAIL)}`;
+/* word-wrap a string into lines that fit `maxW` with the current font */
+function wrapText(g,txt,maxW){
+  const words=txt.split(" "), lines=[]; let line="";
+  for(const wd of words){
+    const t=line? line+" "+wd : wd;
+    if(g.measureText(t).width>maxW&&line){ lines.push(line); line=wd; }
+    else line=t;
+  }
+  if(line) lines.push(line);
+  return lines;
+}
+export function makePosterTexture(){
+  const t=makeCanvas(256,344,(g,w,h)=>{
+    const tone=204+Math.random()*26|0;
+    g.fillStyle=`rgb(${tone-22},${tone-26},${tone-52})`;g.fillRect(0,0,w,h);
+    g.strokeStyle="rgba(40,34,22,0.55)";g.lineWidth=5;g.strokeRect(6,6,w-12,h-12);
+    const ink="rgba(34,30,20,0.85)", inkSoft="rgba(40,36,26,0.66)";
+    if(Math.random()<0.5){
+      /* ---- official notice: header, ruled line, numbered directives ---- */
+      g.fillStyle=ink; g.textAlign="center";
+      g.font="bold 19px Courier New";
+      const head=wrapText(g,pick(P_HEAD),w-44);
+      let y=40;
+      for(const ln of head){ g.fillText(ln,w/2,y); y+=22; }
+      g.fillRect(24,y-8,w-48,2); y+=18;
+      g.textAlign="left"; g.font="11px Courier New"; g.fillStyle=inkSoft;
+      const n=3+Math.floor(Math.random()*3);
+      for(let i=0;i<n&&y<h-46;i++){
+        for(const ln of wrapText(g,`${i+1}. ${nonsense()}`,w-52)){
+          if(y>h-40) break;
+          g.fillText(ln,26,y); y+=14;
+        }
+        y+=7;
+      }
+      g.textAlign="center"; g.font="bold 11px Courier New"; g.fillStyle=ink;
+      g.fillText("— BY ORDER OF THE DESK —",w/2,h-26);
+    } else {
+      /* ---- newspaper clipping: masthead, dateline, headline, columns ---- */
+      g.fillStyle=ink; g.textAlign="center";
+      g.font="bold 22px Courier New"; g.fillText(pick(P_MAST),w/2,34);
+      g.font="9px Courier New"; g.fillStyle=inkSoft;
+      g.fillText(`VOL. ∅ · NO. ${1000+Math.floor(Math.random()*9000)} · PRICE: ONE HOUR`,w/2,48);
+      g.fillStyle=ink; g.fillRect(20,54,w-40,2);
+      g.font="bold 15px Courier New";
+      let y=74;
+      for(const ln of wrapText(g,pick(P_HEAD),w-44)){ g.fillText(ln,w/2,y); y+=17; }
+      y+=8;
+      /* two columns of small print */
+      g.textAlign="left"; g.font="9px Courier New"; g.fillStyle=inkSoft;
+      const colW=(w-56)/2, x1=22, x2=22+colW+12;
+      for(const x of[x1,x2]){
+        let cy=y;
+        while(cy<h-30){
+          for(const ln of wrapText(g,nonsense(),colW)){
+            if(cy>h-30) break;
+            g.fillText(ln,x,cy); cy+=11;
+          }
+          cy+=5;
+        }
+      }
+    }
+    /* foxing stains */
+    for(let i=0;i<6;i++){
+      const x=Math.random()*w,y=Math.random()*h,r=10+Math.random()*28;
+      const gr=g.createRadialGradient(x,y,2,x,y,r);
+      gr.addColorStop(0,"rgba(110,82,40,0.16)");gr.addColorStop(1,"rgba(110,82,40,0)");
+      g.fillStyle=gr;g.beginPath();g.arc(x,y,r,0,7);g.fill();
+    }
+    /* torn corner */
+    g.globalCompositeOperation="destination-out";
+    g.beginPath();g.moveTo(w,0);g.lineTo(w-22-Math.random()*36,0);g.lineTo(w,26+Math.random()*36);g.closePath();g.fill();
+    g.globalCompositeOperation="source-over";
+  });
+  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearFilter; t.generateMipmaps=false;
+  return t;
+}
+
+/* framed wall art: five families of almost-library artwork, each grown
+   fresh per call — things that COULD hang in a library, off by just one
+   degree. Frame + mat are shared; the plate inside picks a type. */
+export function makeArtTexture(){
+  const type=Math.floor(Math.random()*5);
+  const t=makeCanvas(224,288,(g,w,h)=>{
+    /* dark wood frame + aged mat */
+    g.fillStyle="#382a1a";g.fillRect(0,0,w,h);
+    g.fillStyle="rgba(140,110,70,0.35)";g.fillRect(3,3,w-6,2);g.fillRect(3,3,2,h-6);
+    g.fillStyle="#b3ab94";g.fillRect(12,12,w-24,h-24);
+    const x0=26,y0=26,iw=w-52,ih=h-52;
+    const ink="rgba(40,34,24,0.85)";
+    if(type===0){
+      /* MAP OF THE COLLECTION: floor-plan dots and corridors to nowhere */
+      g.fillStyle="#a89c80";g.fillRect(x0,y0,iw,ih);
+      g.strokeStyle="rgba(60,50,34,0.7)";g.lineWidth=1.5;
+      const pts=[];
+      for(let i=0;i<9;i++) pts.push([x0+14+Math.random()*(iw-28),y0+26+Math.random()*(ih-52)]);
+      for(let i=0;i<10;i++){
+        const a=pts[Math.floor(Math.random()*pts.length)],b=pts[Math.floor(Math.random()*pts.length)];
+        g.beginPath();g.moveTo(a[0],a[1]);g.lineTo(b[0],a[1]);g.lineTo(b[0],b[1]);g.stroke();
+      }
+      for(const p of pts){ g.fillStyle="rgba(60,50,34,0.8)";g.beginPath();g.arc(p[0],p[1],3,0,7);g.fill(); }
+      g.fillStyle="rgba(150,40,30,0.85)";g.font="bold 11px Courier New";g.textAlign="center";
+      const yx=x0+14+Math.random()*(iw-28), yy=y0+30+Math.random()*(ih-60);
+      g.fillText("✕",yx,yy);
+      g.fillText("YOU WERE HERE",yx,yy+12);
+      g.fillStyle=ink;g.font="bold 12px Courier New";
+      g.fillText("MAP OF THE COLLECTION",x0+iw/2,y0+14);
+    } else if(type===1){
+      /* a donor portrait with nothing where the face goes */
+      g.fillStyle="#2a241d";g.fillRect(x0,y0,iw,ih);
+      const cx=x0+iw/2;
+      const gr=g.createRadialGradient(cx,y0+ih*0.38,8,cx,y0+ih*0.38,ih*0.45);
+      gr.addColorStop(0,"rgba(120,104,76,0.35)");gr.addColorStop(1,"rgba(120,104,76,0)");
+      g.fillStyle=gr;g.fillRect(x0,y0,iw,ih);
+      g.fillStyle="#13100c";
+      g.beginPath();g.ellipse(cx,y0+ih*0.34,iw*0.16,ih*0.15,0,0,7);g.fill();   // head
+      g.beginPath();g.ellipse(cx,y0+ih*0.78,iw*0.32,ih*0.3,0,Math.PI,0);g.fill(); // shoulders
+      g.fillStyle="#8a7340";g.fillRect(x0+iw*0.2,y0+ih-22,iw*0.6,14);          // brass plaque
+      g.fillStyle="#241c10";g.font="bold 9px Courier New";g.textAlign="center";
+      g.fillText(["THE FIRST LIBRARIAN","HEAD ARCHIVIST, 19∅∅","OUR FOUNDER","PATRON OF QUIET"][Math.floor(Math.random()*4)],
+        x0+iw/2,y0+ih-12);
+    } else if(type===2){
+      /* botanical plate: a specimen with labels pointing at nothing */
+      g.fillStyle="#cfc6a8";g.fillRect(x0,y0,iw,ih);
+      g.strokeStyle="rgba(50,70,40,0.8)";g.lineWidth=2;
+      const sx=x0+iw/2;
+      g.beginPath();g.moveTo(sx,y0+ih-20);
+      g.bezierCurveTo(sx-10,y0+ih*0.6,sx+12,y0+ih*0.4,sx-4,y0+24);g.stroke();
+      g.fillStyle="rgba(58,82,46,0.75)";
+      for(let i=0;i<5;i++){
+        const ly=y0+30+i*(ih-70)/5, s=(i%2?1:-1);
+        g.save();g.translate(sx+s*6,ly);g.rotate(s*(0.5+Math.random()*0.4));
+        g.beginPath();g.ellipse(0,0,16+Math.random()*8,6,0,0,7);g.fill();g.restore();
+      }
+      g.strokeStyle="rgba(40,34,24,0.6)";g.lineWidth=1;
+      g.fillStyle=ink;g.font="9px Courier New";g.textAlign="left";
+      const labels=["fig. ∅","leaf (?)","hrs.","stem, late","do not water"];
+      for(let i=0;i<4;i++){
+        const ly=y0+34+Math.random()*(ih-80), tx=Math.random()<0.5? x0+4: x0+iw-44;
+        g.beginPath();g.moveTo(tx<sx?tx+38:tx,ly);
+        g.lineTo(sx+(Math.random()-0.5)*60,ly+(Math.random()-0.5)*30);g.stroke();
+        g.fillText(labels[Math.floor(Math.random()*labels.length)],tx,ly+3);
+      }
+      g.textAlign="center";g.font="italic 10px Courier New";
+      g.fillText("SPECIMEN: HOURS, PERENNIAL",x0+iw/2,y0+ih-8);
+    } else if(type===3){
+      /* an acuity chart that tests something else */
+      g.fillStyle="#d8d2c0";g.fillRect(x0,y0,iw,ih);
+      const rows=["SH","HUSH","QUIETLY","RETURNALL","THEENDTHEEND","sshhhhhhhhhhh"];
+      let yy=y0+34;
+      g.fillStyle=ink;g.textAlign="center";
+      rows.forEach((r,i)=>{
+        g.font=`bold ${Math.max(6,30-i*5)}px Courier New`;
+        g.fillText(r.split("").join(" "),x0+iw/2,yy);
+        yy+=Math.max(14,36-i*4);
+      });
+      g.strokeStyle="rgba(40,34,24,0.4)";g.lineWidth=1;
+      g.beginPath();g.moveTo(x0+12,y0+ih-26);g.lineTo(x0+iw-12,y0+ih-26);g.stroke();
+      g.font="8px Courier New";
+      g.fillText("IF YOU CAN READ THIS ROW IT HEARD YOU",x0+iw/2,y0+ih-12);
+    } else {
+      /* nocturne: hills, a moon, no library anywhere in sight */
+      const gr=g.createLinearGradient(0,y0,0,y0+ih);
+      gr.addColorStop(0,"#11151d");gr.addColorStop(0.65,"#2a3140");gr.addColorStop(1,"#3a4252");
+      g.fillStyle=gr;g.fillRect(x0,y0,iw,ih);
+      g.fillStyle="rgba(214,210,190,0.85)";
+      g.beginPath();g.arc(x0+iw*(0.25+Math.random()*0.5),y0+ih*0.25,11,0,7);g.fill();
+      for(let i=0;i<3;i++){
+        g.fillStyle=`rgba(${10+i*6},${12+i*6},${16+i*7},0.95)`;
+        g.beginPath();g.moveTo(x0,y0+ih);
+        for(let xx=0;xx<=iw;xx+=8)
+          g.lineTo(x0+xx,y0+ih*(0.55+i*0.13)+Math.sin(xx*0.05+i*9)*8);
+        g.lineTo(x0+iw,y0+ih);g.closePath();g.fill();
+      }
+      g.fillStyle="#8a7340";g.fillRect(x0+iw*0.25,y0+ih-16,iw*0.5,11);
+      g.fillStyle="#241c10";g.font="bold 8px Courier New";g.textAlign="center";
+      g.fillText("VIEW FROM THE STACKS",x0+iw/2,y0+ih-8);
+    }
+  });
+  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearFilter; t.generateMipmaps=false;
+  return t;
+}
+
 /* cut a vertical strip [u0,u1] out of a colony texture — used when a colony
    overhangs its wall section and continues around a corner. flip mirrors the
    strip for wrap planes whose u-axis runs back toward the fold, so the
