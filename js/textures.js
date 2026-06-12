@@ -221,6 +221,84 @@ export function makeMoldTextures(wid,hgt,dep){
   }
   return {wall,floor};
 }
+/* brown ceiling-leak drips: each call grows ONE unique stain pair — a
+   stalactite-shaped run of rivulets bleeding down the wall from the ceiling
+   seam, plus the small ceiling blotch feeding it from above. Same world-size
+   canvas policy as the mold (~72 px/m) so rivulets keep their aspect. */
+export function makeDripTextures(wid,len){
+  const PPM=72;
+  const wW=Math.round(Math.min(128,Math.max(24,wid*PPM)));
+  const wH=Math.round(Math.min(256,Math.max(48,len*PPM)));
+  const wall=makeCanvas(wW,wH,(g,w,h)=>{
+    g.clearRect(0,0,w,h);
+    /* contact smudge where the water exits the ceiling seam */
+    for(let i=0,n=6+Math.random()*6;i<n;i++){
+      const x=w*(0.2+Math.random()*0.6), r=2.5+Math.random()*5;
+      const gr=g.createRadialGradient(x,1.5,0.3,x,1.5,r);
+      gr.addColorStop(0,`rgba(86,58,24,${0.3+Math.random()*0.22})`);
+      gr.addColorStop(1,"rgba(86,58,24,0)");
+      g.fillStyle=gr;g.beginPath();g.arc(x,1.5,r,0,7);g.fill();
+    }
+    /* the wet sheet: a faint wash widest at the seam, narrowing downward —
+       it's what makes the rivulet cluster read as one stalactite shape */
+    const sheetH=h*(0.3+Math.random()*0.25);
+    for(let y=0;y<sheetH;y+=2){
+      const t=y/sheetH, ww=w*(0.72-0.5*t)*(0.9+Math.random()*0.2);
+      g.fillStyle=`rgba(92,62,26,${0.06*(1-t)})`;
+      g.fillRect(w/2-ww/2+(Math.random()-0.5)*2,y,ww,2.4);
+    }
+    /* rivulets: wandering tapering streaks; the first is the long center
+       run, the rest hang shorter at its sides */
+    const nR=2+Math.floor(Math.random()*4);
+    for(let i=0;i<nR;i++){
+      const long=i===0;
+      let x=w*(0.5+(long?(Math.random()-0.5)*0.2:(Math.random()-0.5)*0.6));
+      const yEnd=h*(long? 0.78+Math.random()*0.22 : 0.25+Math.random()*0.5);
+      const baseW=(long?1.6:1.0)*(1.2+Math.random()*1.6)*(w/40+0.4);
+      const col=Math.random()<0.5? "96,64,26" : "74,50,22";
+      const a=0.28+Math.random()*0.22;
+      const steps=Math.max(10,Math.floor(yEnd/3));
+      for(let s=0;s<steps;s++){
+        const t=s/(steps-1), y=t*yEnd;
+        x+=(Math.random()-0.5)*1.5;
+        const ww=Math.max(0.6,baseW*(1-t*0.85));   // taper to a point
+        g.fillStyle=`rgba(${col},${a*(1-t*0.45)})`;
+        g.fillRect(x-ww/2,y,ww,3.4);
+        if(Math.random()<0.06)                     // dried tide flecks beside the run
+          g.fillRect(x+(Math.random()<0.5?-1:1)*(ww/2+1+Math.random()*2),y,1,2);
+      }
+      /* the hanging droplet bead at the tip */
+      const br=baseW*(0.5+Math.random()*0.45);
+      const gr=g.createRadialGradient(x,yEnd,0.3,x,yEnd,br);
+      gr.addColorStop(0,`rgba(${col},${a*1.25})`);gr.addColorStop(1,`rgba(${col},0)`);
+      g.fillStyle=gr;g.beginPath();g.arc(x,yEnd,br,0,7);g.fill();
+    }
+  });
+  /* the small feed stain on the ceiling above the run: an irregular brown
+     blotch with a darker waterlogged core */
+  const ceil=makeCanvas(48,48,(g,w,h)=>{
+    g.clearRect(0,0,w,h);
+    const p1=Math.random()*7,p2=Math.random()*7;
+    for(let a=0;a<Math.PI*2;a+=0.16){
+      const rr=(w*0.27)*(1+0.22*Math.sin(a*2+p1)+0.16*Math.sin(a*3+p2))*Math.sqrt(Math.random()*0.6+0.4);
+      const px=w/2+Math.cos(a)*rr, py=h/2+Math.sin(a)*rr;
+      const sr=3+Math.random()*5;
+      const gr=g.createRadialGradient(px,py,0.4,px,py,sr);
+      gr.addColorStop(0,`rgba(88,60,26,${0.2+Math.random()*0.18})`);
+      gr.addColorStop(1,"rgba(88,60,26,0)");
+      g.fillStyle=gr;g.beginPath();g.arc(px,py,sr,0,7);g.fill();
+    }
+    const core=g.createRadialGradient(w/2,h/2,0.5,w/2,h/2,w*0.18);
+    core.addColorStop(0,"rgba(58,38,16,0.4)");core.addColorStop(1,"rgba(58,38,16,0)");
+    g.fillStyle=core;g.beginPath();g.arc(w/2,h/2,w*0.18,0,7);g.fill();
+  });
+  for(const t of [wall,ceil]){
+    t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping;
+    t.minFilter=THREE.LinearFilter;
+    t.generateMipmaps=false;
+  }
+  return {wall,ceil};
+}
 /* cut a vertical strip [u0,u1] out of a colony texture — used when a colony
    overhangs its wall section and continues around a corner. flip mirrors the
    strip for wrap planes whose u-axis runs back toward the fold, so the

@@ -96,10 +96,10 @@ function triggerShockwave(x,z){
   monster.shock={t:0, x, z, maxR:Math.hypot(mdx,mdz)};
   sfxShockwave(monster.shock.maxR/19.23 + 3.5);   // the lights + drone say it all — no toast
 }
-/* the disruption pulse starts at 60s and tightens by 10s per objective
+/* the disruption pulse starts at 60s and tightens by 5s per objective
    cleared (down to a floor of 20s); the entity also sees ~5% farther and
    drifts toward the player more eagerly with each step */
-const SHOCK_BASE=60, SHOCK_STEP=10, SHOCK_MIN=20;
+const SHOCK_BASE=60, SHOCK_STEP=5, SHOCK_MIN=20;
 export function shockPeriod(){ return Math.max(SHOCK_MIN, SHOCK_BASE-SHOCK_STEP*monster.escalation); }
 export const sightMult=()=> 1+0.05*monster.escalation;     // +5% detection per objective
 /* called on every objective progression after the first bottle */
@@ -122,6 +122,17 @@ export function wakeMonster(){
   monster.groanT=2.5;
   triggerShockwave(p.x,p.z);            // announce it from the spawn point
   monster.shockTimer=shockPeriod();     // …then recurring, tightening per objective
+}
+/* final-objective rush: it bolts for the spot at full chase speed using the
+   normal last-known-location hunt logic — but running, not walking. The
+   search budget covers the whole trip so it never gives up en route. */
+export function monsterRushTo(x,z){
+  if(!monster.active) return;
+  monster.lastSeen=new THREE.Vector3(x,0,z);
+  monster.state="hunt";
+  monster.searchT=monster.pos.distanceTo(monster.lastSeen)/SPEED_TARGETS.chase+6;
+  monster.repath=0;
+  monster.rush=true;
 }
 export function monsterCanSee(){
   const d=monster.pos.distanceTo(STATE.pos);
@@ -216,6 +227,11 @@ export function updateMonster(dt){
   }
   if(!monster.active||STATE.dead||STATE.won) return;
   const m=monster;
+  /* breaker cinematic: once it crosses a 30m ring around the player it
+     roots in place — frozen mid-stride, breath still in your ears — until
+     the cutscene returns control and lets it loose with a cry */
+  if(m.holdAt30 && m.pos.distanceTo(STATE.pos)<30) m.held=true;
+  if(m.held) return;
   /* the disruption pulse recurs from its current position */
   m.shockTimer-=dt;
   if(m.shockTimer<=0){ triggerShockwave(m.pos.x,m.pos.z); m.shockTimer=shockPeriod(); }
@@ -247,17 +263,18 @@ export function updateMonster(dt){
       if(!sees){ m.state="hunt"; m.searchT=6; }
       break;
     case "hunt":
-      if(sees){ m.state="chase"; }                  // re-acquire without a fresh alert
+      if(sees){ m.state="chase"; m.rush=false; }    // re-acquire without a fresh alert
       else {
         const arrived = m.lastSeen && m.pos.distanceTo(m.lastSeen)<1.5;
         m.searchT -= dt*(arrived?2.5:1);
-        if(m.searchT<=0){ m.state="wander"; m.path=[]; toast("…it gave up. Breathe.",2600); }
+        if(m.searchT<=0){ m.state="wander"; m.rush=false; m.path=[]; toast("…it gave up. Breathe.",2600); }
       }
       break;
   }
 
   /* ---- speed ramps: accelerate into a chase, wind down out of one ---- */
-  const tgtSpeed=SPEED_TARGETS[m.state];
+  let tgtSpeed=SPEED_TARGETS[m.state];
+  if(m.rush && m.state==="hunt") tgtSpeed=SPEED_TARGETS.chase;   // running, not walking
   const rate = tgtSpeed>m.curSpeed? 3.6 : 5.0;      // ~1.8s 0→full, quicker to slow
   m.curSpeed += clamp(tgtSpeed-m.curSpeed, -rate*dt, rate*dt);
 
@@ -373,15 +390,15 @@ export function updateMonster(dt){
       m.faceAng=m.knockMove.face;
       /* near-global volume: gentle falloff keeps a sense of distance &
          direction without ever making the knocks easy to miss */
-      const vol=0.6*(0.45+0.55*clamp(1-d/80,0,1));
+      const vol=0.72*(0.45+0.55*clamp(1-d/80,0,1));
       sfxKnock(vol, 2+Math.floor(Math.random()*3), panTo(m.pos.x,m.pos.z));
       m.knockMove=null;
-      m.knockT=rand(2.2,5.2);
+      m.knockT=rand(1.7,4.0);
     }
   } else if(calm && movedSpeed<0.25){
     m.knockT-=dt;
     if(m.knockT<=0){
-      m.knockT=rand(2.2,5.2);
+      m.knockT=rand(1.7,4.0);
       const c=worldToCell(m.pos.x,m.pos.z);
       let wallDir=null;
       for(const[wx,wy]of[[1,0],[-1,0],[0,1],[0,-1]])
@@ -399,11 +416,11 @@ export function updateMonster(dt){
   const prox = clamp(1 - d/22, 0, 1);
   if(AU.ctx){
     const t=AU.ctx.currentTime;
-    /* calm-state levels +20% (0.14→0.17, 0.20→0.24); chase levels untouched */
-    const bedGain = (m.state==="chase"||m.state==="alert")? prox*0.30 : prox*0.17;
+    /* all entity noise +20% in v1.5 (bed 0.30→0.36 / 0.17→0.204) */
+    const bedGain = (m.state==="chase"||m.state==="alert")? prox*0.36 : prox*0.204;
     AU.proxGain.gain.setTargetAtTime(bedGain, t, 0.25);
     AU.proxOsc.frequency.setTargetAtTime(46+prox*30, t, 0.4);
-    const breathTarget = (m.state==="chase")? clamp(1-d/28,0,1)*0.45 : clamp(1-d/18,0,1)*0.24;
+    const breathTarget = (m.state==="chase")? clamp(1-d/28,0,1)*0.54 : clamp(1-d/18,0,1)*0.29;
     AU.breathGain.gain.setTargetAtTime(breathTarget, t, 0.35);
     /* keep its constant sounds glued to its true direction */
     const entPan=panTo(m.pos.x,m.pos.z);
@@ -412,8 +429,8 @@ export function updateMonster(dt){
   }
   m.groanT-=dt;
   if(m.groanT<=0){
-    m.groanT=rand(5.5,12);
-    if(d<48) sfxGroan(clamp(1-d/48,0.04,1)*(m.state==="chase"?0.45:0.30),
+    m.groanT=rand(4.2,9.2);                  // 30% more frequent
+    if(d<48) sfxGroan(clamp(1-d/48,0.04,1)*(m.state==="chase"?0.54:0.36),   // +20% louder
                       panTo(m.pos.x,m.pos.z));
   }
   ui.dread.style.opacity = m.state==="chase"? (0.35+prox*0.6) : prox*0.55;

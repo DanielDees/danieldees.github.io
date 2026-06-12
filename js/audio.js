@@ -232,7 +232,7 @@ export function sfxAlert(pan=0){ // the entity notices you: short guttural risin
   const p=C.createStereoPanner?C.createStereoPanner():null;
   const out=C.createGain(); out.gain.value=1;
   if(p){p.pan.value=pan*0.8; out.connect(p); p.connect(AU.sfx);} else out.connect(AU.sfx);
-  [[70,180,"sawtooth",0.22],[105,290,"square",0.10]].forEach(([f0,f1,type,v])=>{
+  [[70,180,"sawtooth",0.26],[105,290,"square",0.12]].forEach(([f0,f1,type,v])=>{
     const o=C.createOscillator();o.type=type;
     o.frequency.setValueAtTime(f0,t);
     o.frequency.exponentialRampToValueAtTime(f1,t+0.55);
@@ -270,23 +270,28 @@ export function sfxShockwave(dur=9){
   /* the wake announcement, held for as long as the light ring travels:
      a deep pressure swell under a staggered cluster of detuned voices —
      minor seconds and tritones across four octaves, each with its own slow
-     attack, stereo position and pitch drift, smearing into one wrong chord */
+     attack, stereo position and pitch drift, smearing into one wrong chord.
+     Every wave is tilted slightly — pitch, entries, voice levels and the
+     sweep band all roll fresh — so the recurring pulse never plays twice
+     the same. */
   if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  const pk=rand(0.93,1.07);                     // per-wave pitch tilt
   const out=C.createGain(); out.gain.value=1; out.connect(AU.sfx);
   // sub pressure: swells up, then bends down and away
-  const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(30,t);
-  o.frequency.linearRampToValueAtTime(50,t+dur*0.3);
-  o.frequency.exponentialRampToValueAtTime(22,t+dur);
-  const g=C.createGain();env(g,t,dur*0.45,0.5,dur*0.55);
+  const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(30*pk,t);
+  o.frequency.linearRampToValueAtTime(50*pk,t+dur*0.3);
+  o.frequency.exponentialRampToValueAtTime(22*pk,t+dur);
+  const g=C.createGain();env(g,t,dur*0.45,rand(0.42,0.55),dur*0.55);
   o.connect(g);g.connect(out);o.start(t);o.stop(t+dur+0.4);
   // the cluster: [freq, peak, wave, entry delay]
   [[55,0.20,"sine",0],[82.4,0.13,"triangle",0.5],[110,0.11,"sine",0.9],
    [155.6,0.085,"sine",1.5],[164.8,0.07,"triangle",2.2],[311.1,0.05,"sine",1.1],
    [466.2,0.035,"sine",2.8],[392,0.06,"sine",0.4],[415.3,0.055,"sine",0.4]
   ].forEach(([f,v,type,at])=>{
+    at+=rand(0,0.35); v*=rand(0.8,1.15);
     const o2=C.createOscillator();o2.type=type;
-    o2.frequency.setValueAtTime(f*(1+rand(-0.008,0.008)),t+at);
-    o2.frequency.linearRampToValueAtTime(f*(Math.random()<0.5?0.94:1.06),t+dur);
+    o2.frequency.setValueAtTime(f*pk*(1+rand(-0.008,0.008)),t+at);
+    o2.frequency.linearRampToValueAtTime(f*pk*(Math.random()<0.5?0.94:1.06),t+dur);
     const g2=C.createGain();env(g2,t+at,(dur-at)*0.65,v,(dur-at)*0.35);   // rises late, holds through the sweep
     const p2=C.createStereoPanner?C.createStereoPanner():null;
     o2.connect(g2);
@@ -298,9 +303,10 @@ export function sfxShockwave(dur=9){
   const len=Math.floor(C.sampleRate*dur),buf=C.createBuffer(1,len,C.sampleRate);
   const d=buf.getChannelData(0);for(let i=0;i<len;i++)d[i]=Math.random()*2-1;
   const src=C.createBufferSource();src.buffer=buf;
-  const f=C.createBiquadFilter();f.type="bandpass";f.Q.value=1.1;
-  f.frequency.setValueAtTime(260,t);f.frequency.exponentialRampToValueAtTime(2600,t+dur);
-  const g3=C.createGain();env(g3,t,dur*0.3,0.07,dur*0.7);
+  const f=C.createBiquadFilter();f.type="bandpass";f.Q.value=rand(0.9,1.4);
+  f.frequency.setValueAtTime(rand(220,320),t);
+  f.frequency.exponentialRampToValueAtTime(rand(2200,3100),t+dur);
+  const g3=C.createGain();env(g3,t,dur*0.3,rand(0.055,0.085),dur*0.7);
   src.connect(f);f.connect(g3);g3.connect(out);src.start(t);
 }
 export function sfxDeath(){
@@ -319,13 +325,6 @@ export function sfxHeartbeat(){
     const g=C.createGain();env(g,t+dt,0.005,v,0.16);
     o.connect(g);g.connect(AU.sfx);o.start(t+dt);o.stop(t+dt+0.3);
   });
-}
-export function sfxDoor(){
-  noiseBurst(0.9,180,0.3);
-  if(!AU.ctx)return;
-  const C=AU.ctx,t=C.currentTime,o=C.createOscillator();o.type="sawtooth";
-  o.frequency.setValueAtTime(90,t);o.frequency.linearRampToValueAtTime(160,t+0.9);
-  const g=C.createGain();env(g,t,0.05,0.07,1.0);o.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+1.2);
 }
 export function panTo(x,z){
   /* stereo pan (-1..1) of a world point relative to where the player is facing.
@@ -348,6 +347,243 @@ export function sfxFlickTick(vol,pan){
   src.connect(f); f.connect(g);
   if(p){p.pan.value=pan; g.connect(p); p.connect(AU.sfx);} else g.connect(AU.sfx);
   src.start(t);
+}
+/* ---------------- cutscene one-shots & beds ---------------- */
+/* schedule a filtered noise burst at an absolute context time */
+function noiseAt(t,dur,freq,peak,type="lowpass",Q=1){
+  const C=AU.ctx;
+  const len=Math.floor(C.sampleRate*dur), buf=C.createBuffer(1,len,C.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*(1-i/len);
+  const src=C.createBufferSource(); src.buffer=buf;
+  const f=C.createBiquadFilter(); f.type=type; f.frequency.value=freq; f.Q.value=Q;
+  const g=C.createGain(); g.gain.value=peak;
+  src.connect(f); f.connect(g); g.connect(AU.sfx); src.start(t);
+}
+export function sfxBoxOpen(){
+  /* sheet-metal fusebox door: latch click, then a slow rising hinge squeal */
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  noiseAt(t,0.03,2200,0.10,"highpass");
+  const o=C.createOscillator();o.type="sawtooth";
+  o.frequency.setValueAtTime(480,t+0.06);
+  o.frequency.linearRampToValueAtTime(760,t+0.5);
+  const wob=C.createOscillator();wob.frequency.value=11;
+  const wg=C.createGain();wg.gain.value=42; wob.connect(wg);wg.connect(o.frequency);
+  const bp=C.createBiquadFilter();bp.type="bandpass";bp.frequency.value=900;bp.Q.value=4;
+  const g=C.createGain();env(g,t+0.06,0.12,0.045,0.5);
+  o.connect(bp);bp.connect(g);g.connect(AU.sfx);
+  o.start(t+0.06);o.stop(t+0.7);wob.start(t);wob.stop(t+0.7);
+}
+export function sfxBoxClose(){
+  /* the door claps shut: flat metal slap + latch snap */
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  noiseAt(t,0.07,1400,0.14,"bandpass",1.2);
+  const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(150,t);
+  o.frequency.exponentialRampToValueAtTime(70,t+0.1);
+  const g=C.createGain();env(g,t,0.004,0.16,0.14);
+  o.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+0.25);
+  noiseAt(t+0.09,0.025,2600,0.07,"highpass");
+}
+export function sfxFuseHum(dur=1.1){
+  /* the conjured fuse: a faint shimmering hum that rises as it drifts in */
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  [[330,0.045],[336,0.035],[1320,0.012]].forEach(([f,v])=>{
+    const o=C.createOscillator();o.type="sine";
+    o.frequency.setValueAtTime(f,t);
+    o.frequency.linearRampToValueAtTime(f*1.33,t+dur);
+    const trem=C.createOscillator();trem.frequency.value=8;
+    const tg=C.createGain();tg.gain.value=v*0.4;
+    const g=C.createGain();env(g,t,dur*0.35,v,dur*0.65);
+    trem.connect(tg);tg.connect(g.gain);
+    o.connect(g);g.connect(AU.sfx);
+    o.start(t);o.stop(t+dur+0.2);trem.start(t);trem.stop(t+dur+0.2);
+  });
+}
+export function sfxElevButton(){
+  /* call button: dry plastic click + a short confirmation beep */
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  noiseAt(t,0.02,3000,0.12,"highpass");
+  const o=C.createOscillator();o.type="square";o.frequency.value=760;
+  const g=C.createGain();env(g,t+0.05,0.008,0.09,0.14);
+  o.connect(g);g.connect(AU.sfx);o.start(t+0.05);o.stop(t+0.3);
+}
+export function sfxElevDing(){
+  /* arrival bell: one bright strike with a soft overtone, long decay */
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  [[932,0.2,1.6],[1244,0.13,1.3],[1864,0.06,0.7]].forEach(([f,v,dec])=>{
+    const o=C.createOscillator();o.type="sine";o.frequency.value=f;
+    const g=C.createGain();env(g,t,0.004,v,dec);
+    o.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+dec+0.2);
+  });
+}
+export function sfxElevDoors(dur=1.4){
+  /* doors sliding on their track: low rolling rumble that ends in a thunk */
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  const len=Math.floor(C.sampleRate*dur), buf=C.createBuffer(1,len,C.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i]=Math.random()*2-1;
+  const src=C.createBufferSource(); src.buffer=buf;
+  const lp=C.createBiquadFilter();lp.type="lowpass";lp.frequency.value=190;
+  const g=C.createGain();env(g,t,dur*0.25,0.25,dur*0.75);
+  src.connect(lp);lp.connect(g);g.connect(AU.sfx);src.start(t);
+  const o=C.createOscillator();o.type="sine";o.frequency.value=36;
+  const g2=C.createGain();env(g2,t,dur*0.3,0.12,dur*0.7);
+  o.connect(g2);g2.connect(AU.sfx);o.start(t);o.stop(t+dur+0.2);
+  // the end-of-travel thunk
+  const o3=C.createOscillator();o3.type="sine";o3.frequency.setValueAtTime(95,t+dur);
+  o3.frequency.exponentialRampToValueAtTime(52,t+dur+0.12);
+  const g3=C.createGain();env(g3,t+dur,0.005,0.18,0.18);
+  o3.connect(g3);g3.connect(AU.sfx);o3.start(t+dur);o3.stop(t+dur+0.35);
+  noiseAt(t+dur,0.06,500,0.14);
+}
+export function sfxElevThud(){
+  /* something heavy slamming into the closed doors from outside — the whole
+     cab rings with it */
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(70,t);
+  o.frequency.exponentialRampToValueAtTime(36,t+0.22);
+  const g=C.createGain();env(g,t,0.004,0.85,0.45);
+  o.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+0.7);
+  noiseAt(t,0.18,280,0.65);
+  noiseAt(t+0.02,0.35,750,0.2,"bandpass",2.5);  // panel ring
+  noiseAt(t+0.03,0.5,180,0.3);                  // shell boom
+  // a second weaker hit — it claws once more
+  noiseAt(t+0.45,0.14,300,0.3);
+}
+export function sfxElevJolt(){
+  /* the cab taking up the slack as it sets off: soft mechanical lurch */
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(64,t);
+  o.frequency.exponentialRampToValueAtTime(42,t+0.16);
+  const g=C.createGain();env(g,t,0.006,0.3,0.3);
+  o.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+0.5);
+  noiseAt(t,0.08,420,0.15);
+  noiseAt(t+0.05,0.03,1500,0.06,"bandpass",2);
+}
+export function sfxFloorBlip(f=620){
+  /* a floor going by: the indicator's polite little chirp (the haywire
+     phase calls it with random pitches) */
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  const o=C.createOscillator();o.type="sine";o.frequency.value=f;
+  const g=C.createGain();env(g,t,0.006,0.07,0.12);
+  o.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+0.2);
+}
+export function startElevDescend(){
+  /* the cab under way: motor drone + faint cable hiss; returns a stop handle */
+  if(!AU.ctx) return {stop(){}};
+  const C=AU.ctx,t=C.currentTime;
+  const out=C.createGain(); out.gain.setValueAtTime(0.0001,t);
+  out.gain.linearRampToValueAtTime(1,t+1.2); out.connect(AU.sfx);
+  const lp=C.createBiquadFilter();lp.type="lowpass";lp.frequency.value=180;
+  const g=C.createGain();g.gain.value=0.12;
+  lp.connect(g);g.connect(out);
+  const oscs=[];
+  [[44,"sawtooth"],[88.7,"sawtooth"]].forEach(([f,ty])=>{
+    const o=C.createOscillator();o.type=ty;o.frequency.value=f;
+    o.connect(lp);o.start();oscs.push(o);
+  });
+  const lfo=C.createOscillator();lfo.frequency.value=1.6;          // mechanical wow
+  const lg=C.createGain();lg.gain.value=0.02;
+  lfo.connect(lg);lg.connect(g.gain);lfo.start();oscs.push(lfo);
+  const len=C.sampleRate*2, buf=C.createBuffer(1,len,C.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i]=Math.random()*2-1;
+  const src=C.createBufferSource();src.buffer=buf;src.loop=true;
+  const bp=C.createBiquadFilter();bp.type="bandpass";bp.frequency.value=900;bp.Q.value=0.9;
+  const hg=C.createGain();hg.gain.value=0.018;
+  src.connect(bp);bp.connect(hg);hg.connect(out);src.start();oscs.push(src);
+  return { stop(fade=0.8){
+    const tt=C.currentTime;
+    out.gain.setTargetAtTime(0.0001,tt,fade/3);
+    oscs.forEach(n=>n.stop(tt+fade+0.5));
+  }};
+}
+export function sfxElevRattle(dur=1.8){
+  /* the first wrongness: loose metal chattering + a low shudder */
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  let at=0.0;
+  while(at<dur){
+    const k=at/dur;                                    // builds as it goes
+    noiseAt(t+at, 0.025, rand(700,2000), (0.04+0.07*k)*rand(0.6,1.3), "bandpass", 2);
+    at+=rand(0.035,0.1);
+  }
+  const o=C.createOscillator();o.type="sine";o.frequency.value=29;
+  const trem=C.createOscillator();trem.frequency.value=9;
+  const tg=C.createGain();tg.gain.value=0.08;
+  const g=C.createGain();env(g,t,dur*0.4,0.17,dur*0.6);
+  trem.connect(tg);tg.connect(g.gain);
+  o.connect(g);g.connect(AU.sfx);
+  o.start(t);o.stop(t+dur+0.3);trem.start(t);trem.stop(t+dur+0.3);
+}
+export function sfxElevGrind(dur=5.9,attack=0.7){
+  /* the brakes failing: metal on metal. No smooth pitch glides (those read
+     as a slide whistle) — instead, noise forced through narrow high-Q
+     resonances whose centres wander in irregular steps and slowly lose
+     ground, the whole screech layer chopped by a jagged stick-slip gate,
+     over a dark broadband roar and a sub rumble for the cab's mass.
+     Holds full force for the entire `dur`, then releases over a tail so
+     the sound is still dying out after the screen has gone black. */
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  const TAIL=1.4;
+  const out=C.createGain();
+  out.gain.setValueAtTime(0.0001,t);
+  out.gain.linearRampToValueAtTime(1,t+attack);
+  out.gain.setValueAtTime(1,t+dur);
+  out.gain.exponentialRampToValueAtTime(0.0001,t+dur+TAIL);
+  out.connect(AU.sfx);
+  const full=dur+TAIL;
+  const len=Math.floor(C.sampleRate*(full+0.3)), buf=C.createBuffer(1,len,C.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i]=Math.random()*2-1;
+  /* stick-slip chatter: the screech grabs and releases 12–40× a second */
+  const gate=C.createGain(); gate.gain.setValueAtTime(0.6,t);
+  for(let gt=t;gt<t+full;gt+=rand(0.025,0.09))
+    gate.gain.setValueAtTime(rand(0.25,1),gt);
+  gate.connect(out);
+  /* inharmonic screech partials, each wandering on its own — two extra
+     voices up high so the metal really shrieks */
+  [[760,0.5],[1180,0.4],[480,0.44],[1900,0.28],[2600,0.22],[3400,0.14]].forEach(([f0,v])=>{
+    const src=C.createBufferSource(); src.buffer=buf;
+    const bp=C.createBiquadFilter(); bp.type="bandpass"; bp.Q.value=16;
+    bp.frequency.setValueAtTime(f0*rand(0.95,1.05),t);
+    for(let ft=t+rand(0.1,0.3);ft<t+full;ft+=rand(0.12,0.38))
+      bp.frequency.linearRampToValueAtTime(
+        f0*rand(0.78,1.12)*(1-0.3*(ft-t)/full), ft);  // losing the fight, drifting down
+    const g=C.createGain(); g.gain.value=v;
+    src.connect(bp); bp.connect(g); g.connect(gate); src.start(t);
+  });
+  /* shriek stabs: every half-second or so one resonance digs in HARD */
+  {
+    const src=C.createBufferSource(); src.buffer=buf;
+    const bp=C.createBiquadFilter(); bp.type="bandpass"; bp.Q.value=22;
+    const g=C.createGain(); g.gain.setValueAtTime(0.0001,t);
+    for(let st=t+rand(0.4,1.0);st<t+dur;st+=rand(0.45,1.1)){
+      bp.frequency.setValueAtTime(rand(2000,3600),st);
+      g.gain.setValueAtTime(0.0001,st);
+      g.gain.linearRampToValueAtTime(rand(0.4,0.6),st+0.06);
+      g.gain.exponentialRampToValueAtTime(0.0001,st+rand(0.3,0.6));
+    }
+    src.connect(bp); bp.connect(g); g.connect(out); src.start(t);
+  }
+  /* mass: dark broadband roar + sub rumble */
+  const roar=C.createBufferSource(); roar.buffer=buf;
+  const lp=C.createBiquadFilter(); lp.type="lowpass"; lp.frequency.value=260;
+  const rg=C.createGain(); rg.gain.value=0.8;
+  roar.connect(lp); lp.connect(rg); rg.connect(out); roar.start(t);
+  const o=C.createOscillator(); o.type="sawtooth"; o.frequency.setValueAtTime(52,t);
+  o.frequency.linearRampToValueAtTime(40,t+full);
+  const lp2=C.createBiquadFilter(); lp2.type="lowpass"; lp2.frequency.value=150;
+  const og=C.createGain(); og.gain.value=0.34;
+  o.connect(lp2); lp2.connect(og); og.connect(out); o.start(t); o.stop(t+full+0.2);
+}
+export function sfxLightsOut(){
+  /* breaker-trip clack inside the cab — the moment something gives */
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  noiseAt(t,0.06,900,0.54,"bandpass",1.5);
+  noiseAt(t,0.03,2200,0.27,"highpass");           // a sharper snap on top
+  const o=C.createOscillator();o.type="square";o.frequency.value=65;
+  const g=C.createGain();env(g,t,0.004,0.3,0.11);
+  o.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+0.18);
 }
 export function sfxKnock(vol,raps,pan=0){
   /* knuckles on wood/drywall: two fast-decaying mid partials + a sharp tap,

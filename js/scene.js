@@ -2,7 +2,7 @@
 import { rand, clamp } from "./utils.js";
 import { W, H, CELL, WALL_H, grid, genMap, cellToWorld, isWall } from "./map.js";
 import { makeCanvas, texWall, texCarpet, texStains, texCeil, texCeilStains,
-         makeMoldTextures, sliceTexture } from "./textures.js";
+         makeMoldTextures, makeDripTextures, sliceTexture } from "./textures.js";
 import { $ } from "./utils.js";
 
 export const FOG_COLOR = 0x050402;       // ~98% black, a whisper of yellow: full darkness, never backlit
@@ -50,8 +50,19 @@ for(let i=0;i<LIGHT_POOL_N;i++){
 
 /* build level meshes */
 export let lights=[];           // {glowMat, cx, cy, world, flickery, phase, on, ...}
+export let wallMeshes=new Map(); // cell key (cy*W+cx) → wall box mesh; props.js carves the elevator out of one
+/* every mold/drip decal, tagged with the wall cell(s) it lies against —
+   so carving a wall (the elevator) can take its decals with it instead of
+   leaving them floating in the doorway */
+export let wallDecals=[];
+export function removeDecalsOnWall(key){
+  for(const m of wallDecals)
+    if(m.userData.wallKeys && m.userData.wallKeys.includes(key)) scene.remove(m);
+}
 export function buildLevel(){
   genMap();
+  wallMeshes=new Map();
+  wallDecals=[];
   /* Phong = per-fragment lighting. Lambert is per-vertex in three r128,
      which is why huge planes/boxes lit "all or nothing" — the floor's only
      vertices are its corners. Near-black specular keeps it matte. */
@@ -64,6 +75,7 @@ export function buildLevel(){
       const p=cellToWorld(x,y);
       m.position.set(p.x,WALL_H/2,p.z);
       scene.add(m);
+      wallMeshes.set(y*W+x,m);
     }
   }
   const SZ=W*CELL;
@@ -143,16 +155,18 @@ export function buildLevel(){
     const tex=makeMoldTextures(wid,hgt,dep);
     const ry = dx? (dx>0?-Math.PI/2:Math.PI/2) : (dz>0?Math.PI:0);
     const fzMain = dx>0?-Math.PI/2 : dx<0?Math.PI/2 : dz>0?Math.PI : 0;
-    const addWall=(t,wd,wx,wz,rot)=>{
+    const addWall=(t,wd,wx,wz,rot,keys)=>{
       const mm=new THREE.Mesh(new THREE.PlaneGeometry(wd,hgt),moldMat(t));
-      mm.position.set(wx,hgt/2,wz); mm.rotation.y=rot; scene.add(mm);
+      mm.position.set(wx,hgt/2,wz); mm.rotation.y=rot;
+      mm.userData.wallKeys=keys; wallDecals.push(mm); scene.add(mm);
     };
-    const addFloor=(t,wd,wx,wz,rot)=>{
+    const addFloor=(t,wd,wx,wz,rot,keys)=>{
       const ff=new THREE.Mesh(new THREE.PlaneGeometry(wd,dep),moldMat(t));
       /* Euler XYZ applies Z first: spin so the dense edge meets its wall,
          then X lays it flat on the carpet */
       ff.rotation.x=-Math.PI/2; ff.rotation.z=rot;
-      ff.position.set(wx,0.022,wz); scene.add(ff);
+      ff.position.set(wx,0.022,wz);
+      ff.userData.wallKeys=keys; wallDecals.push(ff); scene.add(ff);
     };
     /* main segment, clipped at the fold when wrapping */
     const wrap = mode==="convex"||mode==="concave";
@@ -164,10 +178,14 @@ export function buildLevel(){
     const q=o/wid;
     const wallT = wrap? sliceTexture(tex.wall,  overAtU1?0:q, overAtU1?1-q:1) : tex.wall;
     const floorT= wrap? sliceTexture(tex.floor, overAtU1?0:q, overAtU1?1-q:1) : tex.floor;
-    if(dx){ addWall(wallT,w1, p.x+dx*(E-0.02), p.z+t1, ry);
-            addFloor(floorT,w1, p.x+dx*(E-dep/2-0.025), p.z+t1, fzMain); }
-    else  { addWall(wallT,w1, p.x+t1, p.z+dz*(E-0.02), ry);
-            addFloor(floorT,w1, p.x+t1, p.z+dz*(E-dep/2-0.025), fzMain); }
+    /* wall-cell tags: the main face; a coplanar overhang also lies on the
+       neighbour's wall */
+    const kMain=mKey(x+dx,y+dz);
+    const keysMain = mode==="coplanar"? [kMain,mKey(x+lcx+dx,y+lcy+dz)] : [kMain];
+    if(dx){ addWall(wallT,w1, p.x+dx*(E-0.02), p.z+t1, ry, keysMain);
+            addFloor(floorT,w1, p.x+dx*(E-dep/2-0.025), p.z+t1, fzMain, keysMain); }
+    else  { addWall(wallT,w1, p.x+t1, p.z+dz*(E-0.02), ry, keysMain);
+            addFloor(floorT,w1, p.x+t1, p.z+dz*(E-dep/2-0.025), fzMain, keysMain); }
     if(wrap){
       /* the wrapped remainder on the perpendicular face */
       const Sx=dx?0:s, Sz=dx?s:0;                         // lateral world axis
@@ -185,13 +203,60 @@ export function buildLevel(){
       const dA = conv? E+o/2 : E-o/2;                     // distance along the face direction
       const sWall = conv? E+0.02 : E-0.02;                // wrap plane offsets on the lateral axis
       const sFloor= conv? E+dep/2+0.012 : E-dep/2-0.012;
-      addWall(wallW,o, p.x+dx*dA+Sx*sWall, p.z+dz*dA+Sz*sWall, ryW);
-      addFloor(floorW,o, p.x+dx*dA+Sx*sFloor, p.z+dz*dA+Sz*sFloor, fzW);
+      /* convex wraps stay on the same wall box (its side face); concave
+         wraps land on the lateral wall cell */
+      const keysWrap = conv? [kMain] : [mKey(x+lcx,y+lcy)];
+      addWall(wallW,o, p.x+dx*dA+Sx*sWall, p.z+dz*dA+Sz*sWall, ryW, keysWrap);
+      addFloor(floorW,o, p.x+dx*dA+Sx*sFloor, p.z+dz*dA+Sz*sFloor, fzW, keysWrap);
       if(conv) moldCells.add(mKey(x+dx+lcx,y+dz+lcy));    // the wrap lives in that open cell
     }
     if(mode==="coplanar") moldCells.add(mKey(x+lcx,y+lcy));
     moldCells.add(mKey(x,y));
     quota--;
+  }
+
+  /* ---- ceiling-leak drips ----
+     periodic brown water stains running from the ceiling seam down the
+     wall, each with its own small feed blotch on the ceiling above it.
+     Reuses the shuffled face lottery; the 3×3 spacing rule keeps leaks
+     scattered rather than clustered. Mold and drips may share a wall —
+     one lives at the baseboard, the other at the ceiling. */
+  const dripMat=t=>new THREE.MeshPhongMaterial({map:t,
+    transparent:true, depthWrite:false, specular:0x000000, shininess:1});
+  const dripCells=new Set();
+  let dQuota=Math.max(10,Math.round(moldFaces.length*0.05));
+  for(const fc of moldFaces){
+    if(dQuota<=0) break;
+    let near=false;
+    for(let by=-1;by<=1&&!near;by++)for(let bx=-1;bx<=1&&!near;bx++)
+      if(dripCells.has(mKey(fc.x+bx,fc.y+by))) near=true;
+    if(near) continue;
+    const {x,y,dx,dz}=fc;
+    const p=cellToWorld(x,y);
+    const wid=rand(0.25,0.6);
+    const len=Math.min(WALL_H*0.72, rand(0.9,2.6));
+    const off=rand(-1,1)*(E-wid/2-0.2);          // anywhere along the section, fully inside
+    const tex=makeDripTextures(wid,len);
+    const ry = dx? (dx>0?-Math.PI/2:Math.PI/2) : (dz>0?Math.PI:0);
+    const wp=new THREE.Mesh(new THREE.PlaneGeometry(wid,len),dripMat(tex.wall));
+    wp.position.set(dx? p.x+dx*(E-0.03) : p.x+off,
+                    WALL_H-len/2,
+                    dx? p.z+off : p.z+dz*(E-0.03));
+    wp.rotation.y=ry;
+    wp.userData.wallKeys=[mKey(x+dx,y+dz)]; wallDecals.push(wp);
+    scene.add(wp);
+    /* the ceiling blotch sits against the wall, directly over the run */
+    const cw=wid*rand(1.1,1.6), cd=rand(0.18,0.4);
+    const cp=new THREE.Mesh(new THREE.PlaneGeometry(cw,cd),dripMat(tex.ceil));
+    cp.rotation.x=Math.PI/2;
+    cp.rotation.z = dx? (dx>0?-Math.PI/2:Math.PI/2) : (dz>0?Math.PI:0);
+    cp.position.set(dx? p.x+dx*(E-cd/2-0.04) : p.x+off,
+                    WALL_H-0.022,
+                    dx? p.z+off : p.z+dz*(E-cd/2-0.04));
+    cp.userData.wallKeys=[mKey(x+dx,y+dz)]; wallDecals.push(cp);
+    scene.add(cp);
+    dripCells.add(mKey(x,y));
+    dQuota--;
   }
 
   /* fluorescent fixtures: a shallow housing with an OPEN bottom face —
