@@ -4,6 +4,7 @@ import { scene } from "./scene.js";
 import { interactables, exitDoor } from "./props.js";
 import { sfxPickup, sfxClunk, sfxPowerOn } from "./audio.js";
 import { ui, toast, renderObjectives } from "./ui.js";
+import { escalateMonster } from "./monster.js";
 import { win } from "./lifecycle.js";
 
 let focusedItem=null;
@@ -14,19 +15,22 @@ export function tryInteract(){
     it.taken=true; scene.remove(it.mesh); sfxPickup();
     STATE.bottles++;
     /* the first bottle lights a ~4s fuse instead of waking it instantly —
-       updateMonster runs the countdown and fires wakeMonster */
-    if(STATE.bottles===1 && !monster.active && monster.wakeT<=0) monster.wakeT=4;
+       updateMonster runs the countdown and fires wakeMonster. Every later
+       pickup is an objective step, so the entity escalates. */
+    if(STATE.bottles===1){
+      if(!monster.active && monster.wakeT<=0) monster.wakeT=4;
+    } else escalateMonster();
     if(STATE.bottles>=3 && STATE.objective===0){
       STATE.objective=1; toast("Hydrated. Now find a fuse for the breaker.");
     } else toast(`Almond water ${STATE.bottles}/3.`);
   } else if(it.kind==="fuse"){
     if(STATE.objective<1){toast("You don't need this yet. Water first.");return;}
     it.taken=true; scene.remove(it.mesh); sfxPickup();
-    STATE.hasFuse=true; STATE.objective=2;
+    STATE.hasFuse=true; STATE.objective=2; escalateMonster();
     toast("Fuse acquired. Find the breaker panel.");
   } else if(it.kind==="breaker"){
     if(STATE.objective<2){toast("Dead panel. It needs a fuse — and you're not ready.");sfxClunk();return;}
-    it.taken=true; STATE.powerOn=true; STATE.objective=3;
+    it.taken=true; STATE.powerOn=true; STATE.objective=3; escalateMonster();
     sfxClunk(); sfxPowerOn();
     it.mesh.userData.lamp.material.color.set(0x39d24a);
     it.mesh.userData.lever.position.y=0.1;

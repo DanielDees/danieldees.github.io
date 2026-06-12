@@ -1,6 +1,6 @@
 # NOCLIP — Escape the Backrooms
 
-**Version: v1.3.0**
+**Version: v1.4.0**
 
 A browser-based survival horror game set in Level 0 of the Backrooms, playable at
 [danieldees.github.io](https://danieldees.github.io). Vanilla JS ES modules built
@@ -30,6 +30,19 @@ it is.
 Headphones recommended — audio is positional and the entity is easier to track by ear.
 
 ## Changelog
+
+### v1.4.0 (2026-06-11)
+- **Escalation.** The entity now grows more dangerous as you progress. Each
+  objective step after the first bottle (the 2nd and 3rd almond water, the fuse,
+  the breaker fix) widens its detection range by 5%, raises its odds of wandering
+  toward you by 5%, and shortens the gap between its disruption pulses by 10s —
+  from 60s down through 50/40/30 to a floor of 20s once power is restored.
+- **Recurring disruption pulse.** The light-disruption shockwave no longer fires
+  only at wake — it recurs from the entity's current position on that tightening
+  timer.
+- **Deeper, smoother aura.** The darkness aura is rebuilt from 10 to 20 concentric
+  shells for a smoother gradient and pushed ~20% darker at the core, reaching out
+  to ~53m.
 
 ### v1.3.0 (2026-06-11)
 - **The entity's arrival.** Taking the first bottle of almond water now lights a

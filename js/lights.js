@@ -48,6 +48,7 @@ export function updateLights(dt,t){
      a natural second ring rolling out behind the first. */
   const sh=monster.shock;
   if(sh){
+    if(!sh.init){ sh.init=true; for(const L of lights){ L.shocked=false; L.shockT=0; } }  // arm a fresh wave
     sh.t+=dt;
     const R=sh.t*19.23;                    // faster spread; the wide hold band keeps it a thick ring
     for(const L of lights)
