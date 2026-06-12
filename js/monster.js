@@ -60,7 +60,7 @@ export function makeMonster(){
     const f=i/(AURA_N-1);                                   // 0 outer … 1 inner
     const r=R_OUT+(R_IN-R_OUT)*f, op=OP_OUT+(OP_IN-OP_OUT)*f;
     const s=new THREE.Mesh(new THREE.SphereGeometry(r/1.12,18,12), auraMat(op));
-    s.position.y=1.7; g.add(s); g.userData.aura.push(s);
+    s.position.y=1.7; s.userData.baseOp=op; g.add(s); g.userData.aura.push(s);
   }
   const smokeTex=()=>makeCanvas(128,128,(c,w,h)=>{
     c.clearRect(0,0,w,h);
@@ -106,6 +106,14 @@ export const sightMult=()=> 1+0.05*monster.escalation;     // +5% detection per 
 export function escalateMonster(){
   monster.escalation++;
   monster.shockTimer=Math.min(monster.shockTimer, shockPeriod());  // pull in an in-flight wait
+  /* the darkness aura grows 5% wider and 5% deeper each step */
+  if(monster.mesh){
+    const k=1+0.05*monster.escalation;
+    for(const s of monster.mesh.userData.aura){
+      s.scale.setScalar(k);
+      s.material.opacity=s.userData.baseOp*k;
+    }
+  }
 }
 export function wakeMonster(){
   monster.active=true; monster.mesh.visible=true;

@@ -55,6 +55,7 @@ export function updateLights(dt,t){
       if(!L.shocked && Math.hypot(L.world.x-sh.x,L.world.z-sh.z)<=R){ L.shocked=true; L.shockT=3.5; }
     if(R>sh.maxR+25) monster.shock=null;   // ring has cleared the far corner
   }
+  const escD = 1 + 0.10*monster.escalation;   // disruption AOE & hue deepen +10% per objective
   for(const L of lights){
     const dl=Math.hypot(L.world.x-px,L.world.z-pz);
     /* the AOE is centered on the ENTITY: panels near IT misbehave,
@@ -62,7 +63,7 @@ export function updateLights(dt,t){
     let near=0;
     if(monster.active){
       const dm=Math.hypot(L.world.x-monster.pos.x,L.world.z-monster.pos.z);
-      near=clamp(1-dm/22,0,1);   // disruption AOE +10% again (20 → 22)
+      near=clamp(1-dm/(22*escD),0,1);   // disruption AOE, widening per objective
     }
     L.near=near;                 // pool dimming reads this below
     L.timer-=dt;
@@ -94,7 +95,7 @@ export function updateLights(dt,t){
     /* warmth 0→1 drags the tube color toward end-of-life orange. Dying
        fixtures sit at 1 permanently; healthy ones get pushed there by the
        entity's proximity — an extra tell on top of the flickering */
-    let warmth = L.warm? 1 : clamp(near*1.7,0,1);   // hue push +10%
+    let warmth = L.warm? 1 : clamp(near*1.7*escD,0,1);   // hue push, deepening per objective
     if(L.shockT>0){
       /* the wake shockwave passing through: a hard strobe on impact, then
          held dim and DEEP — dimness drags the hue past orange into red,
