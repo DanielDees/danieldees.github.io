@@ -9,6 +9,9 @@ export const AU = {
   humVoices:null, proxGain:null, proxOsc:null, proxPan:null,
   breathGain:null, breathPan:null,
   heartTimer:0, stepTimer:0,
+  droneGain:null,                       // level-0 drone bed (faded out in THE END)
+  spiderBedGain:null, spiderBedPan:null, // the librarian's skitter, bound in spider.js
+  lib:null,                             // THE END ambience handle
 };
 export function applyVolumes(){
   if(!AU.ctx) return;
@@ -49,6 +52,7 @@ export function audioInit(){
 
   /* drone pad (MUSIC bus) */
   const dg=C.createGain(); dg.gain.value=0.192;
+  AU.droneGain=dg;
   const lp=C.createBiquadFilter(); lp.type="lowpass"; lp.frequency.value=300; lp.Q.value=2;
   lp.connect(dg); dg.connect(AU.music);
   [[55,"sine",0.5],[55.7,"sine",0.4],[82.4,"triangle",0.22],[110.6,"sine",0.13]].forEach(([f,t,g])=>{
@@ -87,15 +91,17 @@ export function audioInit(){
     src.start();
   }
 
-  /* faint melodic layer: slow sour phrases that never resolve */
-  setInterval(()=>{ if(STATE.playing&&!STATE.paused&&Math.random()<0.7) musicPhrase(); },8000);
+  /* faint melodic layer: slow sour phrases that never resolve.
+     All of these are LEVEL 0's voice — THE END keeps its own silence. */
+  const lvl0=()=>STATE.playing&&!STATE.paused&&STATE.level===0;
+  setInterval(()=>{ if(lvl0()&&Math.random()<0.7) musicPhrase(); },8000);
   /* rare slow minor-chord swell underneath everything */
-  setInterval(()=>{ if(STATE.playing&&!STATE.paused&&Math.random()<0.4) chordSwell(); },26000);
+  setInterval(()=>{ if(lvl0()&&Math.random()<0.4) chordSwell(); },26000);
   /* secondary layers: distant air movement & a sub-bass throb */
-  setInterval(()=>{ if(STATE.playing&&!STATE.paused&&Math.random()<0.5) airSwell(); },21000);
-  setInterval(()=>{ if(STATE.playing&&!STATE.paused&&Math.random()<0.35) subPulse(); },33000);
+  setInterval(()=>{ if(lvl0()&&Math.random()<0.5) airSwell(); },21000);
+  setInterval(()=>{ if(lvl0()&&Math.random()<0.35) subPulse(); },33000);
   /* the drone bed slowly wanders in level so it never sits still */
-  setInterval(()=>{ if(STATE.playing&&!STATE.paused)
+  setInterval(()=>{ if(lvl0())
     dg.gain.setTargetAtTime(rand(0.15,0.23), C.currentTime, 6); },18000);
 }
 const SCALE=[110, 130.8, 146.8, 164.8, 174.6, 220]; // A minor-ish, low
@@ -188,14 +194,16 @@ function noiseBurst(dur,filterFreq,peak,type="lowpass"){
   const g=C.createGain(); g.gain.value=peak;
   src.connect(f); f.connect(g); g.connect(AU.sfx); src.start(t);
 }
-export function sfxStep(crouched,sprinting){
-  /* feet on damp carpet: a muffled brush + soft pad thump, no hard click */
+export function sfxStep(crouched,sprinting,muted=false){
+  /* feet on damp carpet: a muffled brush + soft pad thump, no hard click.
+     muted = THE END's thick grey-blue pile, which swallows half of it */
   if(!AU.ctx)return;
   const C=AU.ctx,t=C.currentTime;
-  const peak=crouched?0.022:(sprinting?0.12:0.065);
-  noiseBurst(0.13, crouched?200:300, peak);          // low-passed fiber brush
-  const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(74,t);
-  o.frequency.exponentialRampToValueAtTime(44,t+0.07);
+  let peak=crouched?0.022:(sprinting?0.12:0.065);
+  if(muted) peak*=0.45;
+  noiseBurst(0.13, muted?150:(crouched?200:300), peak);   // low-passed fiber brush
+  const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(muted?58:74,t);
+  o.frequency.exponentialRampToValueAtTime(muted?36:44,t+0.07);
   const g=C.createGain();env(g,t,0.005,peak*0.5,0.1);
   o.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+0.18);
 }
@@ -585,6 +593,206 @@ export function sfxLightsOut(){
   const g=C.createGain();env(g,t,0.004,0.3,0.11);
   o.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+0.18);
 }
+/* ================= THE END — the infinite library ================= */
+/* helper: filtered noise routed through a stereo pan */
+function pannedNoise(t,dur,type,freq,Q,peak,pan,attack=0.004){
+  const C=AU.ctx;
+  const len=Math.floor(C.sampleRate*dur), buf=C.createBuffer(1,len,C.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*(1-i/len);
+  const src=C.createBufferSource(); src.buffer=buf;
+  const f=C.createBiquadFilter(); f.type=type; f.frequency.value=freq; f.Q.value=Q;
+  const g=C.createGain(); env(g,t,attack,peak,dur);
+  const p=C.createStereoPanner?C.createStereoPanner():null;
+  src.connect(f); f.connect(g);
+  if(p){p.pan.value=pan; g.connect(p); p.connect(AU.sfx);} else g.connect(AU.sfx);
+  src.start(t);
+  return f;
+}
+/* the level's resting state: sound severely muted, a faint low rumble the
+   only floor under the silence — plus the librarian's skitter bed, bound to
+   its position every frame by spider.js */
+export function startLibraryAmbience(){
+  if(!AU.ctx||AU.lib) return;
+  const C=AU.ctx, t=C.currentTime;
+  const lib={subs:[],thunderInt:null};
+  /* rumble: looped brown-ish noise crushed to the lowest register */
+  {
+    const len=C.sampleRate*3, buf=C.createBuffer(1,len,C.sampleRate);
+    const d=buf.getChannelData(0);
+    let v=0;
+    for(let i=0;i<len;i++){ v=(v+(Math.random()*2-1)*0.04)*0.985; d[i]=v*6; }
+    const src=C.createBufferSource(); src.buffer=buf; src.loop=true;
+    const lp=C.createBiquadFilter(); lp.type="lowpass"; lp.frequency.value=62; lp.Q.value=0.6;
+    const g=C.createGain(); g.gain.setValueAtTime(0.0001,t);
+    g.gain.linearRampToValueAtTime(0.06,t+4);
+    src.connect(lp); lp.connect(g); g.connect(AU.music); src.start(t);
+    lib.rumbleGain=g; lib.rumbleLP=lp; lib.rumbleSrc=src;
+  }
+  /* the spider's chitin rustle: silent until it is close */
+  {
+    const len=C.sampleRate*2, buf=C.createBuffer(1,len,C.sampleRate);
+    const d=buf.getChannelData(0);
+    for(let i=0;i<len;i++) d[i]=Math.random()*2-1;
+    const src=C.createBufferSource(); src.buffer=buf; src.loop=true;
+    const bp=C.createBiquadFilter(); bp.type="bandpass"; bp.frequency.value=2500; bp.Q.value=1.4;
+    const trem=C.createOscillator(); trem.frequency.value=11;
+    const tg=C.createGain(); tg.gain.value=0.5;
+    const mid=C.createGain(); mid.gain.value=0.5;
+    trem.connect(tg); tg.connect(mid.gain); trem.start();
+    const g=AU.spiderBedGain=C.createGain(); g.gain.value=0;
+    const p=AU.spiderBedPan=C.createStereoPanner?C.createStereoPanner():null;
+    src.connect(bp); bp.connect(mid); mid.connect(g);
+    if(p){ g.connect(p); p.connect(AU.sfx); } else g.connect(AU.sfx);
+    src.start();
+  }
+  AU.lib=lib;
+}
+/* after the light-drop: the rumble swells and several deep tones harmonize
+   with it — a distant thunderstorm crossed with a train miles away,
+   constant and unending */
+export function escalateLibraryAmbience(){
+  if(!AU.ctx||!AU.lib||AU.lib.escalated) return;
+  const C=AU.ctx, t=C.currentTime, lib=AU.lib;
+  lib.escalated=true;
+  lib.rumbleGain.gain.setTargetAtTime(0.17,t,1.2);
+  lib.rumbleLP.frequency.setTargetAtTime(86,t,2);
+  [[30.8,"sine",0.060,0.061],[38.9,"sine",0.046,0.083],[47.3,"triangle",0.034,0.057]]
+  .forEach(([f,type,v,lf])=>{
+    const o=C.createOscillator(); o.type=type; o.frequency.value=f;
+    const g=C.createGain(); g.gain.setValueAtTime(0.0001,t);
+    g.gain.linearRampToValueAtTime(v,t+5+Math.random()*3);
+    const lfo=C.createOscillator(); lfo.frequency.value=lf;     // each tone slowly breathes
+    const lg=C.createGain(); lg.gain.value=v*0.45;
+    lfo.connect(lg); lg.connect(g.gain); lfo.start(t);
+    o.connect(g); g.connect(AU.music); o.start(t);
+    lib.subs.push(o,lfo);
+  });
+  /* far thunder: long soft swells rolling through every so often */
+  lib.thunderInt=setInterval(()=>{
+    if(!STATE.playing||STATE.paused||STATE.level!==1||Math.random()<0.35) return;
+    const tt=C.currentTime, dur=rand(5,9);
+    const len=Math.floor(C.sampleRate*dur), buf=C.createBuffer(1,len,C.sampleRate);
+    const d=buf.getChannelData(0);
+    for(let i=0;i<len;i++) d[i]=Math.random()*2-1;
+    const src=C.createBufferSource(); src.buffer=buf;
+    const lp=C.createBiquadFilter(); lp.type="lowpass"; lp.frequency.value=rand(90,150);
+    const g=C.createGain(); env(g,tt,dur*0.45,rand(0.05,0.09),dur*0.55);
+    src.connect(lp); lp.connect(g); g.connect(AU.music); src.start(tt);
+  },11000);
+}
+/* one footfall of eight: a dry tick and the smallest pad thump */
+export function sfxSpiderTap(vol,pan=0){
+  if(!AU.ctx||vol<=0.003) return;
+  const C=AU.ctx,t=C.currentTime;
+  pannedNoise(t,0.022,"bandpass",rand(2300,3500),2.4,vol*0.5,pan,0.001);
+  const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(120,t);
+  o.frequency.exponentialRampToValueAtTime(64,t+0.05);
+  const g=C.createGain();env(g,t,0.002,vol*0.22,0.07);
+  const p=C.createStereoPanner?C.createStereoPanner():null;
+  o.connect(g);
+  if(p){p.pan.value=pan;g.connect(p);p.connect(AU.sfx);}else g.connect(AU.sfx);
+  o.start(t);o.stop(t+0.12);
+}
+/* claws raked along a shelf: a few descending resonant strokes */
+export function sfxSpiderScratch(vol,pan=0){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  const n=3+Math.floor(Math.random()*3);
+  for(let i=0;i<n;i++){
+    const at=t+i*rand(0.12,0.2);
+    const f=pannedNoise(at,rand(0.14,0.26),"bandpass",rand(1100,1700),7,vol*rand(0.5,0.8),pan,0.01);
+    f.frequency.setValueAtTime(f.frequency.value,at);
+    f.frequency.exponentialRampToValueAtTime(rand(500,800),at+0.2);
+    /* the shelf's wooden body answering */
+    const o=C.createOscillator();o.type="sine";o.frequency.value=rand(150,210);
+    const g=C.createGain();env(g,at,0.01,vol*0.12,0.18);
+    const p=C.createStereoPanner?C.createStereoPanner():null;
+    o.connect(g);
+    if(p){p.pan.value=pan;g.connect(p);p.connect(AU.sfx);}else g.connect(AU.sfx);
+    o.start(at);o.stop(at+0.3);
+  }
+}
+/* wet questioning puffs, nose to the carpet */
+export function sfxSpiderSniff(vol,pan=0){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  const n=2+Math.floor(Math.random()*2);
+  for(let i=0;i<n;i++)
+    pannedNoise(t+i*rand(0.16,0.24),rand(0.08,0.14),"bandpass",rand(650,1050),2.2,
+      vol*(0.5-i*0.1),pan,0.02);
+}
+/* the shriek: a falling, splintering chord that is nothing like a voice */
+export function sfxSpiderShriek(vol=1,pan=0){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  const p=C.createStereoPanner?C.createStereoPanner():null;
+  const out=C.createGain(); out.gain.value=1;
+  if(p){p.pan.value=pan*0.8; out.connect(p); p.connect(AU.sfx);} else out.connect(AU.sfx);
+  [[1450,330,"sawtooth",0.16],[1090,270,"sawtooth",0.13],[720,190,"square",0.08]]
+  .forEach(([f0,f1,type,v])=>{
+    const o=C.createOscillator();o.type=type;
+    o.frequency.setValueAtTime(f0*rand(0.94,1.06),t);
+    o.frequency.exponentialRampToValueAtTime(f1,t+rand(0.6,0.85));
+    const bp=C.createBiquadFilter();bp.type="bandpass";bp.frequency.value=900;bp.Q.value=1.6;
+    const g=C.createGain();env(g,t,0.03,v*vol,0.85);
+    o.connect(bp);bp.connect(g);g.connect(out);o.start(t);o.stop(t+1.1);
+  });
+  /* mandible chitter under it */
+  for(let i=0;i<10;i++)
+    pannedNoise(t+0.05+i*0.045,0.02,"highpass",2600,1,vol*0.07*(1-i/10),pan,0.001);
+}
+/* a floppy disk leaving its shelf: quiet — but nothing here is quiet enough */
+export function sfxDiscPickup(){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  pannedNoise(t,0.02,"highpass",2700,1,0.07,0,0.001);          // plastic click
+  pannedNoise(t+0.03,0.1,"bandpass",1500,1.8,0.05,0,0.02);     // the slide off the wood
+  const o=C.createOscillator();o.type="sine";o.frequency.value=540;
+  const g=C.createGain();env(g,t+0.08,0.01,0.05,0.25);
+  o.connect(g);g.connect(AU.sfx);o.start(t+0.08);o.stop(t+0.4);
+}
+/* feeding the terminal, one disk after another */
+export function sfxDiscInsert(at=0){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime+at;
+  pannedNoise(t,0.03,"bandpass",1900,2,0.10,0,0.002);          // the slot taking it
+  const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(210,t+0.04);
+  o.frequency.exponentialRampToValueAtTime(120,t+0.12);
+  const g=C.createGain();env(g,t+0.04,0.004,0.12,0.12);        // the clunk home
+  o.connect(g);g.connect(AU.sfx);o.start(t+0.04);o.stop(t+0.25);
+  const w=C.createOscillator();w.type="sawtooth";w.frequency.setValueAtTime(85,t+0.1);
+  w.frequency.linearRampToValueAtTime(140,t+0.3);
+  const lp=C.createBiquadFilter();lp.type="lowpass";lp.frequency.value=500;
+  const wg=C.createGain();env(wg,t+0.1,0.04,0.045,0.3);        // drive motor whirr
+  w.connect(lp);lp.connect(wg);wg.connect(AU.sfx);w.start(t+0.1);w.stop(t+0.55);
+}
+/* an old machine waking: relay click, swelling buzz, the CRT's needle whine */
+export function sfxComputerBoot(vol=1){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  pannedNoise(t,0.025,"bandpass",1600,2,0.14*vol,0,0.002);
+  const o=C.createOscillator();o.type="sawtooth";o.frequency.setValueAtTime(46,t);
+  o.frequency.linearRampToValueAtTime(118,t+0.9);
+  const lp=C.createBiquadFilter();lp.type="lowpass";lp.frequency.value=420;
+  const g=C.createGain();env(g,t,0.5,0.16*vol,1.6);
+  o.connect(lp);lp.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+2.2);
+  /* degauss bwomp */
+  const o2=C.createOscillator();o2.type="sine";o2.frequency.setValueAtTime(190,t+0.15);
+  o2.frequency.exponentialRampToValueAtTime(42,t+0.5);
+  const g2=C.createGain();env(g2,t+0.15,0.01,0.13*vol,0.45);
+  o2.connect(g2);g2.connect(AU.sfx);o2.start(t+0.15);o2.stop(t+0.8);
+  /* the 15.7kHz line whine, just at the edge of hearing */
+  const o3=C.createOscillator();o3.type="sine";o3.frequency.value=15700;
+  const g3=C.createGain();env(g3,t+0.3,0.4,0.015*vol,2.2);
+  o3.connect(g3);g3.connect(AU.sfx);o3.start(t+0.3);o3.stop(t+3);
+}
+/* …and the fading static it dies into */
+export function sfxComputerStatic(dur=2,vol=1){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  const len=Math.floor(C.sampleRate*dur), buf=C.createBuffer(1,len,C.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/len,1.4);
+  const src=C.createBufferSource(); src.buffer=buf;
+  const hp=C.createBiquadFilter();hp.type="highpass";hp.frequency.value=500;
+  const g=C.createGain();g.gain.value=0.13*vol;
+  src.connect(hp);hp.connect(g);g.connect(AU.sfx);src.start(t);
+}
+
 export function sfxKnock(vol,raps,pan=0){
   /* knuckles on wood/drywall: two fast-decaying mid partials + a sharp tap,
      rather than a bassy thump */

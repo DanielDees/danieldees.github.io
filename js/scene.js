@@ -26,7 +26,7 @@ addEventListener("resize",()=>{camera.aspect=innerWidth/innerHeight;camera.updat
    fixture, and those should sit in real murk (another −40% from v1.2). */
 export const hemi = new THREE.HemisphereLight(0xffe9b0, 0x2c2414, 0.08);
 scene.add(hemi);
-const amb = new THREE.AmbientLight(0x6b5d35, 0.05);
+export const amb = new THREE.AmbientLight(0x6b5d35, 0.05);
 scene.add(amb);
 export const playerLight = new THREE.PointLight(0xffeeb0, 0.12, 9, 1.8); // faint readability fill
 scene.add(playerLight);
@@ -46,6 +46,29 @@ for(let i=0;i<LIGHT_POOL_N;i++){
   const pl=new THREE.PointLight(0xffeec0, 0, 11, 2.2);
   pl.position.y=WALL_H-0.5;
   scene.add(pl); lightPool.push(pl);
+}
+
+/* everything added so far survives a level change; buildLevel/buildLibrary
+   meshes (and the entities/props added later) don't get the tag, so
+   clearLevelScene sweeps them all without each module keeping lists */
+for(const o of scene.children) o.userData.persist=true;
+export function clearLevelScene(){
+  for(const o of [...scene.children])
+    if(!o.userData.persist) scene.remove(o);
+  lights.length=0;
+  wallMeshes=new Map();
+  wallDecals.length=0;
+}
+/* fog & ambient floor per level. THE END sits in a cooler, deeper murk:
+   its minimum ambient light level is HALF of level 0's. */
+export function setLevelEnvironment(level){
+  if(level===1){
+    scene.fog.color.setHex(0x030404); scene.background.setHex(0x030404);
+    scene.fog.near=6; scene.fog.far=62;
+    hemi.color.setHex(0xe8e2d0); hemi.groundColor.setHex(0x14161c);
+    hemi.intensity=0.04;
+    amb.color.setHex(0x4a5060); amb.intensity=0.025;   // half the level-0 floor
+  }
 }
 
 /* build level meshes */

@@ -68,6 +68,15 @@ canvas{display:block}
 #crosshair{position:fixed;top:50%;left:50%;width:4px;height:4px;margin:-2px 0 0 -2px;border-radius:50%;
   background:rgba(232,226,207,.55)}
 
+/* ---------- level title card (THE END reveal) ---------- */
+#levelTitle{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  pointer-events:none;opacity:0;transition:opacity 1.6s ease}
+#levelTitle.show{opacity:1}
+#ltMain{font-size:54px;letter-spacing:.55em;color:#cdd3da;text-indent:.55em;
+  text-shadow:0 0 26px rgba(0,0,0,1),0 0 60px rgba(120,140,170,.25)}
+#ltSub{margin-top:14px;font-size:13px;letter-spacing:.42em;color:#737d8c;text-indent:.42em;
+  text-shadow:0 0 12px rgba(0,0,0,1)}
+
 /* ---------- overlays ---------- */
 .overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
   background:rgba(4,3,1,.9);z-index:40;pointer-events:auto}

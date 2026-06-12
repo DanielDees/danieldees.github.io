@@ -5,17 +5,21 @@
    running (it rushes the panel, freezing at a 30m ring); the elevator
    scene scripts the entity entirely. */
 import { clamp, lerp, angLerp } from "./utils.js";
-import { STATE, monster } from "./state.js";
+import { STATE, monster, spider } from "./state.js";
 import { worldToCell, isWall, losCells } from "./map.js";
 import { camera, playerLight } from "./scene.js";
 import { AU, panTo, sfxAlert, sfxStinger, sfxClunk, sfxPowerOn,
          sfxBoxOpen, sfxBoxClose, sfxFuseHum,
          sfxElevButton, sfxElevDing, sfxElevDoors, sfxElevThud, sfxElevJolt, sfxFloorBlip,
-         startElevDescend, sfxElevRattle, sfxElevGrind, sfxLightsOut } from "./audio.js";
+         startElevDescend, sfxElevRattle, sfxElevGrind, sfxLightsOut,
+         sfxComputerBoot, sfxComputerStatic, sfxSpiderShriek, sfxSpiderTap,
+         sfxSpiderScratch } from "./audio.js";
 import { ui, toast, renderObjectives } from "./ui.js";
 import { monsterRushTo } from "./monster.js";
 import { exitDoor } from "./props.js";
-import { win } from "./lifecycle.js";
+import { win, enterTheEnd } from "./lifecycle.js";
+import { LIB, losCells2 } from "./library.js";
+import { spiderPose } from "./spider.js";
 
 export const CINE={active:false, kind:null, t:0};
 let D=null;                                   // per-cutscene working data
@@ -45,6 +49,8 @@ export function updateCinematic(dt){
   CINE.t+=dt;
   if(CINE.kind==="breaker") updateBreaker();
   else if(CINE.kind==="elev") updateElevator(dt);
+  else if(CINE.kind==="libIntro") updateLibIntro(dt);
+  else if(CINE.kind==="terminal") updateTerminal(dt);
 }
 
 /* ================= breaker: the fuse seats itself ================= */
@@ -414,9 +420,231 @@ function updateElevator(dt){
   if(t>=T_END){
     CINE.active=false; CINE.kind=null; D=null;
     ui.dread.style.opacity=0; ui.staticfx.style.opacity=0;
+    /* the brakes never caught. The screen is already black: the crash IS
+       the transition — you wake up somewhere much quieter. */
+    enterTheEnd();
+  }
+}
+
+/* ================= THE END: stepping out of the wreck ================= */
+/* The screen is black when this starts (the crash fade). You come to on
+   the floor of the cab under the emergency lamp, the doors grind open in
+   two tries, you walk out into total dark — and the library's faulty grid
+   wakes in a slow wave rolling away from you. Title, objectives, control. */
+const LI_LIFT=0.9, LI_DOOR1=3.3, LI_STUCK=4.35, LI_DOOR2=5.3, LI_OPEN=6.5,
+      LI_WALK0=6.9, LI_WALK1=9.7, LI_WAKE=7.3, LI_LOOKUP=9.9,
+      LI_TITLE=10.6, LI_TITLE_OFF=14.8, LI_OBJ=14.9, LI_END=16.4;
+export function startTheEndIntro(){
+  CINE.active=true; CINE.kind="libIntro"; CINE.t=0;
+  ui.prompt.classList.remove("show");
+  const g=LIB.elev, u=g.userData;
+  g.updateMatrixWorld(true);
+  const l2w=(x,y,z)=>g.localToWorld(new THREE.Vector3(x,y,z));
+  const org=l2w(0,0,0), outP=l2w(0,0,1);
+  const out={x:outP.x-org.x, z:outP.z-org.z};
+  const cabEye=l2w(0,1.42,-1.6);
+  const aOut={yaw:Math.atan2(-out.x,-out.z), pitch:-0.04};
+  D={fired:new Set(), u, g, out, cabEye, aOut,
+     spawn:LIB.spawn.clone()};
+  /* the wreck: doors shut, the cab steeped in emergency-lamp red */
+  u.doorL.position.x=-0.515; u.doorR.position.x=0.515;
+  u.emergMat.color.set(0xff2515);
+  u.cabLight.intensity=0.4; u.cabLight.color.setRGB(1,0.15,0.09);
+  u.cabLightMat.color.setRGB(0.10,0.015,0.01);
+  u.drawFloor("--","#ff4030");
+  /* hold the screen black; the first cue lifts it onto the red-lit cab */
+  ui.flash.style.transition="none"; ui.flash.style.background="#000";
+  ui.flash.style.opacity=1;
+}
+function updateLibIntro(dt){
+  const t=CINE.t, u=D.u;
+  cue("lift",LI_LIFT,()=>{
+    ui.flash.style.transition="opacity 2.4s"; ui.flash.style.opacity=0;
+  });
+  cue("settle",1.6,()=>sfxElevRattle(1.1));
+  /* doors: first try jams at a third; the second shove forces them */
+  cue("doors1",LI_DOOR1,()=>sfxElevDoors(1.0));
+  cue("stuck",LI_STUCK,()=>sfxClunk());
+  cue("doors2",LI_DOOR2,()=>{ sfxElevDoors(1.2); sfxElevRattle(0.8); });
+  const slide = 0.34*seg(t,LI_DOOR1,LI_STUCK) + 0.66*seg(t,LI_DOOR2,LI_OPEN);
+  u.doorL.position.x=-(0.515+1.0*slide);
+  u.doorR.position.x= (0.515+1.0*slide);
+  /* the cab swims in emergency red; the dead main light coughs a few dying
+     white flickers as the doors fight their track */
+  if(t>=LI_DOOR1&&t<LI_OPEN){
+    const fl=hash(Math.floor(t*13))<0.3;
+    u.cabLight.intensity=fl?0.3:0.34;
+    if(fl) u.cabLight.color.setRGB(1,0.85,0.65); else u.cabLight.color.setRGB(1,0.15,0.09);
+    u.cabLightMat.color.setRGB(fl?0.3:0.1,fl?0.27:0.015,fl?0.2:0.01);
+  } else if(t>=LI_OPEN){
+    u.cabLight.intensity=0.22; u.cabLight.color.setRGB(1,0.14,0.08);
+    u.cabLightMat.color.setRGB(0.07,0.012,0.008);
+  }
+  /* the library wakes in a wave rolling out from the doorway */
+  cue("wake",LI_WAKE,()=>{ STATE.libWakeT=0; });
+  cue("scratch",LI_END-0.6,()=>{
+    /* somewhere out in the dark, the first slow scrape down a shelf */
+    sfxSpiderScratch(0.5,panTo(spider.pos.x,spider.pos.z));
+  });
+  cue("title",LI_TITLE,()=>{
+    const el=document.getElementById("levelTitle");
+    if(el){ el.querySelector("#ltMain").textContent="THE END";
+      el.querySelector("#ltSub").textContent="the infinite library";
+      el.classList.add("show"); }
+  });
+  cue("titleOff",LI_TITLE_OFF,()=>{
+    const el=document.getElementById("levelTitle");
+    if(el) el.classList.remove("show");
+  });
+  cue("obj",LI_OBJ,()=>{
+    toast("Bare shelves. Dead machines. Find the floppy disks — the terminal at the heart of the library wants them back.",5200);
+    renderObjectives();
+  });
+  /* ---- camera ---- */
+  let cx,cy,cz,yaw=D.aOut.yaw,pitch=D.aOut.pitch;
+  if(t<LI_WALK0){
+    /* getting up off the cab floor */
+    const up=seg(t,LI_LIFT,2.6);
+    cx=D.cabEye.x; cz=D.cabEye.z;
+    cy=lerp(0.7,1.55,up);
+    pitch=lerp(0.35,-0.04,up);
+    yaw=D.aOut.yaw+Math.sin(t*0.9)*0.05*(1-up);
+    /* a head-sway as the cab settles */
+    if(t<2.4) cy+=Math.sin(t*7)*0.01*(1-t/2.4);
+  } else {
+    const k=seg(t,LI_WALK0,LI_WALK1);
+    cx=lerp(D.cabEye.x,D.spawn.x,k);
+    cz=lerp(D.cabEye.z,D.spawn.z,k);
+    cy=1.55+Math.sin(k*Math.PI*3.2)*0.035*(1-k*0.5);
+    /* one unsteady stumble on the threshold */
+    cy-=0.05*seg(t,LI_WALK0+0.9,LI_WALK0+1.15)*(1-seg(t,LI_WALK0+1.15,LI_WALK0+1.7));
+    /* take in the height of the place, then settle level */
+    const upk=seg(t,LI_LOOKUP,LI_LOOKUP+1.3)*(1-seg(t,LI_TITLE_OFF-1.6,LI_TITLE_OFF-0.2));
+    pitch=lerp(-0.04,0.52,upk);
+    /* and sweep slowly across the stacks under the title */
+    yaw=D.aOut.yaw+Math.sin(seg(t,LI_TITLE,LI_END)*Math.PI)*0.34;
+  }
+  STATE.yaw=yaw; STATE.pitch=pitch;
+  setCam(cx,cy,cz,yaw,pitch);
+  if(t>=LI_END){
+    CINE.active=false; CINE.kind=null; D=null;
+    /* the librarian begins its rounds */
+    spider.active=true;
+    if(spider.mesh) spider.mesh.visible=true;
+    renderObjectives();
+  }
+}
+
+/* ================= THE END: the terminal accepts ================= */
+/* The last disk goes in. The machine resonates a light buzz, prints the
+   level's name in white, and begins dying into static — and the librarian
+   comes for the noise at full sprint. The lights fail, the static glow is
+   the only thing left, the taps close in… white. */
+const TC_BOOT=0.7, TC_TEXT=1.6, TC_SHRIEK=3.3, TC_RUSH=3.5, TC_STATIC=5.6,
+      TC_DARK=6.5, TC_WHITE=7.9, TC_WIN=9.0;
+export function startTerminalCine(){
+  CINE.active=true; CINE.kind="terminal"; CINE.t=0;
+  ui.prompt.classList.remove("show");
+  const term=LIB.term, g=term.group;
+  g.updateMatrixWorld(true);
+  const scr=g.localToWorld(new THREE.Vector3(0,1.6,0.36));
+  const eye0={x:STATE.pos.x, y:STATE.y+STATE.curEyeH, z:STATE.pos.z};
+  /* a viewing mark just south of the screen, eye level with it */
+  const view={x:scr.x, y:1.52, z:scr.z+1.5};
+  D={fired:new Set(), term, scr, eye0, view,
+     yaw0:STATE.yaw, pitch0:STATE.pitch,
+     aScr:lookAngles(view.x,view.y,view.z,scr.x,scr.y,scr.z),
+     lastStatic:0, lastTap:0};
+  if(AU.ctx&&AU.spiderBedGain)
+    AU.spiderBedGain.gain.setTargetAtTime(0,AU.ctx.currentTime,0.4);
+}
+function updateTerminal(dt){
+  const t=CINE.t, term=D.term, screen=term.screen;
+  cue("boot",TC_BOOT,()=>{
+    sfxComputerBoot(1);
+    if(term.pc.userData.led) term.pc.userData.led.color.set(0x39e052);
+  });
+  /* the white text types itself up to full brightness, holds, then drowns */
+  if(t>=TC_TEXT&&t<TC_STATIC){
+    if(t-D.lastStatic>0.09){ D.lastStatic=t; screen.boot(Math.min(1,(t-TC_TEXT)*1.3)); }
+  }
+  cue("shriek",TC_SHRIEK,()=>{
+    /* it heard the machine wake from the far stacks */
+    sfxSpiderShriek(1.2,panTo(spider.pos.x,spider.pos.z));
+    ui.dread.style.opacity=0.45;
+  });
+  cue("rush",TC_RUSH,()=>{
+    /* place it at the far end of the clearest line south of the desk and
+       let it eat the distance */
+    const dirs=[[0,1],[1,0.4],[-1,0.4],[0.7,0.7],[-0.7,0.7]];
+    let bx=D.scr.x, bz=D.scr.z+8, bestD=8;
+    for(const[ddx,ddz]of dirs){
+      const L=Math.hypot(ddx,ddz);
+      for(let s=34;s>=10;s-=2){
+        const x=D.scr.x+ddx/L*s, z=D.scr.z+ddz/L*s;
+        if(losCells2(D.scr.x,D.scr.z+1.2,x,z)){
+          if(s>bestD){ bestD=s; bx=x; bz=z; }
+          break;
+        }
+      }
+    }
+    spider.pos.set(bx,0,bz);
+    spider.faceAng=Math.atan2(D.scr.x-bx,D.scr.z-bz);
+    if(spider.mesh) spider.mesh.visible=true;
+    D.rush={speed:bestD/(TC_WHITE-TC_RUSH-0.35)};
+  });
+  cue("static",TC_STATIC,()=>sfxComputerStatic(2.6,1.2));
+  if(t>=TC_STATIC&&t<TC_WHITE){
+    if(t-D.lastStatic>0.08){ D.lastStatic=t; screen.static(Math.max(0.12,1-(t-TC_STATIC)*0.3)); }
+  }
+  cue("dark",TC_DARK,()=>{
+    /* every light in the building lets go at once */
+    sfxLightsOut();
+    if(term.lamp) term.lamp.intensity=0;
+    if(term.bulbMat) term.bulbMat.color.set(0x140c06);
+  });
+  if(t>=TC_DARK) STATE.libBlackout=Math.min(1,STATE.libBlackout+dt*8);
+  /* ---- the sprinter ---- */
+  if(D.rush&&t<TC_WHITE){
+    const rx=D.scr.x-spider.pos.x, rz=(D.scr.z+1.1)-spider.pos.z;
+    const rem=Math.hypot(rx,rz);
+    if(rem>1.4){
+      const step=Math.min(D.rush.speed*dt,rem);
+      spider.pos.x+=rx/rem*step; spider.pos.z+=rz/rem*step;
+    }
+    spider.faceAng=Math.atan2(rx,rz);
+    spiderPose(dt,D.rush.speed);
+    const dd=Math.hypot(spider.pos.x-D.view.x,spider.pos.z-D.view.z);
+    if(t-D.lastTap>Math.max(0.05,dd*0.004)){
+      D.lastTap=t;
+      sfxSpiderTap(clamp(1-dd/40,0.1,1)*0.8,panTo(spider.pos.x,spider.pos.z));
+    }
+    ui.dread.style.opacity=clamp(1-dd/26,0.45,1);
+  }
+  cue("white",TC_WHITE,()=>{
+    ui.flash.style.transition="none"; ui.flash.style.background="#fff";
+    ui.flash.style.opacity=1;
+    ui.dread.style.opacity=0;
+    if(AU.ctx&&AU.lib){
+      const tt=AU.ctx.currentTime;
+      AU.lib.rumbleGain.gain.setTargetAtTime(0.0001,tt,0.25);
+    }
+  });
+  /* ---- camera: ease onto the screen and stay there ---- */
+  const k=seg(t,0,1.6);
+  const cx=lerp(D.eye0.x,D.view.x,k), cy=lerp(D.eye0.y,D.view.y,k), cz=lerp(D.eye0.z,D.view.z,k);
+  let yaw=angLerp(D.yaw0,D.aScr.yaw,k), pitch=lerp(D.pitch0,D.aScr.pitch,k);
+  /* the closing taps shake the view, just a little */
+  if(t>=TC_DARK&&t<TC_WHITE){
+    const amp=0.006+0.02*seg(t,TC_DARK,TC_WHITE);
+    yaw+=(Math.random()-0.5)*amp; pitch+=(Math.random()-0.5)*amp;
+  }
+  STATE.yaw=yaw; STATE.pitch=pitch;
+  setCam(cx,cy,cz,yaw,pitch);
+  if(t>=TC_WIN){
+    CINE.active=false; CINE.kind=null; D=null;
     win();
-    /* hold black a beat under the win sheet, then let it lift */
-    setTimeout(()=>{ ui.flash.style.transition="opacity 2.5s";
-      ui.flash.style.opacity=0; },600);
+    setTimeout(()=>{ ui.flash.style.transition="opacity 3s";
+      ui.flash.style.opacity=0; },700);
   }
 }

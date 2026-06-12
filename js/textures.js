@@ -299,6 +299,154 @@ export function makeDripTextures(wid,len){
   }
   return {wall,ceil};
 }
+/* ================= THE END — the infinite library ================= */
+/* aged institutional plaster: putty-grey, faintly streaked, with a dark
+   wood baseboard band. Cracks are separate decals (makeCrackTexture). */
+export const texLibWall = makeCanvas(256,256,(g,w,h)=>{
+  g.fillStyle="#878173";g.fillRect(0,0,w,h);
+  for(let i=0;i<700;i++){               // plaster mottling
+    const v=Math.random();
+    g.fillStyle=`rgba(${v<0.5?96:140},${v<0.5?90:134},${v<0.5?78:118},${0.05+Math.random()*0.08})`;
+    g.fillRect(Math.random()*w,Math.random()*h,Math.random()*6+2,Math.random()*14+3);
+  }
+  for(let i=0;i<10;i++){                // long vertical water-grime streaks
+    const x=Math.random()*w, ww=2+Math.random()*7;
+    const gr=g.createLinearGradient(0,0,0,h);
+    gr.addColorStop(0,`rgba(60,56,46,${0.05+Math.random()*0.1})`);
+    gr.addColorStop(1,"rgba(60,56,46,0)");
+    g.fillStyle=gr;g.fillRect(x,0,ww,h);
+  }
+  /* dado rail + baseboard: the institutional read */
+  g.fillStyle="rgba(58,48,36,0.5)";g.fillRect(0,h*0.62,w,3);
+  g.fillStyle="#3c3226";g.fillRect(0,h-16,w,16);
+  g.fillStyle="rgba(20,16,10,0.6)";g.fillRect(0,h-16,w,2);
+});
+/* the thick grey-blue carpet that mutes every footstep */
+export const texLibCarpet = makeCanvas(512,512,(g,w,h)=>{
+  g.fillStyle="#3a4250";g.fillRect(0,0,w,h);
+  for(let i=0;i<26000;i++){const v=Math.random();
+    g.fillStyle=`rgba(${v<.5?24:74},${v<.5?28:84},${v<.5?38:104},0.28)`;
+    g.fillRect(Math.random()*w,Math.random()*h,1.5,1.5);}
+  /* faint herringbone weave bands */
+  for(let y=0;y<h;y+=24){
+    g.fillStyle=`rgba(${(y/24)%2?28:60},${(y/24)%2?34:68},${(y/24)%2?46:88},0.07)`;
+    g.fillRect(0,y,w,12);
+  }
+  for(let i=0;i<9;i++){                 // old pressure-stains, dust shadows
+    const x=Math.random()*w,y=Math.random()*h,r=20+Math.random()*70;
+    g.save();g.translate(x,y);g.rotate(Math.random()*Math.PI);g.scale(1,0.5+Math.random()*0.8);
+    const gr=g.createRadialGradient(0,0,2,0,0,r);
+    gr.addColorStop(0,`rgba(14,16,22,${0.10+Math.random()*0.16})`);gr.addColorStop(1,"rgba(14,16,22,0)");
+    g.fillStyle=gr;g.fillRect(-r,-r,r*2,r*2);g.restore();
+  }
+});
+/* high dark ceiling: old planks, swallowed by the murk anyway */
+export const texLibCeil = makeCanvas(256,256,(g,w,h)=>{
+  g.fillStyle="#241f1a";g.fillRect(0,0,w,h);
+  for(let y=0;y<=h;y+=32){g.fillStyle="rgba(10,8,6,0.7)";g.fillRect(0,y,w,2);}
+  for(let i=0;i<1200;i++){
+    g.fillStyle=`rgba(${40+Math.random()*26|0},${34+Math.random()*20|0},${24+Math.random()*14|0},${Math.random()*0.16})`;
+    g.fillRect(Math.random()*w,Math.random()*h,Math.random()*22+4,1.5);
+  }
+});
+/* worn dark walnut for the stacks; a warmer oak for tables & the desk */
+function woodTex(base,dark,light){
+  return makeCanvas(256,256,(g,w,h)=>{
+    g.fillStyle=base;g.fillRect(0,0,w,h);
+    for(let i=0;i<420;i++){             // long vertical grain
+      const x=Math.random()*w, l=20+Math.random()*120;
+      g.fillStyle=`rgba(${Math.random()<0.5?dark:light},${0.10+Math.random()*0.18})`;
+      g.fillRect(x,Math.random()*h,1+Math.random()*1.6,l);
+    }
+    for(let i=0;i<26;i++){              // scuffs and chips
+      g.fillStyle=`rgba(16,11,7,${0.08+Math.random()*0.16})`;
+      g.save();g.translate(Math.random()*w,Math.random()*h);g.rotate((Math.random()-0.5)*0.8);
+      g.fillRect(0,0,4+Math.random()*22,1+Math.random()*2);g.restore();
+    }
+  });
+}
+export const texShelfWood = woodTex("#43321f","26,17,9","96,74,46");
+export const texDeskWood  = woodTex("#5a452c","36,24,12","122,96,58");
+/* temporal decay: a jagged dark crack wandering down a wall, with branches.
+   Alpha decal — each call grows a unique one. */
+export function makeCrackTexture(){
+  const t=makeCanvas(96,224,(g,w,h)=>{
+    g.clearRect(0,0,w,h);
+    const branch=(x,y,ang,len,wid)=>{
+      while(len>0&&y<h&&x>2&&x<w-2){
+        const nx=x+Math.sin(ang)*3, ny=y+Math.cos(ang)*3;
+        g.strokeStyle=`rgba(22,18,12,${0.5+Math.random()*0.4})`;
+        g.lineWidth=wid;
+        g.beginPath();g.moveTo(x,y);g.lineTo(nx,ny);g.stroke();
+        /* hairline halo */
+        g.strokeStyle="rgba(60,54,42,0.18)";g.lineWidth=wid+2;
+        g.beginPath();g.moveTo(x,y);g.lineTo(nx,ny);g.stroke();
+        x=nx;y=ny;len-=3;
+        ang+=(Math.random()-0.5)*0.7;
+        ang=ang*0.86;                       // keep falling mostly downward
+        if(Math.random()<0.06&&wid>0.8) branch(x,y,ang+(Math.random()<0.5?-0.9:0.9),len*0.45,wid*0.6);
+        wid*=0.995;
+      }
+    };
+    branch(w*(0.3+Math.random()*0.4),2,(Math.random()-0.5)*0.6,h*1.2,2.2+Math.random()*1.4);
+  });
+  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearFilter; t.generateMipmaps=false;
+  return t;
+}
+/* short texts and labels, meaninglessly placed — most just say the level's
+   name. Stenciled paint, eroded. */
+export function makeEndTextTexture(txt="THE END"){
+  const t=makeCanvas(512,128,(g,w,h)=>{
+    g.clearRect(0,0,w,h);
+    g.fillStyle="rgba(28,24,18,0.88)";
+    g.font="bold 86px Courier New";g.textAlign="center";g.textBaseline="middle";
+    g.fillText(txt,w/2,h/2+4);
+    /* erosion: eat random holes out of the paint */
+    g.globalCompositeOperation="destination-out";
+    for(let i=0;i<260;i++){
+      g.fillStyle=`rgba(0,0,0,${0.3+Math.random()*0.7})`;
+      g.beginPath();g.arc(Math.random()*w,Math.random()*h,Math.random()*3.2,0,7);g.fill();
+    }
+    g.globalCompositeOperation="source-over";
+  });
+  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearFilter; t.generateMipmaps=false;
+  return t;
+}
+/* faded posters: aged paper, illegible blocks of text, one big smudged
+   figure or glyph, a torn corner */
+export function makePosterTexture(){
+  const t=makeCanvas(96,128,(g,w,h)=>{
+    const tone=200+Math.random()*30|0;
+    g.fillStyle=`rgb(${tone-22},${tone-26},${tone-52})`;g.fillRect(0,0,w,h);
+    g.strokeStyle="rgba(40,34,22,0.55)";g.lineWidth=3;g.strokeRect(3,3,w-6,h-6);
+    /* headline + body smudge-lines */
+    g.fillStyle="rgba(30,26,18,0.75)";g.fillRect(12,12,w-24,9);
+    for(let y=30;y<h-20;y+=7){
+      if(Math.random()<0.18) continue;
+      g.fillStyle=`rgba(36,32,22,${0.25+Math.random()*0.3})`;
+      g.fillRect(10+Math.random()*6,y,(w-26)*(0.5+Math.random()*0.5),3);
+    }
+    /* one central faded glyph/figure */
+    if(Math.random()<0.6){
+      g.fillStyle="rgba(50,40,26,0.30)";
+      g.beginPath();g.arc(w/2,h*0.5,12+Math.random()*9,0,7);g.fill();
+    }
+    /* foxing stains */
+    for(let i=0;i<5;i++){
+      const x=Math.random()*w,y=Math.random()*h,r=4+Math.random()*12;
+      const gr=g.createRadialGradient(x,y,1,x,y,r);
+      gr.addColorStop(0,"rgba(110,82,40,0.22)");gr.addColorStop(1,"rgba(110,82,40,0)");
+      g.fillStyle=gr;g.beginPath();g.arc(x,y,r,0,7);g.fill();
+    }
+    /* torn corner */
+    g.globalCompositeOperation="destination-out";
+    g.beginPath();g.moveTo(w,0);g.lineTo(w-10-Math.random()*16,0);g.lineTo(w,12+Math.random()*16);g.closePath();g.fill();
+    g.globalCompositeOperation="source-over";
+  });
+  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearFilter; t.generateMipmaps=false;
+  return t;
+}
+
 /* cut a vertical strip [u0,u1] out of a colony texture — used when a colony
    overhangs its wall section and continues around a corner. flip mirrors the
    strip for wrap planes whose u-axis runs back toward the fold, so the

@@ -28,14 +28,31 @@ const OBJ_DEFS=[
 ];
 export function renderObjectives(){
   ui.objList.innerHTML="";
+  const t=Math.floor(STATE.time);
+  const clock=`TIME ${String(Math.floor(t/60)).padStart(2,"0")}:${String(t%60).padStart(2,"0")}`;
+  if(STATE.level===1){
+    /* THE END: find the disks, feed the terminal */
+    const total=STATE.discTotal||"?";
+    const allFound=STATE.discTotal>0&&STATE.discsFound>=STATE.discTotal;
+    const allFed=STATE.discTotal>0&&STATE.discsDelivered>=STATE.discTotal;
+    [[`Find the floppy disks (${STATE.discsFound}/${total})`, allFound, !allFound],
+     [`Feed them to the librarian's terminal (${STATE.discsDelivered}/${total})`, allFed, allFound&&!allFed||STATE.discsCarried>0],
+    ].forEach(([txt,done,active])=>{
+      const li=document.createElement("li");
+      li.textContent=txt;
+      li.className = done? "done" : active? "active" : "";
+      ui.objList.appendChild(li);
+    });
+    ui.stats.textContent=`${clock}  ·  DEATHS ${STATE.deaths}  ·  CARRYING ${STATE.discsCarried} 💾`;
+    return;
+  }
   OBJ_DEFS.forEach((f,i)=>{
     const li=document.createElement("li");
     li.textContent=f();
     li.className = i<STATE.objective? "done" : i===STATE.objective? "active" : "";
     ui.objList.appendChild(li);
   });
-  const t=Math.floor(STATE.time);
-  ui.stats.textContent=`TIME ${String(Math.floor(t/60)).padStart(2,"0")}:${String(t%60).padStart(2,"0")}  ·  DEATHS ${STATE.deaths}  ·  STAGE ${Math.min(STATE.objective+1,4)}/4`;
+  ui.stats.textContent=`${clock}  ·  DEATHS ${STATE.deaths}  ·  STAGE ${Math.min(STATE.objective+1,4)}/4`;
 }
 
 export function lockPointer(){ renderer.domElement.requestPointerLock(); }

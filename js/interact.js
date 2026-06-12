@@ -2,10 +2,12 @@
 import { STATE, monster } from "./state.js";
 import { scene } from "./scene.js";
 import { interactables } from "./props.js";
-import { sfxPickup, sfxClunk } from "./audio.js";
+import { sfxPickup, sfxClunk, sfxDiscPickup, sfxDiscInsert } from "./audio.js";
 import { ui, toast, renderObjectives } from "./ui.js";
 import { escalateMonster } from "./monster.js";
-import { CINE, startBreakerCine, startElevatorCine } from "./cutscene.js";
+import { CINE, startBreakerCine, startElevatorCine, startTerminalCine } from "./cutscene.js";
+import { spiderHearDisc } from "./spider.js";
+import { startDeadPC } from "./library.js";
 
 let focusedItem=null;
 export function tryInteract(){
@@ -39,6 +41,34 @@ export function tryInteract(){
     it.taken=true;
     startElevatorCine(it);
   }
+  /* ---- THE END ---- */
+  else if(it.kind==="disc"){
+    it.taken=true; scene.remove(it.mesh); sfxDiscPickup();
+    STATE.discsCarried++; STATE.discsFound++;
+    if(STATE.libFirstPickup<0) STATE.libFirstPickup=STATE.time;
+    /* the sound carries. It ALWAYS carries. */
+    spiderHearDisc(it.mesh.position.x,it.mesh.position.z);
+    toast(STATE.discsFound===1
+      ? `Floppy disk 1/${STATE.discTotal}. Somewhere, the scratching stopped.`
+      : `Floppy disk ${STATE.discsFound}/${STATE.discTotal}.`);
+  } else if(it.kind==="terminal"){
+    if(STATE.discsCarried<=0){
+      sfxClunk();
+      toast(STATE.discsDelivered>0? "It wants the rest of them." : "The drive bay is empty. It is waiting.");
+      return;
+    }
+    const n=STATE.discsCarried;
+    for(let i=0;i<Math.min(n,8);i++) sfxDiscInsert(i*0.16);
+    STATE.discsDelivered+=n; STATE.discsCarried=0;
+    if(STATE.discsDelivered>=STATE.discTotal) startTerminalCine();
+    else toast(`The terminal swallows ${n===1?"the disk":n+" disks"}. ${STATE.discsDelivered}/${STATE.discTotal}.`);
+  } else if(it.kind==="deadpc"){
+    startDeadPC(it);
+    toast("It wakes — says its piece — and dies for good.");
+  } else if(it.kind==="deadElev"){
+    sfxClunk();
+    toast("Dead. It brought you down here; it owes you nothing more.");
+  }
   renderObjectives();
 }
 export function updateFocus(){
@@ -46,13 +76,14 @@ export function updateFocus(){
   let best=2.7;
   const fwd=new THREE.Vector3(-Math.sin(STATE.yaw),0,-Math.cos(STATE.yaw));
   for(const it of interactables){
-    if(it.taken&&it.kind!=="exit") continue;
+    if(it.taken&&it.kind!=="exit"&&it.kind!=="terminal"&&it.kind!=="deadElev") continue;
     const d=it.mesh.position.clone().sub(STATE.pos); d.y=0;
     const dist=d.length();
     if(dist<best && d.normalize().dot(fwd)>0.45){ best=dist; focusedItem=it; }
   }
   if(focusedItem){
-    ui.prompt.innerHTML=`<b>[E]</b> ${focusedItem.label}`;
+    const lbl = typeof focusedItem.label==="function"? focusedItem.label() : focusedItem.label;
+    ui.prompt.innerHTML=`<b>[E]</b> ${lbl}`;
     ui.prompt.classList.add("show");
   } else ui.prompt.classList.remove("show");
 }

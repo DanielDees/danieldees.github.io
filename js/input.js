@@ -4,9 +4,10 @@ import { STATE, KEYS } from "./state.js";
 import { renderer } from "./scene.js";
 import { ui, setPaused, toggleHow, toggleSound } from "./ui.js";
 import { tryInteract } from "./interact.js";
-import { debugSkipToElevator } from "./lifecycle.js";
+import { debugSkipToElevator, debugSkipToTheEnd } from "./lifecycle.js";
 
 let dbg6=0, dbg6T=0;   // hidden debug chord: [6] ×3 warps to the endgame
+let dbg7=0, dbg7T=0;   // [7] ×3 drops into THE END / pockets every disk
 addEventListener("keydown",e=>{
   KEYS[e.code]=true;
   if(e.code==="Space") e.preventDefault();
@@ -18,6 +19,11 @@ addEventListener("keydown",e=>{
     const now=performance.now();
     dbg6 = (now-dbg6T<1500)? dbg6+1 : 1; dbg6T=now;
     if(dbg6>=3){ dbg6=0; debugSkipToElevator(); }
+  }
+  if(e.code==="Digit7"){
+    const now=performance.now();
+    dbg7 = (now-dbg7T<1500)? dbg7+1 : 1; dbg7T=now;
+    if(dbg7>=3){ dbg7=0; debugSkipToTheEnd(); }
   }
 });
 addEventListener("keyup",e=>KEYS[e.code]=false);

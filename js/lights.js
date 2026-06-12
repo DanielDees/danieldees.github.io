@@ -3,9 +3,10 @@
    misbehave in a short burst with a randomly chosen pattern. The entity's
    proximity slashes calm time and lets even healthy panels act up. */
 import { clamp, lerp, rand } from "./utils.js";
-import { STATE, monster } from "./state.js";
+import { STATE, monster, spider } from "./state.js";
 import { lights, lightPool, hemi, LIGHT_BIND_RADIUS, LIGHT_FADE_START } from "./scene.js";
 import { AU, panTo, sfxFlickTick } from "./audio.js";
+import { WALL_H } from "./map.js";
 
 const hash=n=>{const s=Math.sin(n)*43758.5453;return s-Math.floor(s);};
 const FLICKER_PATTERNS=5; // 0 strobe · 1 stutter · 2 brown-out sag · 3 blink-off · 4 dying sputter
@@ -56,13 +57,17 @@ export function updateLights(dt,t){
     if(R>sh.maxR+25) monster.shock=null;   // ring has cleared the far corner
   }
   const escD = 1 + 0.10*monster.escalation;   // disruption AOE & hue deepen +10% per objective
+  /* whichever thing haunts the current level is the disruption source —
+     in THE END the librarian carries the same tell */
+  const disPos = STATE.level===1? (spider.active? spider.pos:null)
+                                : (monster.active? monster.pos:null);
   for(const L of lights){
     const dl=Math.hypot(L.world.x-px,L.world.z-pz);
     /* the AOE is centered on the ENTITY: panels near IT misbehave,
        wherever it is — distant flickering is how you spot it coming */
     let near=0;
-    if(monster.active){
-      const dm=Math.hypot(L.world.x-monster.pos.x,L.world.z-monster.pos.z);
+    if(disPos){
+      const dm=Math.hypot(L.world.x-disPos.x,L.world.z-disPos.z);
       near=clamp(1-dm/(22*escD),0,1);   // disruption AOE, widening per objective
     }
     L.near=near;                 // pool dimming reads this below
@@ -96,6 +101,20 @@ export function updateLights(dt,t){
        fixtures sit at 1 permanently; healthy ones get pushed there by the
        entity's proximity — an extra tell on top of the flickering */
     let warmth = L.warm? 1 : clamp(near*1.7*escD,0,1);   // hue push, deepening per objective
+    if(STATE.level===1){
+      /* intro: −2 holds the whole grid dark while you wake in the cab,
+         then the wave (≥0) wakes fixtures in distance order */
+      if(STATE.libWakeT===-2) v=0;
+      else if(STATE.libWakeT>=0){
+        if(STATE.libWakeT<L.wakeAt) v=0;
+        else if(STATE.libWakeT<L.wakeAt+0.35) v=hash(Math.floor(t*24)+L.seed)>0.4? v:0.05;
+      }
+      /* the answer to the first stolen disk: brightness drops to a quarter
+         and the colour goes sodium-warm, all at once */
+      if(STATE.libDim){ v*=0.25; warmth=Math.max(warmth,0.85); }
+      /* the building's lights sometimes shut off temporarily, all of them */
+      if(STATE.libBlackout>0) v*=1-0.97*STATE.libBlackout;
+    }
     if(L.shockT>0){
       /* the wake shockwave passing through: a hard strobe on impact, then
          held dim and DEEP — dimness drags the hue past orange into red,
@@ -150,7 +169,8 @@ export function updateLights(dt,t){
     if(d2<R2) cand.push([d2,L]);
   }
   cand.sort((a,b)=>a[0]-b[0]);
-  const base = STATE.powerOn? 1.43 : 1.19;   // −5% peak fixture brightness
+  /* THE END's strips hang low over the stacks and run a poorer current */
+  const base = STATE.level===1? 1.16 : STATE.powerOn? 1.43 : 1.19;
   const band = LIGHT_BIND_RADIUS-LIGHT_FADE_START;
   /* each fixture holds two tubes 0.64m apart. Near the player that split is
      visible, so close fixtures get one pool light PER TUBE at just over half
@@ -166,16 +186,17 @@ export function updateLights(dt,t){
     /* dying tubes cast half the light; the entity's aura physically dims
        fixtures around it so floor & walls darken with it in true 3D */
     const I=base*L.on*fade*(L.warm? 0.5:L.bright)*(1-(L.near||0)*0.35);
-    if(dist<TUBE_SPLIT_D && jobs.length+2<=lightPool.length){
-      jobs.push({x:L.world.x, z:L.world.z-0.32, I:I*0.55, L:L});
-      jobs.push({x:L.world.x, z:L.world.z+0.32, I:I*0.55, L:L});
-    } else jobs.push({x:L.world.x, z:L.world.z, I:I, L:L});
+    const fy=L.fixY||WALL_H-0.5;
+    if(!L.fixY && dist<TUBE_SPLIT_D && jobs.length+2<=lightPool.length){
+      jobs.push({x:L.world.x, z:L.world.z-0.32, y:fy, I:I*0.55, L:L});
+      jobs.push({x:L.world.x, z:L.world.z+0.32, y:fy, I:I*0.55, L:L});
+    } else jobs.push({x:L.world.x, z:L.world.z, y:fy, I:I, L:L});
   }
   for(let i=0;i<lightPool.length;i++){
     const pl=lightPool[i];
     if(i<jobs.length){
       const j=jobs[i];
-      pl.position.x=j.x; pl.position.z=j.z;
+      pl.position.x=j.x; pl.position.z=j.z; pl.position.y=j.y;
       pl.intensity=j.I;
       /* warmth >1 (shockwave) extrapolates the gradient into red — clamp so
          the channels never go negative and subtract light */
@@ -202,5 +223,9 @@ export function updateLights(dt,t){
       } else hv.g.gain.setTargetAtTime(0, tN, 0.15);
     }
   }
-  hemi.intensity = lerp(hemi.intensity, STATE.powerOn? 0.10:0.08, 0.1);   // murk floor halved again: true dark away from fixtures
+  /* murk floor: THE END's minimum ambient is HALF of level 0's, and it
+     sinks further once the lights drop */
+  const hemiTgt = STATE.level===1? (STATE.libDim? 0.027:0.04)
+                                 : (STATE.powerOn? 0.10:0.08);
+  hemi.intensity = lerp(hemi.intensity, hemiTgt, 0.1);
 }

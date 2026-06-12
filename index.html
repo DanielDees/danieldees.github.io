@@ -35,6 +35,12 @@
   <div id="toast"></div>
 </div>
 
+<!-- level title card (driven by cutscenes) -->
+<div id="levelTitle">
+  <div id="ltMain"></div>
+  <div id="ltSub"></div>
+</div>
+
 <!-- ============ START ============ -->
 <div class="overlay" id="startOverlay">
   <div class="sheet">
@@ -50,7 +56,7 @@
        Find what you need, restore the power, and locate the exit elevator — quietly.</p>
     <button class="bigbtn" id="btnStart">DESCEND</button>
     <p class="subtle blink">headphones recommended · click DESCEND to begin</p>
-    <p class="subtle" style="margin-top:8px;opacity:.55">v1.5.0</p>
+    <p class="subtle" style="margin-top:8px;opacity:.55">v2.0.0</p>
   </div>
 </div>
 
@@ -85,6 +91,11 @@
        and stay still. Crouched and unseen, you are nearly invisible: it will stalk to where it last
        saw you, search, give up, and move on. Never try to outrun it in a straight hallway for long;
        your stamina will fail before its patience does. Corner, crouch, wait, breathe.</p>
+    <h3>DEEPER FLOORS</h3>
+    <p>Level 0 is not the bottom. What works up here works down there — quiet, crouch, cover — but
+       deeper floors keep their own rules, and their own keepers. Some of them don't need to see you
+       at all. Watch the objectives log, listen before you take anything, and remember that furniture
+       you can fit under is furniture <i>it</i> can't.</p>
     <button class="bigbtn" id="btnResume">RESUME</button>
   </div>
 </div>
@@ -119,7 +130,7 @@
   <div class="sheet" style="text-align:center;max-width:460px">
     <h1>IT FOUND YOU</h1>
     <h2 id="deathQuote">YOU SHOULDN'T HAVE LET IT SEE YOU</h2>
-    <p>You wake at the place you first fell through. Your pockets are, somehow, still full.
+    <p id="deathBody">You wake at the place you first fell through. Your pockets are, somehow, still full.
        Your progress is kept. It has already forgotten you — for now.</p>
     <button class="bigbtn" id="btnRespawn">GET UP</button>
   </div>
@@ -128,8 +139,8 @@
 <!-- ============ WIN ============ -->
 <div class="overlay hide" id="winOverlay">
   <div class="sheet" style="max-width:480px">
-    <h1 style="font-size:24px;letter-spacing:.2em">GOING DOWN</h1>
-    <h2>THE DOORS SAVED YOU. THE BRAKES DID NOT.</h2>
+    <h1 id="winTitle" style="font-size:24px;letter-spacing:.2em">GOING DOWN</h1>
+    <h2 id="winSub">THE DOORS SAVED YOU. THE BRAKES DID NOT.</h2>
     <div id="winStats"></div>
     <button class="bigbtn" id="btnAgain">DESCEND AGAIN</button>
   </div>
