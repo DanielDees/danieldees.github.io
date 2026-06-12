@@ -224,7 +224,7 @@ export function buildLevel(){
   const dripMat=t=>new THREE.MeshPhongMaterial({map:t,
     transparent:true, depthWrite:false, specular:0x000000, shininess:1});
   const dripCells=new Set();
-  let dQuota=Math.max(20,Math.round(moldFaces.length*0.10));   // 2× the count
+  let dQuota=Math.max(40,Math.round(moldFaces.length*0.20));   // 4× the original count
   for(const fc of moldFaces){
     if(dQuota<=0) break;
     let near=false;
@@ -233,8 +233,8 @@ export function buildLevel(){
     if(near) continue;
     const {x,y,dx,dz}=fc;
     const p=cellToWorld(x,y);
-    const wid=rand(0.5,1.2);                                   // 2× the size
-    const len=Math.min(WALL_H*0.9, rand(1.8,5.2));
+    const wid=rand(0.5,1.56);                                  // 2× base, +30% max width
+    const len=Math.min(WALL_H*0.99, rand(1.98,5.72));          // 2× base, +10% height
     const off=rand(-1,1)*(E-wid/2-0.2);          // anywhere along the section, fully inside
     const tex=makeDripTextures(wid,len);
     const ry = dx? (dx>0?-Math.PI/2:Math.PI/2) : (dz>0?Math.PI:0);
