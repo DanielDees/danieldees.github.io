@@ -24,7 +24,7 @@ const OBJ_DEFS=[
   ()=>`Collect almond water (${STATE.bottles}/3)`,
   ()=>`Find a fuse for the breaker`,
   ()=>`Restore power at the breaker panel`,
-  ()=>`Locate the exit door and escape`,
+  ()=>`Locate the exit elevator and escape`,
 ];
 export function renderObjectives(){
   ui.objList.innerHTML="";

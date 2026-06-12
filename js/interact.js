@@ -1,15 +1,15 @@
 /* ---------------- interaction ---------------- */
 import { STATE, monster } from "./state.js";
 import { scene } from "./scene.js";
-import { interactables, exitDoor } from "./props.js";
-import { sfxPickup, sfxClunk, sfxPowerOn } from "./audio.js";
+import { interactables } from "./props.js";
+import { sfxPickup, sfxClunk } from "./audio.js";
 import { ui, toast, renderObjectives } from "./ui.js";
 import { escalateMonster } from "./monster.js";
-import { win } from "./lifecycle.js";
+import { CINE, startBreakerCine, startElevatorCine } from "./cutscene.js";
 
 let focusedItem=null;
 export function tryInteract(){
-  if(!STATE.playing||STATE.paused||STATE.dead||!focusedItem) return;
+  if(!STATE.playing||STATE.paused||STATE.dead||CINE.active||!focusedItem) return;
   const it=focusedItem;
   if(it.kind==="bottle"){
     it.taken=true; scene.remove(it.mesh); sfxPickup();
@@ -30,15 +30,14 @@ export function tryInteract(){
     toast("Fuse acquired. Find the breaker panel.");
   } else if(it.kind==="breaker"){
     if(STATE.objective<2){toast("Dead panel. It needs a fuse — and you're not ready.");sfxClunk();return;}
-    it.taken=true; STATE.powerOn=true; STATE.objective=3; escalateMonster();
-    sfxClunk(); sfxPowerOn();
-    it.mesh.userData.lamp.material.color.set(0x39d24a);
-    it.mesh.userData.lever.position.y=0.1;
-    if(exitDoor) exitDoor.userData.sign.material.color.set(0xffffff);
-    toast("POWER RESTORED. The exit door is unsealed — find it.");
+    it.taken=true; STATE.objective=3; escalateMonster();
+    /* the cutscene flips STATE.powerOn, the lamp, lever & exit sign itself —
+       and sends the entity sprinting for this exact spot */
+    startBreakerCine(it);
   } else if(it.kind==="exit"){
-    if(STATE.objective<3){sfxClunk();toast("Sealed. The sign is dark. Restore the power first.");return;}
-    win();
+    if(STATE.objective<3){sfxClunk();toast("Dead. The call button does nothing — restore the power first.");return;}
+    it.taken=true;
+    startElevatorCine(it);
   }
   renderObjectives();
 }

@@ -1,6 +1,6 @@
 # NOCLIP — Escape the Backrooms
 
-**Version: v1.4.0**
+**Version: v1.5.0**
 
 A browser-based survival horror game set in Level 0 of the Backrooms, playable at
 [danieldees.github.io](https://danieldees.github.io). Vanilla JS ES modules built
@@ -11,10 +11,11 @@ Vibe-coded with Claude Fable 5 / Claude Mythos 5.
 
 You fell through the world into damp carpet, yellowed wallpaper, and the endless
 drone of fluorescent light. Collect 3 bottles of almond water, find the fuse,
-restore power at the breaker panel, and locate the exit door — all while avoiding
-the entity that fell through long before you did. The lights nearest to it
-misbehave: distant flickering (and a sickly orange shift) tells you exactly where
-it is.
+restore power at the breaker panel, and reach the exit elevator — all while
+avoiding the entity that fell through long before you did. The lights nearest to
+it misbehave: distant flickering (and a sickly orange shift) tells you exactly
+where it is. Fixing the breaker and calling the elevator both trigger scripted
+cinematics — and the elevator ride down is not the clean escape it looks like.
 
 ## Controls
 
@@ -30,6 +31,38 @@ it is.
 Headphones recommended — audio is positional and the entity is easier to track by ear.
 
 ## Changelog
+
+### v1.5.0 (2026-06-12)
+- **The exit elevator.** The exit door is now a recessed, two-leaf elevator
+  carved into its wall — brushed-steel panels, a speckled floor, handrails,
+  corner posts, an interior button column, and a wall-mounted floor indicator.
+  Calling it (once power is restored) plays a full escape cinematic.
+- **Elevator escape cutscene.** Press the call button, watch the doors open, step
+  in and turn — the entity is sprinting down the corridor straight at you, and the
+  doors seal a beat before it slams into them. Then the ride down: the floor
+  indicator ticks −1, −2, −3 as the cab descends, a button sours from green to
+  yellow, a pop, and the brakes fail. The indicator and button panel glitch into
+  impossible floor numbers (down to −132) and strobing red/amber, sparks spray
+  through the door seam, the lights cut to a dim red emergency lamp, the cab lurches
+  and the brakes grind themselves apart as the screen shakes and fades to black.
+- **Breaker-fix cutscene.** Restoring power now plays a short scripted animation —
+  the panel door swings open, a fuse conjures into the slot and seats with a
+  surge, the door claps shut. You lose control for the ~3.5s it runs, which is the
+  point: the entity drops everything and **rushes the breaker at full chase speed**
+  the instant you start it. If it reaches a 30m ring around you while the animation
+  plays, it freezes there — then cries out and gives chase the moment control
+  returns.
+- **Ceiling-leak drips.** Brown water stains now run from the ceiling seam down the
+  walls in tapering stalactite-shaped rivulets, each with a small feed blotch on
+  the ceiling above it — unique per leak and scattered across the map.
+- **Louder, more frequent entity.** All of the entity's noises are ~20% louder, and
+  its groans and wall-knocks recur ~30% more often.
+- **Shockwave tuning.** Escalation now tightens the disruption pulse by 5s per
+  objective (was 10s), and every shockwave's pitch, voicing, and sweep are
+  randomized so the recurring pulse never plays the same twice.
+- All cutscenes are verified end-to-end and the game still ships as zero-dependency
+  vanilla JS. (For testing, a hidden debug warp — tapping `6` three times in game —
+  jumps straight to the elevator with all objectives cleared.)
 
 ### v1.4.0 (2026-06-11)
 - **Escalation.** The entity now grows more dangerous as you progress. Each

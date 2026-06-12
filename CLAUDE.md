@@ -27,12 +27,13 @@ GitHub Pages serves `index.html` at the repo root as the live site.
 - **`map.js`** — grid constants (`W`, `H`, `CELL`, `WALL_H`), random-walk carve in `genMap()`, `cellToWorld`/`worldToCell` conversions, `isWall`, `losCells` (line of sight), `bfsPath` (entity pathfinding).
 - **`textures.js`** — `makeCanvas` + procedural wall/carpet/stain/ceiling textures via 2D canvas.
 - **`scene.js`** — Three.js scene/camera/renderer, the point-light pool, and `buildLevel()` (walls, floor, ceiling, fluorescent fixture groups, populates the exported `lights` array).
-- **`props.js`** — collectible/breaker/exit-door builders, `placeProps()`, the `interactables` array, `updateProps()` idle animation.
+- **`props.js`** — collectible/breaker/exit-elevator builders, `placeProps()`, the `interactables` array, `updateProps()` idle animation. The elevator is carved into its wall cell (the wall box mesh is removed and rebuilt as flanks + header around a recessed cab; the grid cell stays solid for collision).
 - **`audio.js`** — `AU` bus object and all Web Audio synthesis: `audioInit()` (buses, hum, drone, breathing, ambient interval layers), one-shot `sfx*` functions, `panTo` (world position → stereo pan).
 - **`monster.js`** — entity mesh, wander/investigate/alert/chase/hunt state machine in `updateMonster()`, sight/hearing checks, wall-knocking, proximity audio.
 - **`player.js`** — `updatePlayer()`: movement, sprint/stamina, jump physics, AABB wall collision, camera/head-bob, footsteps.
 - **`lights.js`** — `updateLights()`: event-driven flicker bursts (entity proximity triggers them — flicker is the entity radar), light-pool binding, positional buzz binding.
 - **`interact.js`** — `updateFocus()` (what [E] targets) and `tryInteract()` (objective progression).
+- **`cutscene.js`** — `CINE` state + the scripted cinematics: the breaker fuse animation (entity rushes the panel at chase speed, freezes at a 30m ring until control returns) and the exit-elevator escape/brake-failure ending. While `CINE.active`, main.js skips `updatePlayer`/`updateFocus` and the cutscene owns the camera; `window.NOCLIP_DEBUG` (main.js) exposes hooks for smoke tests.
 - **`lifecycle.js`** — `startGame`, `respawn`, `die`, `win`.
 - **`ui.js`** — DOM refs (`ui`), `toast`, objectives HUD, overlay/pause logic, pointer lock, settings persistence (`localStorage` key `noclip_settings_v1`), mixer wiring.
 - **`input.js`** — keyboard/mouse/pointer-lock listeners (side-effect module).
