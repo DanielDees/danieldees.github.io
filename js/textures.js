@@ -383,6 +383,218 @@ function woodTex(base,dark,light){
 }
 export const texShelfWood = woodTex("#43321f","26,17,9","96,74,46");
 export const texDeskWood  = woodTex("#5a452c","36,24,12","122,96,58");
+/* ---- proper 3D books ----
+   Each book DESIGN gets its own cover canvas: a cloth/leather base shared
+   across the whole canvas (so mipmap bleed between regions is invisible),
+   with three UV regions — the spine strip, the front-cover plate, and a
+   plain patch for back cover, board edges and endpapers. Titles are real,
+   legible, and very much of this place. */
+/* (regions are computed per design — see makeBookCoverTexture) */
+export const BOOK_TITLES=[
+  ["HOW TO LEAVE","ANON"],
+  ["ROOMS WITHOUT DOORS","E. VOSS"],
+  ["THE LOWER FLOORS","M. ASHWORTH"],
+  ["THE SILENT PATRON","L. HALE"],
+  ["WHAT THE WALLS REMEMBER","I. MERCER"],
+  ["NOTES ON THE HUM","DR. P. FINCH"],
+  ["EXIT","ANON"],
+  ["THE ART OF STANDING STILL","B. QUILL"],
+  ["BELOW THE BELOW","M. ASHWORTH"],
+  ["THE LAST BORROWER","C. WREN"],
+  ["INDEX OF UNMARKED HOURS","THE DESK"],
+  ["MAPS FOR LOST PLACES","T. LOOM"],
+  ["THE SECOND SILENCE","L. HALE"],
+  ["ON BEING FOLLOWED","J. KEEN"],
+  ["THE YELLOW MAZE","S. OKEN"],
+  ["DO NOT READ ALOUD","ANON"],
+  ["EIGHT QUIET FEET","DR. P. FINCH"],
+  ["WHERE THE CARPET ENDS","T. LOOM"],
+  ["LIGHT MAINTENANCE","FACILITIES"],
+  ["FORGOTTEN RETURNS","C. WREN"],
+  ["A FIELD GUIDE TO ABSENCE","I. MERCER"],
+  ["THE SHELVER'S HYMNAL","CHOIR OF ∅"],
+];
+/* muted cloth and leather bindings */
+export const BOOK_BASES=[[110,44,38],[84,36,32],[52,74,54],[40,58,70],[66,54,90],
+  [112,86,46],[72,52,36],[48,42,38],[120,104,70],[58,66,82],[96,62,50],[44,54,44]];
+/* fit-and-draw a line of text, shrinking the font until it fits maxW */
+function fitText(g,txt,x,y,maxW,size,minSize,font){
+  for(let s=size;s>=minSize;s--){
+    g.font=`${font[0]} ${s}px ${font[1]}`;
+    if(g.measureText(txt).width<=maxW){ g.fillText(txt,x,y); return s; }
+  }
+  g.font=`${font[0]} ${minSize}px ${font[1]}`;
+  g.fillText(txt,x,y); return minSize;
+}
+/* The canvas is laid out PER DESIGN at a uniform pixels-per-meter, so the
+   spine strip matches the spine's real arc width and the front plate
+   matches the board's real aspect — text maps 1:1 with no stretching.
+   Returns {tex, uv} with the design's own region windows. */
+export function makeBookCoverTexture(title,author,base,motif,vol,bh,btx,bd){
+  const H=384, ppm=H/bh;
+  const spineW=Math.max(30,Math.round(btx*1.3*ppm));   // ≈ the arc's unrolled width
+  const frontW=Math.round(bd*ppm), plainW=40, gd=8;
+  const W=spineW+gd+frontW+gd+plainW;
+  const t=makeCanvas(W,H,(g,w,h)=>{
+    const [br,bg,bb]=base;
+    g.fillStyle=`rgb(${br},${bg},${bb})`;g.fillRect(0,0,w,h);
+    for(let i=0;i<w*h/180;i++){                   // cloth weave / leather grain
+      const v=Math.random()<0.5?-18:14;
+      g.fillStyle=`rgba(${br+v},${bg+v},${bb+v},${0.05+Math.random()*0.10})`;
+      g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*4,2+Math.random()*6);
+    }
+    const gilt="rgba(206,172,96,0.92)", giltDim="rgba(206,172,96,0.55)";
+    const shadow="rgba(0,0,0,0.4)";
+    const serif=["bold","Georgia, 'Times New Roman', serif"];
+    /* ---- spine strip (x 0..spineW) ---- */
+    g.save();g.beginPath();g.rect(0,0,spineW,h);g.clip();
+    g.fillStyle="rgba(0,0,0,0.18)";g.fillRect(0,0,spineW,h);     // spine sits darker
+    for(const by of[24,50,h-50,h-24]){                           // raised bands
+      g.fillStyle="rgba(0,0,0,0.35)";g.fillRect(5,by+3,spineW-10,3);
+      g.fillStyle=giltDim;g.fillRect(5,by,spineW-10,3);
+    }
+    g.fillStyle=gilt;g.textAlign="center";g.textBaseline="middle";
+    g.save();g.translate(spineW*0.52,h/2);g.rotate(Math.PI/2);
+    g.shadowColor=shadow;g.shadowOffsetX=1;g.shadowOffsetY=1;g.shadowBlur=0;
+    fitText(g,title,0,1,h-160,Math.min(32,Math.round(spineW*0.5)),14,serif);
+    g.restore();
+    if(vol){
+      g.font=`bold ${Math.min(20,Math.round(spineW*0.34))}px Georgia`;
+      g.fillStyle=giltDim;g.fillText(vol,spineW/2,h-66);
+    }
+    g.restore();
+    /* ---- front cover plate ---- */
+    const fx=spineW+gd,fw=frontW;
+    g.save();g.beginPath();g.rect(fx,0,fw,h);g.clip();
+    g.strokeStyle=giltDim;g.lineWidth=3;
+    g.strokeRect(fx+12,15,fw-24,h-30);
+    g.strokeStyle="rgba(206,172,96,0.3)";g.lineWidth=1.5;
+    g.strokeRect(fx+19,22,fw-38,h-44);
+    g.fillStyle=gilt;g.textAlign="center";g.textBaseline="alphabetic";
+    g.shadowColor=shadow;g.shadowOffsetX=1;g.shadowOffsetY=1;
+    /* wrap the title into the plate */
+    const tSize=Math.min(30,Math.round(fw*0.15));
+    g.font=`bold ${tSize}px Georgia`;
+    const words=title.split(" "),lines=[];let ln="";
+    for(const wd of words){
+      const tl=ln? ln+" "+wd:wd;
+      if(g.measureText(tl).width>fw-56&&ln){lines.push(ln);ln=wd;}else ln=tl;
+    }
+    if(ln)lines.push(ln);
+    let ty=66;
+    for(const l of lines){ fitText(g,l,fx+fw/2,ty,fw-52,tSize,15,serif); ty+=tSize+10; }
+    if(vol){ g.font="bold 18px Georgia";g.fillText(vol,fx+fw/2,ty+4); ty+=24; }
+    g.strokeStyle=giltDim;g.lineWidth=2;
+    g.beginPath();g.moveTo(fx+fw*0.25,ty+4);g.lineTo(fx+fw*0.75,ty+4);g.stroke();
+    /* central gilt motif, scaled to the plate */
+    const mx=fx+fw/2,my=h*0.62,ms=fw/180;
+    g.strokeStyle=gilt;g.lineWidth=2.5;g.shadowColor="rgba(0,0,0,0)";
+    g.save();g.translate(mx,my);g.scale(ms,ms);
+    if(motif===0){            // an eye
+      g.beginPath();g.ellipse(0,0,32,17,0,0,7);g.stroke();
+      g.beginPath();g.arc(0,0,8,0,7);g.stroke();
+    } else if(motif===1){     // a door, ajar
+      g.strokeRect(-19,-29,38,58);
+      g.beginPath();g.moveTo(-19,-29);g.lineTo(5,-21);g.lineTo(5,37);g.lineTo(-19,29);g.closePath();g.stroke();
+    } else if(motif===2){     // a spiral
+      g.beginPath();
+      for(let a=0;a<Math.PI*5;a+=0.25) g.lineTo(Math.cos(a)*a*2.1,Math.sin(a)*a*2.1);
+      g.stroke();
+    } else if(motif===3){     // an hourglass
+      g.beginPath();g.moveTo(-21,-26);g.lineTo(21,-26);g.lineTo(-21,26);g.lineTo(21,26);g.closePath();g.stroke();
+    } else if(motif===4){     // a key
+      g.beginPath();g.arc(-13,0,12,0,7);g.stroke();
+      g.beginPath();g.moveTo(-1,0);g.lineTo(26,0);g.moveTo(17,0);g.lineTo(17,10);g.moveTo(25,0);g.lineTo(25,10);g.stroke();
+    } else {                  // a stair descending
+      g.beginPath();let sx=-26,sy=-21;
+      for(let i=0;i<4;i++){g.lineTo(sx,sy);sx+=13;g.lineTo(sx,sy);sy+=12;}
+      g.lineTo(sx,sy);g.stroke();
+    }
+    g.restore();
+    g.shadowColor=shadow;
+    const aSize=Math.min(17,Math.round(fw*0.1));
+    g.font=`bold ${aSize}px Georgia`;g.fillStyle=giltDim;
+    fitText(g,author,mx,h-32,fw-56,aSize,11,serif);
+    g.restore();
+    /* corner & edge wear over everything */
+    g.shadowColor="rgba(0,0,0,0)";
+    for(let i=0;i<90;i++){
+      g.fillStyle=`rgba(${br+30},${bg+30},${bb+26},${0.08+Math.random()*0.14})`;
+      const ex=Math.random()<0.5? Math.random()*30 : w-Math.random()*30;
+      g.fillRect(ex,Math.random()*h,1+Math.random()*4,2+Math.random()*8);
+    }
+    const vg=g.createRadialGradient(w/2,h/2,h*0.35,w/2,h/2,h*0.78);
+    vg.addColorStop(0,"rgba(0,0,0,0)");vg.addColorStop(1,"rgba(0,0,0,0.22)");
+    g.fillStyle=vg;g.fillRect(0,0,w,h);
+  });
+  /* non-power-of-two by design: clamp + mipmap-free filtering keeps WebGL1
+     from resampling (and blurring) the text */
+  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping;
+  t.minFilter=THREE.LinearFilter;
+  t.generateMipmaps=false;
+  return {tex:t, uv:{
+    spine:[0,spineW/W],
+    front:[(spineW+gd)/W,(spineW+gd+frontW)/W],
+    plain:[(W-plainW+4)/W,(W-4)/W],
+  }};
+}
+/* page-block edges: fine layered striations. The leaves laminate through
+   the book's THICKNESS, which maps to u on the exposed faces — so the
+   lines run vertically in the canvas. */
+export const texPages = makeCanvas(64,64,(g,w,h)=>{
+  g.fillStyle="#cfc4a4";g.fillRect(0,0,w,h);
+  for(let x=0;x<w;x+=2){
+    g.fillStyle=`rgba(96,82,58,${0.08+Math.random()*0.2})`;g.fillRect(x,0,1,h);
+  }
+  for(let i=0;i<40;i++){
+    g.fillStyle=`rgba(70,58,38,${0.1+Math.random()*0.2})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1,3+Math.random()*9);
+  }
+});
+export const texPagesAged = makeCanvas(64,64,(g,w,h)=>{
+  g.fillStyle="#a89a76";g.fillRect(0,0,w,h);
+  for(let x=0;x<w;x+=2){
+    g.fillStyle=`rgba(70,58,38,${0.1+Math.random()*0.24})`;g.fillRect(x,0,1,h);
+  }
+  for(let i=0;i<60;i++){
+    g.fillStyle=`rgba(54,42,26,${0.12+Math.random()*0.2})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1,3+Math.random()*9);
+  }
+});
+/* an open spread: two columns of unreadable lines under one legible epigraph */
+export function makeOpenPagesTexture(){
+  const t=makeCanvas(256,160,(g,w,h)=>{
+    g.fillStyle="#d4c9a8";g.fillRect(0,0,w,h);
+    for(let i=0;i<500;i++){
+      g.fillStyle=`rgba(120,104,72,${Math.random()*0.1})`;
+      g.fillRect(Math.random()*w,Math.random()*h,2,2);
+    }
+    g.fillStyle="rgba(60,50,34,0.35)";g.fillRect(w/2-1,8,2,h-16);   // gutter
+    const phrases=["and the lights went out.","no one was shelving.","the hum stopped.",
+      "it reads us back.","quiet, quiet, quiet.","the floor forgot us."];
+    const ph=phrases[Math.floor(Math.random()*phrases.length)];
+    g.fillStyle="rgba(54,44,30,0.8)";g.font="italic 11px Georgia";g.textAlign="center";
+    g.fillText("— "+ph,w*0.25,24);
+    for(const x0 of[14,w/2+10]){
+      let y=x0<w/2? 36:20;
+      while(y<h-14){
+        g.fillStyle=`rgba(58,48,34,${0.4+Math.random()*0.25})`;
+        g.fillRect(x0,y,(w/2-26)*(0.6+Math.random()*0.4),1.6);
+        y+=6+Math.random()*3;
+      }
+    }
+    /* a margin note nobody signed */
+    if(Math.random()<0.5){
+      g.fillStyle="rgba(70,44,30,0.6)";g.font="italic 9px Georgia";
+      g.save();g.translate(w-10,h*0.55);g.rotate(-0.16);g.fillText("why",0,0);g.restore();
+    }
+  });
+  /* non-POT: keep WebGL1 from resampling it blurry */
+  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping;
+  t.minFilter=THREE.LinearFilter;
+  t.generateMipmaps=false;
+  return t;
+}
 /* temporal decay: a jagged dark crack wandering down a wall, with branches.
    Alpha decal — each call grows a unique one. */
 export function makeCrackTexture(){
@@ -428,13 +640,41 @@ export function makeEndTextTexture(txt="THE END"){
   t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearFilter; t.generateMipmaps=false;
   return t;
 }
-/* faded posters: aged notices and clippings with REAL, readable text that
-   almost parses — headline, dateline, body copy, the works — and means
-   nothing at all if you actually try to follow it. */
-const P_HEAD=["ALL RETURNS ARE FINAL","THE STACKS CLOSE AT NEVER","SILENCE IS DUE BACK",
-  "RENEW YOUR SELF TODAY","LATE FEES ACCRUE INWARD","SHELVING IS A PRIVILEGE",
-  "THE CATALOG KNOWS","MIND THE AISLES","REPORT MISSING HOURS","QUIET IS MANDATORY"];
+/* faded posters: aged notices and clippings. Most of the copy now reads
+   like real signage for THIS place — rules, warnings, half-useful advice —
+   with roughly one line in five still sliding off into the old nonsense. */
+const P_HEAD=["DO NOT RUN IN THE STACKS","QUIET HOURS NOW PERMANENT","ELEVATOR OUT OF SERVICE",
+  "RETURN ALL ARCHIVE DISKS","REPORT MISSING PATRONS TO THE DESK","STAY LOW DURING OUTAGES",
+  "THE LIBRARIAN IS LISTENING","KEEP THE AISLES CLEAR","NO OPEN FLAMES IN THE STACKS",
+  "READING TABLES ARE FOR EVERYONE","ALL RETURNS ARE FINAL","THE STACKS CLOSE AT NEVER",
+  "LATE FEES ACCRUE INWARD"];
 const P_MAST=["THE DAILY STACK","THE CIRCULAR","END TIMES","THE RETURNS DESK","THE QUIET PAGE"];
+/* coherent body copy — house rules for a library at the end of everything;
+   several double as honest gameplay advice */
+const P_SENSE=[
+  "Please keep your voice down. Sound carries farther in the stacks than you expect.",
+  "Do not run between the aisles. Footsteps disturb the other residents.",
+  "If the lights go out, stay where you are and wait. They usually come back.",
+  "During a disturbance, crouch beneath the nearest reading table and stay still.",
+  "Archive disks are library property. Return every disk to the front terminal.",
+  "The elevator is out of service. Maintenance has been notified.",
+  "The librarian is large, patient, and listens for footsteps. Do not give it any.",
+  "Ladders are provided for reaching the upper shelves. Climb quietly.",
+  "Lost patrons should remain calm and stop moving. Staff will come to you.",
+  "Food, candles, and open flames are strictly forbidden in the stacks.",
+  "Report damaged books to the front desk before leaving.",
+  "Power conservation begins at dusk. There are no windows to tell you when.",
+  "Do not shelve anything yourself. Leave returns on the carts provided.",
+  "The reading room closes when the last patron leaves. No patron has left.",
+  "Keep the aisles clear at all times. You may need them in a hurry.",
+  "Unattended belongings will be reshelved and never found again.",
+  "If you hear more than two footsteps, none of them should be yours.",
+  "Section ∅ remains closed for repairs.",
+  "Floppy disks found between the books belong to the archive. The archive wants them back.",
+  "In the event of total darkness, do not light matches near the shelves.",
+  "Overdue materials must be returned in person, during whatever hours remain.",
+  "New patrons are asked to register at the front desk. The desk remembers everyone.",
+];
 const P_SUBJ=["Patrons","Borrowers","The shelves","All visitors","Lost items","The hours",
   "Quiet readers","Overdue persons","The aisles","Returning members","Unattended books"];
 const P_VERB=["must remain","will be considered","are reminded to become","may not exceed",
@@ -447,6 +687,8 @@ const P_TAIL=["until further notice.","before closing.","at all times.","without
   "upon request.","in alphabetical order.","quietly.","as scheduled.","for your safety.","again."];
 const pick=a=>a[Math.floor(Math.random()*a.length)];
 const nonsense=()=>`${pick(P_SUBJ)} ${pick(P_VERB)} ${pick(P_OBJ)} ${pick(P_TAIL)}`;
+/* the 80/20 mix: mostly sensible, one line in five still slips */
+const sentence=()=>Math.random()<0.8? pick(P_SENSE) : nonsense();
 /* word-wrap a string into lines that fit `maxW` with the current font */
 function wrapText(g,txt,maxW){
   const words=txt.split(" "), lines=[]; let line="";
@@ -464,7 +706,8 @@ export function makePosterTexture(){
     g.fillStyle=`rgb(${tone-22},${tone-26},${tone-52})`;g.fillRect(0,0,w,h);
     g.strokeStyle="rgba(40,34,22,0.55)";g.lineWidth=5;g.strokeRect(6,6,w-12,h-12);
     const ink="rgba(34,30,20,0.85)", inkSoft="rgba(40,36,26,0.66)";
-    if(Math.random()<0.5){
+    const layout=Math.random();
+    if(layout<0.42){
       /* ---- official notice: header, ruled line, numbered directives ---- */
       g.fillStyle=ink; g.textAlign="center";
       g.font="bold 19px Courier New";
@@ -475,7 +718,7 @@ export function makePosterTexture(){
       g.textAlign="left"; g.font="11px Courier New"; g.fillStyle=inkSoft;
       const n=3+Math.floor(Math.random()*3);
       for(let i=0;i<n&&y<h-46;i++){
-        for(const ln of wrapText(g,`${i+1}. ${nonsense()}`,w-52)){
+        for(const ln of wrapText(g,`${i+1}. ${sentence()}`,w-52)){
           if(y>h-40) break;
           g.fillText(ln,26,y); y+=14;
         }
@@ -483,6 +726,38 @@ export function makePosterTexture(){
       }
       g.textAlign="center"; g.font="bold 11px Courier New"; g.fillStyle=ink;
       g.fillText("— BY ORDER OF THE DESK —",w/2,h-26);
+    } else if(layout<0.62){
+      /* ---- missing-patron notice: silhouette, particulars, a plea ---- */
+      g.fillStyle=ink; g.textAlign="center";
+      g.font="bold 20px Courier New";
+      g.fillText("MISSING",w/2,38);
+      g.font="bold 12px Courier New";
+      g.fillText("HAVE YOU SEEN THIS PATRON?",w/2,56);
+      /* head-and-shoulders silhouette in a thin frame */
+      const fx=w/2-46, fy=68, fw=92, fh=104;
+      g.strokeStyle=ink; g.lineWidth=2; g.strokeRect(fx,fy,fw,fh);
+      g.fillStyle="rgba(52,48,38,0.55)"; g.fillRect(fx+2,fy+2,fw-4,fh-4);
+      g.fillStyle="rgba(24,22,16,0.9)";
+      g.beginPath();g.ellipse(w/2,fy+42,17,21,0,0,7);g.fill();
+      g.beginPath();g.ellipse(w/2,fy+fh-6,34,30,0,Math.PI,0);g.fill();
+      let y=fy+fh+20;
+      g.textAlign="left"; g.font="11px Courier New"; g.fillStyle=inkSoft;
+      const lines=[
+        `Last seen: section ${"ABCDEFGH"[Math.floor(Math.random()*8)]}, aisle ${1+Math.floor(Math.random()*9)}, reading.`,
+        ["Did not check anything out.","Left their belongings at a table.",
+         "Was asked to keep their voice down.","Was last heard, not seen."][Math.floor(Math.random()*4)],
+        Math.random()<0.8? "If found, do not call out to them. Notify the front desk."
+                         : nonsense(),
+      ];
+      for(const txt of lines){
+        for(const ln of wrapText(g,txt,w-52)){
+          if(y>h-40) break;
+          g.fillText(ln,26,y); y+=14;
+        }
+        y+=6;
+      }
+      g.textAlign="center"; g.font="bold 11px Courier New"; g.fillStyle=ink;
+      g.fillText("REWARD: ONE QUIET HOUR",w/2,h-26);
     } else {
       /* ---- newspaper clipping: masthead, dateline, headline, columns ---- */
       g.fillStyle=ink; g.textAlign="center";
@@ -500,7 +775,7 @@ export function makePosterTexture(){
       for(const x of[x1,x2]){
         let cy=y;
         while(cy<h-30){
-          for(const ln of wrapText(g,nonsense(),colW)){
+          for(const ln of wrapText(g,sentence(),colW)){
             if(cy>h-30) break;
             g.fillText(ln,x,cy); cy+=11;
           }
