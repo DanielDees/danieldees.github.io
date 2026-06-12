@@ -383,6 +383,112 @@ function woodTex(base,dark,light){
 }
 export const texShelfWood = woodTex("#43321f","26,17,9","96,74,46");
 export const texDeskWood  = woodTex("#5a452c","36,24,12","122,96,58");
+/* ---- the book atlas: one canvas every shelf block samples a window of ----
+   Regions (in v, flipY): a long row of varied book spines along the bottom,
+   a fore-edge/pages strip seen from the top of a standing row, a stacked-
+   pages strip for books lying flat, and a plain dark patch for undersides.
+   Guard bands of background dark separate the strips so mipmapping never
+   bleeds one region into its neighbour. 1024px ≅ 4m of books. */
+export const BOOK_UV={
+  spine:[0.0,0.65],        // canvas y 90..256
+  pagesV:[0.715,0.80],     // canvas y 48..76 — vertical fore-edges (row tops/backs)
+  pagesH:[0.87,0.955],     // canvas y 8..36 — horizontal page layers (flat stacks)
+  dark:[0.985,0.998],      // canvas y 0..4 — plain shadow
+  mPerU:4.0,
+};
+const SPINE_COLS=[[122,46,40],[88,38,34],[52,72,52],[38,56,66],[64,52,86],[110,84,44],
+  [70,50,34],[46,40,36],[126,108,72],[58,66,80],[96,64,52],[42,52,42]];
+export function makeBookAtlasTexture(){
+  return makeCanvas(1024,256,(g,w,h)=>{
+    g.fillStyle="#16100b";g.fillRect(0,0,w,h);          // shelf shadow everywhere
+    /* pagesH strip: page layers of books lying flat */
+    g.fillStyle="#c7bb9b";g.fillRect(0,8,w,28);
+    for(let yy=9;yy<36;yy+=2){
+      g.fillStyle=`rgba(92,78,54,${0.10+Math.random()*0.22})`;g.fillRect(0,yy,w,1);
+    }
+    for(let i=0;i<260;i++){                              // worn flecks
+      g.fillStyle=`rgba(70,58,38,${0.1+Math.random()*0.25})`;
+      g.fillRect(Math.random()*w,8+Math.random()*28,2+Math.random()*8,1);
+    }
+    /* pagesV strip: fore-edges of an upright row seen from above/behind */
+    g.fillStyle="#c9bd9d";g.fillRect(0,48,w,28);
+    for(let xx=0;xx<w;xx+=2){
+      g.fillStyle=`rgba(90,76,54,${0.08+Math.random()*0.2})`;g.fillRect(xx,48,1,28);
+    }
+    for(let i=0;i<150;i++){                              // dark seams between books
+      g.fillStyle="rgba(28,22,14,0.6)";
+      g.fillRect(Math.random()*w,48,1.5+Math.random()*2.5,28);
+    }
+    g.fillStyle="rgba(40,32,20,0.4)";g.fillRect(0,48,w,3);g.fillRect(0,73,w,3);
+    /* the spine row: walk left to right, mixing upright spines, matched
+       sets, leaning books, small flat piles and breathing gaps */
+    const col=()=>{const c=SPINE_COLS[Math.floor(Math.random()*SPINE_COLS.length)];
+      const j=()=>Math.max(0,Math.min(255,(Math.random()*26-13)|0));
+      return [c[0]+j(),c[1]+j(),c[2]+j()];};
+    const spine=(x,bw,bh,c)=>{
+      g.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;g.fillRect(x,h-bh,bw,bh);
+      g.fillStyle="rgba(0,0,0,0.30)";g.fillRect(x,h-bh,1.5,bh);          // left shade
+      g.fillStyle="rgba(255,255,255,0.10)";g.fillRect(x+bw-1.5,h-bh,1.5,bh);
+      g.fillStyle="rgba(0,0,0,0.38)";g.fillRect(x,h-bh,bw,2);            // top edge
+      if(Math.random()<0.62){                                            // gilt/cream bands
+        const n=1+(Math.random()<0.4?1:0);
+        for(let i=0;i<n;i++){
+          const by=h-bh+5+Math.random()*bh*0.34;
+          g.fillStyle=Math.random()<0.5?"rgba(190,160,92,0.8)":"rgba(216,206,178,0.7)";
+          g.fillRect(x+1,by,bw-2,1.5+Math.random()*2);
+        }
+      }
+      if(bw>9&&Math.random()<0.8){                                       // title dashes
+        g.fillStyle=Math.random()<0.6?"rgba(214,202,170,0.75)":"rgba(20,16,12,0.6)";
+        let ty=h-bh+14+Math.random()*12;
+        const n=2+Math.floor(Math.random()*4);
+        for(let i=0;i<n&&ty<h-40;i++){
+          g.fillRect(x+bw/2-1.2,ty,2.4,5+Math.random()*9);ty+=11+Math.random()*7;
+        }
+      }
+      if(Math.random()<0.34){                                            // call-number label
+        g.fillStyle="rgba(222,214,190,0.92)";g.fillRect(x+1.5,h-26,bw-3,14);
+        g.fillStyle="rgba(60,52,40,0.8)";
+        g.fillRect(x+3,h-22,Math.max(2,bw-7),1.6);
+        g.fillRect(x+3,h-18,Math.max(2,bw-9),1.6);
+      }
+    };
+    let x=2;
+    while(x<w-26){
+      const r=Math.random();
+      if(r<0.05){ x+=6+Math.random()*22; continue; }     // gap of bare shelf
+      if(r<0.13){                                        // small flat pile
+        const pw=26+Math.random()*34;let py=h;
+        const n=2+Math.floor(Math.random()*3);
+        for(let i=0;i<n;i++){
+          const ph=7+Math.random()*6,off=(Math.random()-0.5)*6;py-=ph;
+          const c=col();
+          g.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;g.fillRect(x+off,py,pw,ph);
+          g.fillStyle="rgba(216,206,178,0.8)";g.fillRect(x+off+2,py+ph*0.3,pw-4,ph*0.4);
+          g.fillStyle="rgba(0,0,0,0.3)";g.fillRect(x+off,py,pw,1.5);
+        }
+        x+=pw+8;
+      } else if(r<0.21){                                 // a book leaning into a gap
+        const bw=8+Math.random()*10,bh=96+Math.random()*52;
+        const lean=0.14+Math.random()*0.24;
+        /* spine() draws against the canvas baseline — move the origin to the
+           cursor, tilt, then shift so its baseline lands back on ours */
+        g.save();g.translate(x,h);g.rotate(-lean);g.translate(0,-h);
+        spine(0,bw,bh,col());
+        g.restore();
+        x+=bw+Math.sin(lean)*bh*0.5+4;
+      } else if(r<0.36){                                 // a matched set of volumes
+        const c=col(),bw=8+Math.random()*8,bh=104+Math.random()*52;
+        const n=3+Math.floor(Math.random()*4);
+        for(let i=0;i<n&&x<w-bw-2;i++){ spine(x,bw,bh+(Math.random()-0.5)*4,c); x+=bw; }
+        x+=1+Math.random()*3;
+      } else {                                           // lone upright spine
+        const bw=7+Math.random()*15,bh=92+Math.random()*66;
+        spine(x,bw,bh,col());x+=bw;
+      }
+    }
+  });
+}
 /* temporal decay: a jagged dark crack wandering down a wall, with branches.
    Alpha decal — each call grows a unique one. */
 export function makeCrackTexture(){
@@ -428,13 +534,41 @@ export function makeEndTextTexture(txt="THE END"){
   t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearFilter; t.generateMipmaps=false;
   return t;
 }
-/* faded posters: aged notices and clippings with REAL, readable text that
-   almost parses — headline, dateline, body copy, the works — and means
-   nothing at all if you actually try to follow it. */
-const P_HEAD=["ALL RETURNS ARE FINAL","THE STACKS CLOSE AT NEVER","SILENCE IS DUE BACK",
-  "RENEW YOUR SELF TODAY","LATE FEES ACCRUE INWARD","SHELVING IS A PRIVILEGE",
-  "THE CATALOG KNOWS","MIND THE AISLES","REPORT MISSING HOURS","QUIET IS MANDATORY"];
+/* faded posters: aged notices and clippings. Most of the copy now reads
+   like real signage for THIS place — rules, warnings, half-useful advice —
+   with roughly one line in five still sliding off into the old nonsense. */
+const P_HEAD=["DO NOT RUN IN THE STACKS","QUIET HOURS NOW PERMANENT","ELEVATOR OUT OF SERVICE",
+  "RETURN ALL ARCHIVE DISKS","REPORT MISSING PATRONS TO THE DESK","STAY LOW DURING OUTAGES",
+  "THE LIBRARIAN IS LISTENING","KEEP THE AISLES CLEAR","NO OPEN FLAMES IN THE STACKS",
+  "READING TABLES ARE FOR EVERYONE","ALL RETURNS ARE FINAL","THE STACKS CLOSE AT NEVER",
+  "LATE FEES ACCRUE INWARD"];
 const P_MAST=["THE DAILY STACK","THE CIRCULAR","END TIMES","THE RETURNS DESK","THE QUIET PAGE"];
+/* coherent body copy — house rules for a library at the end of everything;
+   several double as honest gameplay advice */
+const P_SENSE=[
+  "Please keep your voice down. Sound carries farther in the stacks than you expect.",
+  "Do not run between the aisles. Footsteps disturb the other residents.",
+  "If the lights go out, stay where you are and wait. They usually come back.",
+  "During a disturbance, crouch beneath the nearest reading table and stay still.",
+  "Archive disks are library property. Return every disk to the front terminal.",
+  "The elevator is out of service. Maintenance has been notified.",
+  "The librarian is large, patient, and listens for footsteps. Do not give it any.",
+  "Ladders are provided for reaching the upper shelves. Climb quietly.",
+  "Lost patrons should remain calm and stop moving. Staff will come to you.",
+  "Food, candles, and open flames are strictly forbidden in the stacks.",
+  "Report damaged books to the front desk before leaving.",
+  "Power conservation begins at dusk. There are no windows to tell you when.",
+  "Do not shelve anything yourself. Leave returns on the carts provided.",
+  "The reading room closes when the last patron leaves. No patron has left.",
+  "Keep the aisles clear at all times. You may need them in a hurry.",
+  "Unattended belongings will be reshelved and never found again.",
+  "If you hear more than two footsteps, none of them should be yours.",
+  "Section ∅ remains closed for repairs.",
+  "Floppy disks found between the books belong to the archive. The archive wants them back.",
+  "In the event of total darkness, do not light matches near the shelves.",
+  "Overdue materials must be returned in person, during whatever hours remain.",
+  "New patrons are asked to register at the front desk. The desk remembers everyone.",
+];
 const P_SUBJ=["Patrons","Borrowers","The shelves","All visitors","Lost items","The hours",
   "Quiet readers","Overdue persons","The aisles","Returning members","Unattended books"];
 const P_VERB=["must remain","will be considered","are reminded to become","may not exceed",
@@ -447,6 +581,8 @@ const P_TAIL=["until further notice.","before closing.","at all times.","without
   "upon request.","in alphabetical order.","quietly.","as scheduled.","for your safety.","again."];
 const pick=a=>a[Math.floor(Math.random()*a.length)];
 const nonsense=()=>`${pick(P_SUBJ)} ${pick(P_VERB)} ${pick(P_OBJ)} ${pick(P_TAIL)}`;
+/* the 80/20 mix: mostly sensible, one line in five still slips */
+const sentence=()=>Math.random()<0.8? pick(P_SENSE) : nonsense();
 /* word-wrap a string into lines that fit `maxW` with the current font */
 function wrapText(g,txt,maxW){
   const words=txt.split(" "), lines=[]; let line="";
@@ -464,7 +600,8 @@ export function makePosterTexture(){
     g.fillStyle=`rgb(${tone-22},${tone-26},${tone-52})`;g.fillRect(0,0,w,h);
     g.strokeStyle="rgba(40,34,22,0.55)";g.lineWidth=5;g.strokeRect(6,6,w-12,h-12);
     const ink="rgba(34,30,20,0.85)", inkSoft="rgba(40,36,26,0.66)";
-    if(Math.random()<0.5){
+    const layout=Math.random();
+    if(layout<0.42){
       /* ---- official notice: header, ruled line, numbered directives ---- */
       g.fillStyle=ink; g.textAlign="center";
       g.font="bold 19px Courier New";
@@ -475,7 +612,7 @@ export function makePosterTexture(){
       g.textAlign="left"; g.font="11px Courier New"; g.fillStyle=inkSoft;
       const n=3+Math.floor(Math.random()*3);
       for(let i=0;i<n&&y<h-46;i++){
-        for(const ln of wrapText(g,`${i+1}. ${nonsense()}`,w-52)){
+        for(const ln of wrapText(g,`${i+1}. ${sentence()}`,w-52)){
           if(y>h-40) break;
           g.fillText(ln,26,y); y+=14;
         }
@@ -483,6 +620,38 @@ export function makePosterTexture(){
       }
       g.textAlign="center"; g.font="bold 11px Courier New"; g.fillStyle=ink;
       g.fillText("— BY ORDER OF THE DESK —",w/2,h-26);
+    } else if(layout<0.62){
+      /* ---- missing-patron notice: silhouette, particulars, a plea ---- */
+      g.fillStyle=ink; g.textAlign="center";
+      g.font="bold 20px Courier New";
+      g.fillText("MISSING",w/2,38);
+      g.font="bold 12px Courier New";
+      g.fillText("HAVE YOU SEEN THIS PATRON?",w/2,56);
+      /* head-and-shoulders silhouette in a thin frame */
+      const fx=w/2-46, fy=68, fw=92, fh=104;
+      g.strokeStyle=ink; g.lineWidth=2; g.strokeRect(fx,fy,fw,fh);
+      g.fillStyle="rgba(52,48,38,0.55)"; g.fillRect(fx+2,fy+2,fw-4,fh-4);
+      g.fillStyle="rgba(24,22,16,0.9)";
+      g.beginPath();g.ellipse(w/2,fy+42,17,21,0,0,7);g.fill();
+      g.beginPath();g.ellipse(w/2,fy+fh-6,34,30,0,Math.PI,0);g.fill();
+      let y=fy+fh+20;
+      g.textAlign="left"; g.font="11px Courier New"; g.fillStyle=inkSoft;
+      const lines=[
+        `Last seen: section ${"ABCDEFGH"[Math.floor(Math.random()*8)]}, aisle ${1+Math.floor(Math.random()*9)}, reading.`,
+        ["Did not check anything out.","Left their belongings at a table.",
+         "Was asked to keep their voice down.","Was last heard, not seen."][Math.floor(Math.random()*4)],
+        Math.random()<0.8? "If found, do not call out to them. Notify the front desk."
+                         : nonsense(),
+      ];
+      for(const txt of lines){
+        for(const ln of wrapText(g,txt,w-52)){
+          if(y>h-40) break;
+          g.fillText(ln,26,y); y+=14;
+        }
+        y+=6;
+      }
+      g.textAlign="center"; g.font="bold 11px Courier New"; g.fillStyle=ink;
+      g.fillText("REWARD: ONE QUIET HOUR",w/2,h-26);
     } else {
       /* ---- newspaper clipping: masthead, dateline, headline, columns ---- */
       g.fillStyle=ink; g.textAlign="center";
@@ -500,7 +669,7 @@ export function makePosterTexture(){
       for(const x of[x1,x2]){
         let cy=y;
         while(cy<h-30){
-          for(const ln of wrapText(g,nonsense(),colW)){
+          for(const ln of wrapText(g,sentence(),colW)){
             if(cy>h-30) break;
             g.fillText(ln,x,cy); cy+=11;
           }

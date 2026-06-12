@@ -19,7 +19,7 @@ import { STATE } from "./state.js";
 import { scene, lights, hemi, amb, makeLightRecord } from "./scene.js";
 import { makeCanvas, texLibWall, texLibCarpet, texLibCeil, texShelfWood, texDeskWood,
          makeCrackTexture, makeEndTextTexture, makePosterTexture, makeArtTexture,
-         scaleBoxUV } from "./textures.js";
+         makeBookAtlasTexture, BOOK_UV, scaleBoxUV } from "./textures.js";
 import { makeElevator, ELEV, addInteractable } from "./props.js";
 import { sfxLightsOut, escalateLibraryAmbience, sfxComputerBoot, sfxComputerStatic } from "./audio.js";
 
@@ -301,10 +301,180 @@ const beigePlasticDark=new THREE.MeshPhongMaterial({color:0x8e8672, specular:0x2
 const plasticWrap=new THREE.MeshPhongMaterial({color:0xcfd6da, specular:0x888d92, shininess:60,
   transparent:true, opacity:0.18, depthWrite:false});
 
+/* ---- books: every shelf block samples a window of a shared spine atlas,
+   and all of a run's blocks merge into ONE mesh — whole walls of books for
+   a single draw call. A couple of atlas variants keep runs from rhyming. */
+const bookMats=[0,1].map(()=>new THREE.MeshPhongMaterial({
+  map:makeBookAtlasTexture(), specular:0x141210, shininess:10}));
+const BLOCK_H=0.33, BLOCK_D=0.21;
+/* rewrite one BoxGeometry face's UVs to a [u0,v0]-[u1,v1] window
+   (face order: +x,−x,+y,−y,+z,−z; default per-face vertex pattern) */
+function setFaceUV(geo,f,u0,v0,u1,v1){
+  const uv=geo.attributes.uv;
+  uv.setXY(f*4  ,u0,v1); uv.setXY(f*4+1,u1,v1);
+  uv.setXY(f*4+2,u0,v0); uv.setXY(f*4+3,u1,v0);
+}
+const darkUV=(geo,faces)=>{for(const f of faces)
+  setFaceUV(geo,f,0.1,BOOK_UV.dark[0],0.2,BOOK_UV.dark[1]);};
+/* accumulates translated BoxGeometries into one indexed BufferGeometry */
+class GeoAcc{
+  constructor(){this.pos=[];this.nor=[];this.uv=[];this.idx=[];this.vc=0;}
+  add(geo){
+    const p=geo.attributes.position,n=geo.attributes.normal,u=geo.attributes.uv,ix=geo.index;
+    for(let i=0;i<p.count;i++){
+      this.pos.push(p.getX(i),p.getY(i),p.getZ(i));
+      this.nor.push(n.getX(i),n.getY(i),n.getZ(i));
+      this.uv.push(u.getX(i),u.getY(i));
+    }
+    for(let i=0;i<ix.count;i++) this.idx.push(ix.getX(i)+this.vc);
+    this.vc+=p.count; geo.dispose();
+  }
+  build(){
+    const g=new THREE.BufferGeometry();
+    g.setAttribute("position",new THREE.Float32BufferAttribute(this.pos,3));
+    g.setAttribute("normal",new THREE.Float32BufferAttribute(this.nor,3));
+    g.setAttribute("uv",new THREE.Float32BufferAttribute(this.uv,2));
+    g.setIndex(this.idx);
+    return g;
+  }
+}
+/* one run of shelved books: spines face outward (side s), fore-edges show
+   from above and behind, undersides stay dark. x0 = left edge along the run */
+function accBookBlock(acc,x0,w,y,z,s){
+  const geo=new THREE.BoxGeometry(w,BLOCK_H,BLOCK_D);
+  const span=w/BOOK_UV.mPerU;
+  const u0=Math.random()*Math.max(0,1-span);
+  setFaceUV(geo,s>0?4:5,u0,BOOK_UV.spine[0],u0+span,BOOK_UV.spine[1]);
+  const pu=Math.random()*Math.max(0,1-span);
+  setFaceUV(geo,s>0?5:4,pu,BOOK_UV.pagesV[0],pu+span,BOOK_UV.pagesV[1]);   // backs read as fore-edges
+  setFaceUV(geo,2,pu,BOOK_UV.pagesV[0],pu+span,BOOK_UV.pagesV[1]);         // tops too
+  darkUV(geo,[0,1,3]);
+  geo.translate(x0+w/2,y+BLOCK_H/2,z);
+  acc.add(geo);
+}
+/* a short pile of books lying flat — page layers on the sides, dark covers */
+function accBookStack(acc,x,y,z){
+  const n=1+Math.floor(Math.random()*3);
+  let cy=y;
+  for(let i=0;i<n;i++){
+    const bw=0.18+Math.random()*0.12, bd=0.24+Math.random()*0.08, bh=0.035+Math.random()*0.025;
+    const geo=new THREE.BoxGeometry(bw,bh,bd);
+    const pu=Math.random()*0.8;
+    const v1=BOOK_UV.pagesH[0]+(BOOK_UV.pagesH[1]-BOOK_UV.pagesH[0])*Math.min(1,bh/0.06);
+    for(const f of[0,1,4,5]) setFaceUV(geo,f,pu,BOOK_UV.pagesH[0],pu+0.07,v1);
+    darkUV(geo,[2,3]);
+    geo.rotateY((Math.random()-0.5)*0.5);
+    geo.translate(x+(Math.random()-0.5)*0.03,cy+bh/2,z+(Math.random()-0.5)*0.03);
+    acc.add(geo);
+    cy+=bh;
+  }
+}
+/* standalone textured book block (the carts borrow it): spines on BOTH
+   long faces, fore-edges on top, dark ends */
+function makeBookBlockMesh(w,d){
+  const geo=new THREE.BoxGeometry(w,BLOCK_H,d);
+  const span=w/BOOK_UV.mPerU;
+  for(const f of[4,5]){
+    const u0=Math.random()*Math.max(0,1-span);
+    setFaceUV(geo,f,u0,BOOK_UV.spine[0],u0+span,BOOK_UV.spine[1]);
+  }
+  const pu=Math.random()*Math.max(0,1-span);
+  setFaceUV(geo,2,pu,BOOK_UV.pagesV[0],pu+span,BOOK_UV.pagesV[1]);
+  darkUV(geo,[0,1,3]);
+  return new THREE.Mesh(geo,bookMats[Math.floor(Math.random()*bookMats.length)]);
+}
+
+/* shared loose-book materials: muted cloth bindings */
+const looseBookMats=[0x6e3a32,0x32402e,0x3a3046,0x53503c,0x7a5a30,0x2e3a46]
+  .map(c=>new THREE.MeshPhongMaterial({color:c, specular:0x111111, shininess:6}));
+const looseBookMat=()=>looseBookMats[Math.floor(Math.random()*looseBookMats.length)];
+const bookendMat=new THREE.MeshPhongMaterial({color:0x2e3236, specular:0x4a4e52, shininess:42});
+const accentWood=new THREE.MeshPhongMaterial({color:0x4a3522, specular:0x161208, shininess:10});
+const accentBrass=new THREE.MeshPhongMaterial({color:0x6e5a2e, specular:0x8a7340, shininess:55});
+/* a non-book accent sitting in line with the book rows: leaning strays,
+   archive boxes, dusty jars, bookend sets, hourglasses, candle stubs —
+   library things, abandoned mid-task. (sx,yTop,sz) = spot on the board. */
+function placeAccent(g,sx,yTop,sz){
+  const r=Math.random();
+  if(r<0.28){
+    /* stray volumes left leaning where someone stopped shelving */
+    const n=1+Math.floor(Math.random()*3);
+    let bx=sx-n*0.05;
+    for(let i=0;i<n;i++){
+      const bw=0.04+Math.random()*0.06;
+      const book=new THREE.Mesh(new THREE.BoxGeometry(bw,0.27,0.18),looseBookMat());
+      const lean=Math.random()<0.6? (Math.random()-0.5)*0.5 : 0;
+      book.position.set(bx,yTop+0.135,sz);
+      book.rotation.z=lean;
+      g.add(book); bx+=bw+0.03;
+    }
+  } else if(r<0.46){
+    const box=new THREE.Mesh(new THREE.BoxGeometry(0.32,0.24,0.26),
+      new THREE.MeshPhongMaterial({color:0x6e5a40, specular:0x161208, shininess:5}));
+    box.position.set(sx,yTop+0.12,sz); box.rotation.y=(Math.random()-0.5)*0.5;
+    g.add(box);
+  } else if(r<0.58){
+    const jar=new THREE.Mesh(new THREE.CylinderGeometry(0.085,0.085,0.24,10),
+      new THREE.MeshPhongMaterial({color:0x5e665c, specular:0x3a4038, shininess:50,
+        transparent:true, opacity:0.85}));
+    jar.position.set(sx,yTop+0.12,sz);
+    g.add(jar);
+  } else if(r<0.76){
+    /* bookends still clamping a few spines upright — the most organized
+       thing left in the building */
+    const n=2+Math.floor(Math.random()*3), bw=0.07;
+    for(const side of[-1,1]){
+      const ex=sx+side*(n*bw/2+0.025);
+      const up=new THREE.Mesh(new THREE.BoxGeometry(0.035,0.22,0.14),bookendMat);
+      up.position.set(ex,yTop+0.11,sz); g.add(up);
+      const ft=new THREE.Mesh(new THREE.BoxGeometry(0.12,0.015,0.14),bookendMat);
+      ft.position.set(ex-side*0.045,yTop+0.0075,sz); g.add(ft);
+    }
+    for(let i=0;i<n;i++){
+      const b=new THREE.Mesh(new THREE.BoxGeometry(bw-0.012,0.21,0.15),looseBookMat());
+      b.position.set(sx-(n-1)*bw/2+i*bw,yTop+0.105,sz);
+      g.add(b);
+    }
+  } else if(r<0.88){
+    /* an hourglass, long since run out */
+    const hg=new THREE.Group();
+    for(const cy of[0.01,0.27]){
+      const cap=new THREE.Mesh(new THREE.CylinderGeometry(0.075,0.075,0.02,10),accentWood);
+      cap.position.y=cy; hg.add(cap);
+    }
+    for(let i=0;i<3;i++){
+      const a=i/3*Math.PI*2;
+      const rod=new THREE.Mesh(new THREE.CylinderGeometry(0.008,0.008,0.26,5),accentWood);
+      rod.position.set(Math.cos(a)*0.062,0.14,Math.sin(a)*0.062); hg.add(rod);
+    }
+    const glassMat=new THREE.MeshPhongMaterial({color:0x9aa496, specular:0x6a7468,
+      shininess:70, transparent:true, opacity:0.5});
+    for(const[cy,flip]of[[0.085,0],[0.195,Math.PI]]){
+      const cone=new THREE.Mesh(new THREE.ConeGeometry(0.055,0.105,10),glassMat);
+      cone.position.y=cy; cone.rotation.x=flip; hg.add(cone);
+    }
+    hg.position.set(sx,yTop,sz); hg.rotation.y=Math.random()*Math.PI*2;
+    g.add(hg);
+  } else {
+    /* a candlestick, burnt to a stub or never lit at all */
+    const cs=new THREE.Group();
+    const dish=new THREE.Mesh(new THREE.CylinderGeometry(0.055,0.07,0.018,10),accentBrass);
+    dish.position.y=0.009; cs.add(dish);
+    const stem=new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.018,0.09,8),accentBrass);
+    stem.position.y=0.062; cs.add(stem);
+    const ch=0.04+Math.random()*0.11;
+    const candle=new THREE.Mesh(new THREE.CylinderGeometry(0.017,0.019,ch,8),
+      new THREE.MeshPhongMaterial({color:0xd8d2c0, specular:0x222018, shininess:14}));
+    candle.position.y=0.107+ch/2; candle.rotation.z=(Math.random()-0.5)*0.12; cs.add(candle);
+    cs.position.set(sx,yTop,sz); cs.rotation.y=Math.random()*Math.PI*2;
+    g.add(cs);
+  }
+}
+
 function makeShelfRun(run){
   /* one continuous double-sided open stack: uprights at every cell seam,
-     long bare boards spanning the whole run, the occasional lone book or
-     sagging board — virtually devoid of books, exactly as described */
+     boards spanning the whole run — and, as of v2.1.0, properly stocked:
+     row after row of spines with gaps, strays and library clutter between */
   const g=new THREE.Group();
   const len=run.cells.length*CELL, H=SHELF_H, D=SHELF_D;
   const boardGeo=new THREE.BoxGeometry(len,0.055,D);
@@ -320,107 +490,43 @@ function makeShelfRun(run){
     const sp=new THREE.Mesh(new THREE.BoxGeometry(len,H-0.2,0.04),shelfMat);
     sp.position.y=H/2; g.add(sp);
   }
-  /* lone forgotten books — still "virtually devoid" of anything useful,
-     just visibly lived-in */
-  const bookCol=()=>[0x5a3a2a,0x32402e,0x3a3046,0x53503c][Math.floor(Math.random()*4)];
-  const shelfY=()=>[0.53,0.96,1.39][Math.floor(Math.random()*3)];
-  const nB=Math.random()<0.95? 3+Math.floor(Math.random()*7) : 0;
-  for(let i=0;i<nB;i++){
-    const bw=0.05+Math.random()*0.2;
-    const book=new THREE.Mesh(new THREE.BoxGeometry(bw,0.28,0.18),
-      new THREE.MeshPhongMaterial({color:bookCol(), specular:0x111111, shininess:6}));
-    const lean=Math.random()<0.5? (Math.random()-0.5)*0.5 : 0;
-    book.position.set(rand(-len/2+0.4,len/2-0.4), shelfY()+0.145, rand(-0.32,0.32));
-    book.rotation.z=lean;
-    g.add(book);
-  }
-  /* short stacks lying flat */
-  for(const ch of[0.9,0.5,0.25]) if(Math.random()<ch){
-    const sx=rand(-len/2+0.4,len/2-0.4), sy=shelfY(), sz=rand(-0.28,0.28);
-    const n=1+Math.floor(Math.random()*3);
-    for(let i=0;i<n;i++){
-      const b=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.045,0.3),
-        new THREE.MeshPhongMaterial({color:bookCol(), specular:0x111111, shininess:6}));
-      b.position.set(sx+rand(-0.02,0.02), sy+0.0275+i*0.047, sz+rand(-0.02,0.02));
-      b.rotation.y=(Math.random()-0.5)*0.4;
-      g.add(b);
+  /* ---- the books ----
+     Each side of each board is walked left to right, laying down runs of
+     shelved books (merged into one mesh for the whole stack), breathing
+     gaps, and the occasional non-book accent sitting in line with the rows.
+     Every occupied interval is recorded in run.occ so the floppy disks can
+     later pick spots the books left open. */
+  run.occ={};
+  const acc=new GeoAcc();
+  const sparse=Math.random()<0.12;              // the odd run was emptied long ago
+  const density=sparse? rand(0.05,0.16) : rand(0.5,0.88);
+  let accents=0;
+  const Y=[0.10,0.53,0.96,1.39];
+  for(const s of[1,-1]) for(let lv=0;lv<4;lv++){
+    const fill=density*(lv===0?0.45:1);          // the bottom board runs lighter
+    const yTop=Y[lv]+0.0275, z=s*0.255;
+    const occ=run.occ[s+"|"+lv]=[];
+    let x=-len/2+0.10;
+    const xEnd=len/2-0.10;
+    while(x<xEnd-0.2){
+      if(Math.random()<fill){
+        const w=Math.min(rand(0.45,2.2), xEnd-x);
+        accBookBlock(acc,x,w,yTop,z,s);
+        occ.push([x,x+w]);
+        x+=w+rand(0.02,0.25);
+      } else {
+        const gw=rand(0.3,1.1);
+        if(!sparse&&accents<9&&gw>0.5&&Math.random()<0.45){
+          const ax=x+gw/2;
+          if(Math.random()<0.45) accBookStack(acc,ax,yTop,z);
+          else placeAccent(g,ax,yTop,z+rand(-0.03,0.03));
+          occ.push([ax-0.2,ax+0.2]); accents++;
+        }
+        x+=gw;
+      }
     }
   }
-  /* misc abandoned things: archive boxes, dusty jars */
-  for(const ch of[0.95,0.6,0.3]) if(Math.random()<ch){
-    const sx=rand(-len/2+0.4,len/2-0.4), sy=shelfY();
-    if(Math.random()<0.55){
-      const box=new THREE.Mesh(new THREE.BoxGeometry(0.32,0.24,0.26),
-        new THREE.MeshPhongMaterial({color:0x6e5a40, specular:0x161208, shininess:5}));
-      box.position.set(sx,sy+0.1475,rand(-0.24,0.24)); box.rotation.y=(Math.random()-0.5)*0.5;
-      g.add(box);
-    } else {
-      const jar=new THREE.Mesh(new THREE.CylinderGeometry(0.085,0.085,0.24,10),
-        new THREE.MeshPhongMaterial({color:0x5e665c, specular:0x3a4038, shininess:50,
-          transparent:true, opacity:0.85}));
-      jar.position.set(sx,sy+0.1475,rand(-0.24,0.24));
-      g.add(jar);
-    }
-  }
-  /* bookends: a pair of dark brackets still clamping a few spines upright —
-     the most organized thing left in the building */
-  if(Math.random()<0.5){
-    const sx=rand(-len/2+0.5,len/2-0.5), sy=shelfY(), sz=rand(-0.22,0.22);
-    const endMat=new THREE.MeshPhongMaterial({color:0x2e3236, specular:0x4a4e52, shininess:42});
-    const n=2+Math.floor(Math.random()*3), bw=0.07;
-    for(const side of[-1,1]){
-      const ex=sx+side*(n*bw/2+0.025);
-      const up=new THREE.Mesh(new THREE.BoxGeometry(0.035,0.22,0.14),endMat);
-      up.position.set(ex,sy+0.1375,sz); g.add(up);
-      const ft=new THREE.Mesh(new THREE.BoxGeometry(0.12,0.015,0.14),endMat);
-      ft.position.set(ex-side*0.045,sy+0.035,sz); g.add(ft);
-    }
-    for(let i=0;i<n;i++){
-      const b=new THREE.Mesh(new THREE.BoxGeometry(bw-0.012,0.21,0.15),
-        new THREE.MeshPhongMaterial({color:bookCol(), specular:0x111111, shininess:6}));
-      b.position.set(sx-(n-1)*bw/2+i*bw,sy+0.1325,sz);
-      g.add(b);
-    }
-  }
-  /* an hourglass, long since run out */
-  if(Math.random()<0.35){
-    const sx=rand(-len/2+0.4,len/2-0.4), sy=shelfY(), sz=rand(-0.2,0.2);
-    const hg=new THREE.Group();
-    const wood=new THREE.MeshPhongMaterial({color:0x4a3522, specular:0x161208, shininess:10});
-    for(const cy of[0.01,0.27]){
-      const cap=new THREE.Mesh(new THREE.CylinderGeometry(0.075,0.075,0.02,10),wood);
-      cap.position.y=cy; hg.add(cap);
-    }
-    for(let i=0;i<3;i++){
-      const a=i/3*Math.PI*2;
-      const rod=new THREE.Mesh(new THREE.CylinderGeometry(0.008,0.008,0.26,5),wood);
-      rod.position.set(Math.cos(a)*0.062,0.14,Math.sin(a)*0.062); hg.add(rod);
-    }
-    const glassMat=new THREE.MeshPhongMaterial({color:0x9aa496, specular:0x6a7468,
-      shininess:70, transparent:true, opacity:0.5});
-    for(const[cy,flip]of[[0.085,0],[0.195,Math.PI]]){
-      const cone=new THREE.Mesh(new THREE.ConeGeometry(0.055,0.105,10),glassMat);
-      cone.position.y=cy; cone.rotation.x=flip; hg.add(cone);
-    }
-    hg.position.set(sx,sy+0.0275,sz); hg.rotation.y=Math.random()*Math.PI*2;
-    g.add(hg);
-  }
-  /* a candlestick, burnt to a stub or never lit at all */
-  if(Math.random()<0.45){
-    const sx=rand(-len/2+0.4,len/2-0.4), sy=shelfY(), sz=rand(-0.2,0.2);
-    const cs=new THREE.Group();
-    const brass=new THREE.MeshPhongMaterial({color:0x6e5a2e, specular:0x8a7340, shininess:55});
-    const dish=new THREE.Mesh(new THREE.CylinderGeometry(0.055,0.07,0.018,10),brass);
-    dish.position.y=0.009; cs.add(dish);
-    const stem=new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.018,0.09,8),brass);
-    stem.position.y=0.062; cs.add(stem);
-    const ch=0.04+Math.random()*0.11;
-    const candle=new THREE.Mesh(new THREE.CylinderGeometry(0.017,0.019,ch,8),
-      new THREE.MeshPhongMaterial({color:0xd8d2c0, specular:0x222018, shininess:14}));
-    candle.position.y=0.107+ch/2; candle.rotation.z=(Math.random()-0.5)*0.12; cs.add(candle);
-    cs.position.set(sx,sy+0.0275,sz); cs.rotation.y=Math.random()*Math.PI*2;
-    g.add(cs);
-  }
+  g.add(new THREE.Mesh(acc.build(),bookMats[Math.floor(Math.random()*bookMats.length)]));
   /* temporal decay: a collapsed board leaning inside the frame */
   if(Math.random()<0.30){
     const fall=new THREE.Mesh(new THREE.BoxGeometry(CELL*0.9,0.05,D*0.9),shelfMat);
@@ -542,10 +648,11 @@ function makeMannequin(){
   }
   return g;
 }
-/* a returns trolley nobody pushed back */
+/* a returns trolley nobody pushed back — now actually loaded: runs of
+   shelved spines on the lower decks, strays leaning on top, a push handle
+   and a stencilled plaque on one side */
 function makeBookCart(){
   const g=new THREE.Group(); g.userData.prop="cart";
-  const bookCol=()=>[0x5a3a2a,0x32402e,0x3a3046,0x53503c][Math.floor(Math.random()*4)];
   for(const sx of[-0.42,0.42]){
     const side=new THREE.Mesh(new THREE.BoxGeometry(0.05,0.86,0.56),darkMetalMat);
     side.position.set(sx,0.5,0); g.add(side);
@@ -554,20 +661,45 @@ function makeBookCart(){
     const shelf=new THREE.Mesh(new THREE.BoxGeometry(0.84,0.035,0.52),darkMetalMat);
     shelf.position.y=sy; g.add(shelf);
   }
+  /* a low retaining rail along each long edge of the top deck */
+  for(const sz of[-0.245,0.245]){
+    const rail=new THREE.Mesh(new THREE.BoxGeometry(0.84,0.05,0.025),darkMetalMat);
+    rail.position.set(0,0.93,sz); g.add(rail);
+  }
+  /* push handle arcing off one end */
+  for(const sz of[-0.2,0.2]){
+    const post=new THREE.Mesh(new THREE.BoxGeometry(0.035,0.26,0.035),darkMetalMat);
+    post.position.set(0.46,1.0,sz); post.rotation.z=-0.2; g.add(post);
+  }
+  const grip=new THREE.Mesh(new THREE.CylinderGeometry(0.022,0.022,0.46,8),darkMetalMat);
+  grip.rotation.x=Math.PI/2; grip.position.set(0.485,1.12,0); g.add(grip);
   for(const[sx,sz]of[[-0.36,-0.2],[0.36,-0.2],[-0.36,0.2],[0.36,0.2]]){
     const caster=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,0.04,8),darkMetalMat);
     caster.rotation.z=Math.PI/2; caster.position.set(sx,0.05,sz); g.add(caster);
   }
-  /* its last load, still waiting to be reshelved */
-  const n=Math.floor(Math.random()*5);
+  /* its last load: a packed run of spines on one or both lower decks… */
+  for(const sy of[0.16,0.52]) if(Math.random()<0.8){
+    const w=rand(0.3,0.7);
+    const blk=makeBookBlockMesh(w,0.19);
+    blk.position.set(rand(-1,1)*(0.82-w)/2, sy+0.0175+BLOCK_H/2, rand(-0.13,0.13));
+    blk.rotation.y=(Math.random()-0.5)*0.08;
+    g.add(blk);
+  }
+  /* …and strays leaning on the top deck, waiting to be reshelved */
+  const n=Math.floor(Math.random()*4);
   for(let i=0;i<n;i++){
-    const lean=Math.random()<0.4? (Math.random()-0.5)*0.5 : 0;
-    const b=new THREE.Mesh(new THREE.BoxGeometry(0.05+Math.random()*0.16,0.26,0.17),
-      new THREE.MeshPhongMaterial({color:bookCol(), specular:0x111111, shininess:6}));
-    b.position.set(rand(-0.3,0.3),(Math.random()<0.5?0.16:0.52)+0.0175+0.13,rand(-0.12,0.12));
+    const lean=Math.random()<0.5? (Math.random()-0.5)*0.6 : 0;
+    const b=new THREE.Mesh(new THREE.BoxGeometry(0.04+Math.random()*0.1,0.26,0.17),looseBookMat());
+    b.position.set(rand(-0.34,0.34),0.88+0.0175+0.13,rand(-0.14,0.14));
     b.rotation.z=lean;
     g.add(b);
   }
+  /* a stencilled RETURNS plaque hanging off the handle end */
+  const plq=new THREE.Mesh(new THREE.PlaneGeometry(0.42,0.105),
+    new THREE.MeshPhongMaterial({map:makeEndTextTexture("RETURNS"), transparent:true,
+      specular:0x000000, shininess:1}));
+  plq.position.set(0.452,0.74,0); plq.rotation.y=Math.PI/2;
+  g.add(plq);
   g.rotation.z=(Math.random()-0.5)*0.02;
   return g;
 }
@@ -977,15 +1109,27 @@ export function buildLibrary(){
   const sites=[];
   for(const run of LIB.runs){
     const [dx,dy]=run.axis===0? [0,1] : [1,0];
-    for(const c of run.cells){
+    const n=run.cells.length;
+    run.cells.forEach((c,i)=>{
+      /* the cell centre in the run group's LOCAL frame (the axis-1 group is
+         yawed +90°, which flips the along-run direction) */
+      const lx=run.axis===0? (i-(n-1)/2)*CELL : ((n-1)/2-i)*CELL;
       for(const s of[1,-1]){
         if(!LIB.reach.has(K(c.x+dx*s,c.y+dy*s))) continue;
+        /* only boards the books left open at this spot may hold a disk —
+           a collectible buried inside a packed row is unfindable */
+        const freeLv=[1,2,3].filter(lv=>{
+          const occ=(run.occ&&run.occ[s+"|"+lv])||[];
+          return !occ.some(([a,b])=>a<lx+0.17&&b>lx-0.17);
+        });
+        if(!freeLv.length) continue;
+        const lv=freeLv[Math.floor(srand()*freeLv.length)];
         const p=cellToWorld2(c.x,c.y);
         sites.push({cx:c.x, cy:c.y,
           x:p.x+dx*s*(SHELF_D/2-0.18), z:p.z+dy*s*(SHELF_D/2-0.18),
-          y:[0.56,0.99,1.42][Math.floor(srand()*3)]+0.02, kind:"shelf"});
+          y:[0,0.56,0.99,1.42][lv]+0.02, kind:"shelf"});
       }
-    }
+    });
   }
   for(const tc of tables){
     let near=false;
