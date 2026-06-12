@@ -524,6 +524,111 @@ export function makePosterTexture(){
   return t;
 }
 
+/* framed wall art: five families of almost-library artwork, each grown
+   fresh per call — things that COULD hang in a library, off by just one
+   degree. Frame + mat are shared; the plate inside picks a type. */
+export function makeArtTexture(){
+  const type=Math.floor(Math.random()*5);
+  const t=makeCanvas(224,288,(g,w,h)=>{
+    /* dark wood frame + aged mat */
+    g.fillStyle="#382a1a";g.fillRect(0,0,w,h);
+    g.fillStyle="rgba(140,110,70,0.35)";g.fillRect(3,3,w-6,2);g.fillRect(3,3,2,h-6);
+    g.fillStyle="#b3ab94";g.fillRect(12,12,w-24,h-24);
+    const x0=26,y0=26,iw=w-52,ih=h-52;
+    const ink="rgba(40,34,24,0.85)";
+    if(type===0){
+      /* MAP OF THE COLLECTION: floor-plan dots and corridors to nowhere */
+      g.fillStyle="#a89c80";g.fillRect(x0,y0,iw,ih);
+      g.strokeStyle="rgba(60,50,34,0.7)";g.lineWidth=1.5;
+      const pts=[];
+      for(let i=0;i<9;i++) pts.push([x0+14+Math.random()*(iw-28),y0+26+Math.random()*(ih-52)]);
+      for(let i=0;i<10;i++){
+        const a=pts[Math.floor(Math.random()*pts.length)],b=pts[Math.floor(Math.random()*pts.length)];
+        g.beginPath();g.moveTo(a[0],a[1]);g.lineTo(b[0],a[1]);g.lineTo(b[0],b[1]);g.stroke();
+      }
+      for(const p of pts){ g.fillStyle="rgba(60,50,34,0.8)";g.beginPath();g.arc(p[0],p[1],3,0,7);g.fill(); }
+      g.fillStyle="rgba(150,40,30,0.85)";g.font="bold 11px Courier New";g.textAlign="center";
+      const yx=x0+14+Math.random()*(iw-28), yy=y0+30+Math.random()*(ih-60);
+      g.fillText("✕",yx,yy);
+      g.fillText("YOU WERE HERE",yx,yy+12);
+      g.fillStyle=ink;g.font="bold 12px Courier New";
+      g.fillText("MAP OF THE COLLECTION",x0+iw/2,y0+14);
+    } else if(type===1){
+      /* a donor portrait with nothing where the face goes */
+      g.fillStyle="#2a241d";g.fillRect(x0,y0,iw,ih);
+      const cx=x0+iw/2;
+      const gr=g.createRadialGradient(cx,y0+ih*0.38,8,cx,y0+ih*0.38,ih*0.45);
+      gr.addColorStop(0,"rgba(120,104,76,0.35)");gr.addColorStop(1,"rgba(120,104,76,0)");
+      g.fillStyle=gr;g.fillRect(x0,y0,iw,ih);
+      g.fillStyle="#13100c";
+      g.beginPath();g.ellipse(cx,y0+ih*0.34,iw*0.16,ih*0.15,0,0,7);g.fill();   // head
+      g.beginPath();g.ellipse(cx,y0+ih*0.78,iw*0.32,ih*0.3,0,Math.PI,0);g.fill(); // shoulders
+      g.fillStyle="#8a7340";g.fillRect(x0+iw*0.2,y0+ih-22,iw*0.6,14);          // brass plaque
+      g.fillStyle="#241c10";g.font="bold 9px Courier New";g.textAlign="center";
+      g.fillText(["THE FIRST LIBRARIAN","HEAD ARCHIVIST, 19∅∅","OUR FOUNDER","PATRON OF QUIET"][Math.floor(Math.random()*4)],
+        x0+iw/2,y0+ih-12);
+    } else if(type===2){
+      /* botanical plate: a specimen with labels pointing at nothing */
+      g.fillStyle="#cfc6a8";g.fillRect(x0,y0,iw,ih);
+      g.strokeStyle="rgba(50,70,40,0.8)";g.lineWidth=2;
+      const sx=x0+iw/2;
+      g.beginPath();g.moveTo(sx,y0+ih-20);
+      g.bezierCurveTo(sx-10,y0+ih*0.6,sx+12,y0+ih*0.4,sx-4,y0+24);g.stroke();
+      g.fillStyle="rgba(58,82,46,0.75)";
+      for(let i=0;i<5;i++){
+        const ly=y0+30+i*(ih-70)/5, s=(i%2?1:-1);
+        g.save();g.translate(sx+s*6,ly);g.rotate(s*(0.5+Math.random()*0.4));
+        g.beginPath();g.ellipse(0,0,16+Math.random()*8,6,0,0,7);g.fill();g.restore();
+      }
+      g.strokeStyle="rgba(40,34,24,0.6)";g.lineWidth=1;
+      g.fillStyle=ink;g.font="9px Courier New";g.textAlign="left";
+      const labels=["fig. ∅","leaf (?)","hrs.","stem, late","do not water"];
+      for(let i=0;i<4;i++){
+        const ly=y0+34+Math.random()*(ih-80), tx=Math.random()<0.5? x0+4: x0+iw-44;
+        g.beginPath();g.moveTo(tx<sx?tx+38:tx,ly);
+        g.lineTo(sx+(Math.random()-0.5)*60,ly+(Math.random()-0.5)*30);g.stroke();
+        g.fillText(labels[Math.floor(Math.random()*labels.length)],tx,ly+3);
+      }
+      g.textAlign="center";g.font="italic 10px Courier New";
+      g.fillText("SPECIMEN: HOURS, PERENNIAL",x0+iw/2,y0+ih-8);
+    } else if(type===3){
+      /* an acuity chart that tests something else */
+      g.fillStyle="#d8d2c0";g.fillRect(x0,y0,iw,ih);
+      const rows=["SH","HUSH","QUIETLY","RETURNALL","THEENDTHEEND","sshhhhhhhhhhh"];
+      let yy=y0+34;
+      g.fillStyle=ink;g.textAlign="center";
+      rows.forEach((r,i)=>{
+        g.font=`bold ${Math.max(6,30-i*5)}px Courier New`;
+        g.fillText(r.split("").join(" "),x0+iw/2,yy);
+        yy+=Math.max(14,36-i*4);
+      });
+      g.strokeStyle="rgba(40,34,24,0.4)";g.lineWidth=1;
+      g.beginPath();g.moveTo(x0+12,y0+ih-26);g.lineTo(x0+iw-12,y0+ih-26);g.stroke();
+      g.font="8px Courier New";
+      g.fillText("IF YOU CAN READ THIS ROW IT HEARD YOU",x0+iw/2,y0+ih-12);
+    } else {
+      /* nocturne: hills, a moon, no library anywhere in sight */
+      const gr=g.createLinearGradient(0,y0,0,y0+ih);
+      gr.addColorStop(0,"#11151d");gr.addColorStop(0.65,"#2a3140");gr.addColorStop(1,"#3a4252");
+      g.fillStyle=gr;g.fillRect(x0,y0,iw,ih);
+      g.fillStyle="rgba(214,210,190,0.85)";
+      g.beginPath();g.arc(x0+iw*(0.25+Math.random()*0.5),y0+ih*0.25,11,0,7);g.fill();
+      for(let i=0;i<3;i++){
+        g.fillStyle=`rgba(${10+i*6},${12+i*6},${16+i*7},0.95)`;
+        g.beginPath();g.moveTo(x0,y0+ih);
+        for(let xx=0;xx<=iw;xx+=8)
+          g.lineTo(x0+xx,y0+ih*(0.55+i*0.13)+Math.sin(xx*0.05+i*9)*8);
+        g.lineTo(x0+iw,y0+ih);g.closePath();g.fill();
+      }
+      g.fillStyle="#8a7340";g.fillRect(x0+iw*0.25,y0+ih-16,iw*0.5,11);
+      g.fillStyle="#241c10";g.font="bold 8px Courier New";g.textAlign="center";
+      g.fillText("VIEW FROM THE STACKS",x0+iw/2,y0+ih-8);
+    }
+  });
+  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearFilter; t.generateMipmaps=false;
+  return t;
+}
+
 /* cut a vertical strip [u0,u1] out of a colony texture — used when a colony
    overhangs its wall section and continues around a corner. flip mirrors the
    strip for wrap planes whose u-axis runs back toward the fold, so the

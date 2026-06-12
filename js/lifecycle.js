@@ -4,9 +4,9 @@ import { STATE, monster, spider } from "./state.js";
 import { W, H, cellToWorld, farOpenWorldPoint } from "./map.js";
 import { scene, buildLevel, clearLevelScene, setLevelEnvironment } from "./scene.js";
 import { placeProps, interactables, exitDoor, clearInteractables } from "./props.js";
-import { makeMonster, wakeMonster, escalateMonster } from "./monster.js";
+import { makeMonster, wakeMonster, escalateMonster, clearMonsterFx } from "./monster.js";
 import { buildLibrary, LIB } from "./library.js";
-import { makeSpider, resetSpider } from "./spider.js";
+import { makeSpider, resetSpider, spiderHearDisc } from "./spider.js";
 import { CINE, startTheEndIntro } from "./cutscene.js";
 import { AU, sfxDeath, startLibraryAmbience } from "./audio.js";
 import { ui, toast, renderObjectives, setPaused, lockPointer } from "./ui.js";
@@ -19,7 +19,6 @@ export function startGame(){
   STATE.playing=true;
   ui.hud.classList.add("on");
   renderObjectives();
-  toast("Find 3 bottles of almond water. Stay quiet.");
   lockPointer();
 }
 /* ---------------- the descent: level 0 → THE END ---------------- */
@@ -31,6 +30,7 @@ export function enterTheEnd(){
   STATE.libT0=STATE.time;
   clearLevelScene();
   clearInteractables();
+  clearMonsterFx();
   monster.active=false; monster.mesh=null; monster.shock=null;
   monster.holdAt30=false; monster.held=false;
   if(AU.ctx){
@@ -43,7 +43,7 @@ export function enterTheEnd(){
   setLevelEnvironment(1);
   buildLibrary();
   spider.mesh=makeSpider(); scene.add(spider.mesh);
-  resetSpider(LIB.spawn.x,LIB.spawn.z,55);
+  resetSpider(LIB.spawn.x,LIB.spawn.z,40);
   spider.active=false;                 // it starts its rounds when the intro ends
   STATE.pos.copy(LIB.spawn);
   STATE.y=0; STATE.vy=0; STATE.grounded=true; STATE.velX=0; STATE.velZ=0;
@@ -62,7 +62,7 @@ export function respawn(){
     STATE.y=0; STATE.vy=0; STATE.grounded=true; STATE.velX=0; STATE.velZ=0;
     STATE.dead=false; STATE.stamina=1; STATE.crouch=false;
     STATE.libBlackout=0; LIB.blackT=0;
-    resetSpider(LIB.spawn.x,LIB.spawn.z,50);
+    resetSpider(LIB.spawn.x,LIB.spawn.z,36);
     ui.dread.style.opacity=0;
     ui.staticfx.style.opacity=0;
     return;
@@ -126,6 +126,7 @@ export function debugSkipToTheEnd(){
       STATE.discsCarried++; STATE.discsFound++; last=it;
     }
     if(STATE.libFirstPickup<0) STATE.libFirstPickup=STATE.time;
+    if(last) spiderHearDisc(last.mesh.position.x,last.mesh.position.z);
     renderObjectives();
     toast("DEBUG: every disk pocketed.",2000);
   }

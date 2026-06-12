@@ -26,6 +26,7 @@ export const monster={
   lastSeen:null, searchT:0, alertT:0, pauseT:0, knockT:4, knockMove:null,
   curSpeed:0, faceAng:0, anim:0, groanT:6,
   twitchT:5, twitchDur:0, twitchSeed:0,
+  teleT:20,             // countdown to the next space-fold (see monster.js)
   rush:false,           // hunt at full chase speed (final-objective sprint)
   holdAt30:false,       // breaker cinematic: arm the 30m freeze ring
   held:false,           // frozen by the cinematic until control returns
@@ -45,5 +46,6 @@ export const spider={
   stacking:false,       // true from a pickup until it reaches the latest pickup spot
   seekRun:false,        // seek at run speed (disc/strong alert) vs walk (mild)
   browseT:0, pauseT:0, scratchT:6, sniffT:0, sniffsLeft:0, searchT:0, stalkT:0,
-  mildCD:0, stepAcc:0, screechCD:0,
+  mildCD:0, stepAcc:0, screechCD:0, scratchCD:0, sniffCD:0,
+  stuckT:0,             // anti-deadlock: seconds spent commanded-but-stationary
 };

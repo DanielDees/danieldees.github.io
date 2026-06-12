@@ -21,7 +21,7 @@ import { updateProps, interactables, exitDoor } from "./props.js";
 import { updateFocus } from "./interact.js";
 import { CINE, updateCinematic, startBreakerCine, startElevatorCine,
          startTheEndIntro, startTerminalCine } from "./cutscene.js";
-import { updateLibrary, LIB } from "./library.js";
+import { updateLibrary, LIB, grid2 } from "./library.js";
 import { enterTheEnd, debugSkipToTheEnd } from "./lifecycle.js";
 import { renderObjectives } from "./ui.js";
 import "./input.js";
@@ -59,4 +59,5 @@ window.NOCLIP_DEBUG={STATE, monster, spider, CINE, scene, camera,
   enterTheEnd, debugSkipToTheEnd,
   get interactables(){ return interactables; },
   get exitDoor(){ return exitDoor; },
-  get LIB(){ return LIB; }};
+  get LIB(){ return LIB; },
+  get grid2(){ return grid2; }};

@@ -14,7 +14,7 @@ import { AU, panTo, sfxAlert, sfxStinger, sfxClunk, sfxPowerOn,
          startElevDescend, sfxElevRattle, sfxElevGrind, sfxLightsOut,
          sfxComputerBoot, sfxComputerStatic, sfxSpiderShriek, sfxSpiderTap,
          sfxSpiderScratch } from "./audio.js";
-import { ui, toast, renderObjectives } from "./ui.js";
+import { ui, renderObjectives } from "./ui.js";
 import { monsterRushTo } from "./monster.js";
 import { exitDoor } from "./props.js";
 import { win, enterTheEnd } from "./lifecycle.js";
@@ -54,7 +54,7 @@ export function updateCinematic(dt){
 }
 
 /* ================= breaker: the fuse seats itself ================= */
-/* ~3.6s: door swings open, the fuse fades in hovering and glides into the
+/* ~4.6s: door swings open, the fuse fades in hovering and glides into the
    slot, the lever flips with the power surge, the door claps shut. The
    player can't move — deliberately long enough for a distant entity to
    close in; one inside 30m freezes there until control returns. */
@@ -84,11 +84,11 @@ function updateBreaker(){
   setCam(D.eye.x,D.eye.y,D.eye.z,STATE.yaw,STATE.pitch);
   /* door open ramps 0→1, the close envelope multiplies it back down */
   cue("open",0.15,()=>sfxBoxOpen());
-  u.doorPivot.rotation.y = -2.05*seg(t,0.15,0.95)*(1-seg(t,2.55,3.25));
+  u.doorPivot.rotation.y = -2.05*seg(t,0.15,0.95)*(1-seg(t,3.55,4.25));
   const fuse=u.fuse;
-  cue("conjure",1.0,()=>{ fuse.visible=true; sfxFuseHum(1.15); });
+  cue("conjure",1.0,()=>{ fuse.visible=true; sfxFuseHum(2.1); });
   if(t>=1.0){
-    const fk=seg(t,1.05,2.0);
+    const fk=seg(t,1.05,3.0);
     fuse.position.lerpVectors(D.fuseFrom,D.fuseTo,fk);
     fuse.position.x+=Math.sin(t*5)*0.012*(1-fk);          // unsteady hover
     fuse.position.y+=Math.sin(t*3.3)*0.01*(1-fk);
@@ -96,17 +96,16 @@ function updateBreaker(){
     const op=seg(t,1.0,1.35);
     fuse.traverse(o=>{ if(o.isMesh) o.material.opacity=op; });
   }
-  cue("seat",2.05,()=>{
+  cue("seat",3.05,()=>{
     sfxClunk(); sfxPowerOn();
     STATE.powerOn=true;
     u.lamp.material.color.set(0x39d24a);
     if(exitDoor) exitDoor.userData.sign.material.color.set(0xffffff);
-    toast("POWER RESTORED. The exit elevator is live — find it.");
-    renderObjectives();
+    renderObjectives();                                 // the objective box says it
   });
-  if(t>=2.05) u.lever.position.y=lerp(-0.1,0.1,seg(t,2.05,2.3));
-  cue("close",3.1,()=>sfxBoxClose());
-  if(t>=3.6){
+  if(t>=3.05) u.lever.position.y=lerp(-0.1,0.1,seg(t,3.05,3.3));
+  cue("close",4.1,()=>sfxBoxClose());
+  if(t>=4.6){
     playerLight.intensity=D.savedPL;
     CINE.active=false; CINE.kind=null; D=null;
     /* control returns; a held entity announces itself and comes loose */
@@ -504,8 +503,7 @@ function updateLibIntro(dt){
     if(el) el.classList.remove("show");
   });
   cue("obj",LI_OBJ,()=>{
-    toast("Bare shelves. Dead machines. Find the floppy disks — the terminal at the heart of the library wants them back.",5200);
-    renderObjectives();
+    renderObjectives();                                 // the objective box says it
   });
   /* ---- camera ---- */
   let cx,cy,cz,yaw=D.aOut.yaw,pitch=D.aOut.pitch;

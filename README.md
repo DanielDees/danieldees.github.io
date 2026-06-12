@@ -1,36 +1,89 @@
 # NOCLIP — Escape the Backrooms
 
-**Version: v1.5.0**
+**Version: v2.0.0**
 
-A browser-based survival horror game set in Level 0 of the Backrooms, playable at
+A browser-based survival horror game, playable at
 [danieldees.github.io](https://danieldees.github.io). Vanilla JS ES modules built
 on three.js — no build step, no dependencies to install.
 Vibe-coded with Claude Fable 5 / Claude Mythos 5.
 
 ## The game
 
-You fell through the world into damp carpet, yellowed wallpaper, and the endless
-drone of fluorescent light. Collect 3 bottles of almond water, find the fuse,
-restore power at the breaker panel, and reach the exit elevator — all while
-avoiding the entity that fell through long before you did. The lights nearest to
-it misbehave: distant flickering (and a sickly orange shift) tells you exactly
-where it is. Fixing the breaker and calling the elevator both trigger scripted
-cinematics — and the elevator ride down is not the clean escape it looks like.
+Two levels, two monsters, one way down.
+
+**Level 0 — the backrooms.** You fell through the world into damp carpet, yellowed
+wallpaper, and the endless drone of fluorescent light. Collect 3 bottles of almond
+water, find the fuse, restore power at the breaker panel, and reach the exit
+elevator — all while avoiding the entity that fell through long before you did. The
+lights nearest to it misbehave: distant flickering (and a sickly orange shift)
+tells you exactly where it is. With each objective it grows faster, hungrier, and
+learns to **fold space** — poofing across whole stretches of corridor in an instant.
+Restoring power floods you with adrenaline (a blue bar, bottomless sprint) for the
+final dash, because by then you cannot outrun it on legs alone. The elevator ride
+down is not the clean escape it looks like.
+
+**THE END — the infinite library.** The brakes never caught. You wake in the wreck
+of the cab on the floor of a vast, dim library: bare shelves, dead machines, and a
+horse-sized blind spider that pads between the stacks. It cannot see you — it
+**hears** you. Every footfall above a crouch, every floppy disk you pull from a
+shelf, draws it closer. Find the scattered disks and feed them to the terminal at
+the heart of the room while staying quiet and using the tables for cover. Fifty-five
+seconds after you take the first disk, the lights burn down to embers and the
+library wakes up the rest of the way.
 
 ## Controls
 
 | Key | Action |
 | --- | --- |
 | `WASD` + mouse | move / look |
-| `SHIFT` | sprint (drains stamina, makes noise) |
+| `SHIFT` | sprint (drains stamina / makes noise; bottomless once adrenaline kicks in) |
 | `SPACE` | jump |
-| `C` | crouch / hide |
+| `C` | crouch / hide (silent in THE END; the only way past the spider) |
 | `E` | interact |
 | `H` / `O` / `ESC` | how to play / sound mixer / pause |
 
-Headphones recommended — audio is positional and the entity is easier to track by ear.
+Headphones recommended — audio is positional, and both monsters are far easier to
+track by ear.
 
 ## Changelog
+
+### v2.0.0 (2026-06-12)
+- **THE END — the infinite library (Level 2).** The failed elevator drops you into
+  an entirely new level: one vast room of bookshelf runs, crouch-under tables, free-
+  standing set dressing (lecterns, ladders, mannequins, return carts, globes), and a
+  central circulation desk with the one terminal that matters. Everything is
+  procedurally generated and laid out so the spider can path any aisle or circle any
+  table cleanly.
+- **The librarian.** A blind, horse-sized spider with a procedural eight-leg gait
+  hunts entirely by sound. Disc pickups alert it to that spot after a distance-scaled
+  delay; stacking pickups before it arrives wind up its speed (up to 2.5× your
+  sprint, with an acceleration ramp). Moving uncrouched within ~17m alerts it
+  strongly; crouching is silent. It cannot reach under the tables — a hidden player
+  gets a circling stalk that eventually times out.
+- **The objective.** Collect 16–22 floppy disks off the shelves and feed them to the
+  terminal. Returning the last one triggers the ending cinematic: the machine boots,
+  prints "THE END", dies into static, and the spider rushes the noise as the lights
+  fail and the screen whites out.
+- **The crash transition.** The Level 0 elevator's brake failure *is* the level
+  change — the screen is already black when you come to in the wrecked cab, the doors
+  grind open in two tries, and the faulty library grid wakes in a slow wave rolling
+  out from the doorway.
+- **The space-fold.** Level 0's entity now teleports along its current path every
+  ~13s (tightening with difficulty), poofing into dark fog crossed with dissipating
+  shear lines, with a muted *vvwmp* at both ends. Every recurring disruption pulse
+  also hands it your current position. Its old per-difficulty speed creep was removed
+  — the fold more than makes up for it.
+- **Adrenaline finale.** Once the breaker is fixed, stamina goes bottomless and turns
+  into a blue ADRENALINE bar, and sprint speed rises 20% (to 9.6 m/s) — a fair shot
+  at reaching the elevator now that the entity can fold.
+- **Quieter HUD.** The yellow pop-up tooltips are gone on both levels; the objective
+  box is the single source of truth. Blocked interactions give a dull clunk instead
+  of a text scold.
+- Still zero-dependency vanilla JS. Hidden debug warps for testing: tap `6` ×3 to
+  jump to the Level 0 endgame, `7` ×3 to drop into THE END (or, once there, to pocket
+  every remaining disk).
+
+### v1.5.0 (2026-06-12)
 
 ### v1.5.0 (2026-06-12)
 - **The exit elevator.** The exit door is now a recessed, two-leaf elevator

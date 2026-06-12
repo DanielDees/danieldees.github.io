@@ -3,7 +3,7 @@ import { STATE, monster } from "./state.js";
 import { scene } from "./scene.js";
 import { interactables } from "./props.js";
 import { sfxPickup, sfxClunk, sfxDiscPickup, sfxDiscInsert } from "./audio.js";
-import { ui, toast, renderObjectives } from "./ui.js";
+import { ui, renderObjectives } from "./ui.js";
 import { escalateMonster } from "./monster.js";
 import { CINE, startBreakerCine, startElevatorCine, startTerminalCine } from "./cutscene.js";
 import { spiderHearDisc } from "./spider.js";
@@ -22,22 +22,19 @@ export function tryInteract(){
     if(STATE.bottles===1){
       if(!monster.active && monster.wakeT<=0) monster.wakeT=4;
     } else escalateMonster();
-    if(STATE.bottles>=3 && STATE.objective===0){
-      STATE.objective=1; toast("Hydrated. Now find a fuse for the breaker.");
-    } else toast(`Almond water ${STATE.bottles}/3.`);
+    if(STATE.bottles>=3 && STATE.objective===0) STATE.objective=1;
   } else if(it.kind==="fuse"){
-    if(STATE.objective<1){toast("You don't need this yet. Water first.");return;}
+    if(STATE.objective<1){sfxClunk();return;}            // not yet — water first
     it.taken=true; scene.remove(it.mesh); sfxPickup();
     STATE.hasFuse=true; STATE.objective=2; escalateMonster();
-    toast("Fuse acquired. Find the breaker panel.");
   } else if(it.kind==="breaker"){
-    if(STATE.objective<2){toast("Dead panel. It needs a fuse — and you're not ready.");sfxClunk();return;}
+    if(STATE.objective<2){sfxClunk();return;}            // dead panel, no fuse yet
     it.taken=true; STATE.objective=3; escalateMonster();
     /* the cutscene flips STATE.powerOn, the lamp, lever & exit sign itself —
        and sends the entity sprinting for this exact spot */
     startBreakerCine(it);
   } else if(it.kind==="exit"){
-    if(STATE.objective<3){sfxClunk();toast("Dead. The call button does nothing — restore the power first.");return;}
+    if(STATE.objective<3){sfxClunk();return;}            // call button dead until power's on
     it.taken=true;
     startElevatorCine(it);
   }
@@ -48,26 +45,16 @@ export function tryInteract(){
     if(STATE.libFirstPickup<0) STATE.libFirstPickup=STATE.time;
     /* the sound carries. It ALWAYS carries. */
     spiderHearDisc(it.mesh.position.x,it.mesh.position.z);
-    toast(STATE.discsFound===1
-      ? `Floppy disk 1/${STATE.discTotal}. Somewhere, the scratching stopped.`
-      : `Floppy disk ${STATE.discsFound}/${STATE.discTotal}.`);
   } else if(it.kind==="terminal"){
-    if(STATE.discsCarried<=0){
-      sfxClunk();
-      toast(STATE.discsDelivered>0? "It wants the rest of them." : "The drive bay is empty. It is waiting.");
-      return;
-    }
+    if(STATE.discsCarried<=0){ sfxClunk(); return; }     // empty-handed
     const n=STATE.discsCarried;
     for(let i=0;i<Math.min(n,8);i++) sfxDiscInsert(i*0.16);
     STATE.discsDelivered+=n; STATE.discsCarried=0;
     if(STATE.discsDelivered>=STATE.discTotal) startTerminalCine();
-    else toast(`The terminal swallows ${n===1?"the disk":n+" disks"}. ${STATE.discsDelivered}/${STATE.discTotal}.`);
   } else if(it.kind==="deadpc"){
     startDeadPC(it);
-    toast("It wakes — says its piece — and dies for good.");
   } else if(it.kind==="deadElev"){
     sfxClunk();
-    toast("Dead. It brought you down here; it owes you nothing more.");
   }
   renderObjectives();
 }

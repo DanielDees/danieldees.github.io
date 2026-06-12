@@ -8,7 +8,7 @@ import { startGame, respawn } from "./lifecycle.js";
 /* ---------------- DOM refs ---------------- */
 export const ui={
   hud:$("hud"), objList:$("objList"), stats:$("stats"),
-  stamWrap:$("staminaWrap"), stam:$("stamina"), stamPct:$("stamPct"),
+  stamWrap:$("staminaWrap"), stam:$("stamina"), stamPct:$("stamPct"), stamName:$("stamName"),
   prompt:$("prompt"), hidden:$("hiddenTag"), toast:$("toast"),
   dread:$("dread"), flash:$("flash"), staticfx:$("staticfx"),
   start:$("startOverlay"), how:$("howOverlay"), pause:$("pauseOverlay"),

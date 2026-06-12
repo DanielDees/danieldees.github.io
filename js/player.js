@@ -48,7 +48,11 @@ export function updatePlayer(dt){
     if(STATE.y<=0){ STATE.y=0; STATE.vy=0; STATE.grounded=true; sfxLand(); }
   }
 
-  let speed = STATE.crouch? 2.2 : STATE.sprinting? 8.0 : 4.6;
+  /* adrenaline: from the moment the breaker surges until the doors close
+     behind you, the body stops negotiating — bottomless sprint, +10% pace.
+     (The fold-capable entity is unoutrunnable on raw legs by then.) */
+  const adren = STATE.level===0 && STATE.powerOn;
+  let speed = STATE.crouch? 2.2 : STATE.sprinting? (adren?9.6:8.0) : 4.6;
   const sin=Math.sin(STATE.yaw),cos=Math.cos(STATE.yaw);
   let vx=(-sin*fwd + cos*str), vz=(-cos*fwd - sin*str);
   const vl=Math.hypot(vx,vz)||1; vx/=vl; vz/=vl;
@@ -69,8 +73,11 @@ export function updatePlayer(dt){
     (Math.abs(solved.x-STATE.pos.x)>1e-4||Math.abs(solved.z-STATE.pos.z)>1e-4);
   STATE.pos.x=solved.x; STATE.pos.z=solved.z;
 
-  /* stamina: airborne sprinting drains at half rate */
-  if(STATE.sprinting&&STATE.moving){
+  /* stamina: airborne sprinting drains at half rate — unless adrenaline
+     holds the bar pinned blue and full */
+  if(adren){
+    STATE.stamina=1;
+  } else if(STATE.sprinting&&STATE.moving){
     const drain = 0.30 * (STATE.grounded? 1 : 0.5);
     STATE.stamina=Math.max(0,STATE.stamina-dt*drain);
   } else {
@@ -78,8 +85,10 @@ export function updatePlayer(dt){
   }
   ui.stam.style.width=(STATE.stamina*100)+"%";
   ui.stamPct.textContent=Math.round(STATE.stamina*100)+"%";
-  ui.stamWrap.classList.toggle("show", STATE.stamina<0.999);
-  ui.stamWrap.classList.toggle("low", STATE.stamina<0.25);
+  ui.stamName.textContent= adren? "ADRENALINE":"STAMINA";
+  ui.stamWrap.classList.toggle("adren", adren);
+  ui.stamWrap.classList.toggle("show", adren || STATE.stamina<0.999);
+  ui.stamWrap.classList.toggle("low", !adren && STATE.stamina<0.25);
 
   /* footsteps + bob, only with feet on the carpet */
   if(STATE.moving&&STATE.grounded){

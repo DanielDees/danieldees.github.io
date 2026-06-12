@@ -110,8 +110,10 @@ export function updateLights(dt,t){
         else if(STATE.libWakeT<L.wakeAt+0.35) v=hash(Math.floor(t*24)+L.seed)>0.4? v:0.05;
       }
       /* the answer to the first stolen disk: brightness drops to a quarter
-         and the colour goes sodium-warm, all at once */
-      if(STATE.libDim){ v*=0.25; warmth=Math.max(warmth,0.85); }
+         and every strip takes its assigned burn — orange at its very best,
+         and a third to a half of the grid driven past orange into deep red
+         (warmth >1 extrapolates the same gradient the shockwave uses) */
+      if(STATE.libDim){ v*=0.25; warmth=Math.max(warmth,L.burnW||0.95); }
       /* the building's lights sometimes shut off temporarily, all of them */
       if(STATE.libBlackout>0) v*=1-0.97*STATE.libBlackout;
     }

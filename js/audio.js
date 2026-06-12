@@ -609,6 +609,30 @@ function pannedNoise(t,dur,type,freq,Q,peak,pan,attack=0.004){
   src.start(t);
   return f;
 }
+/* the entity folds space: a soft fog-poof of band-limited noise under a
+   muted 'vvwmp' — two detuned oscillators diving an octave through a closed
+   lowpass — overlaid as one event */
+export function sfxTeleport(vol=1,pan=0){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  /* the poof */
+  pannedNoise(t,0.34,"bandpass",rand(360,520),1.1,vol*0.30,pan,0.02);
+  pannedNoise(t+0.04,0.5,"lowpass",230,0.8,vol*0.18,pan,0.07);
+  /* the vvwmp */
+  const lp=C.createBiquadFilter(); lp.type="lowpass";
+  lp.frequency.setValueAtTime(420,t);
+  lp.frequency.exponentialRampToValueAtTime(110,t+0.45);
+  const g=C.createGain(); env(g,t,0.05,vol*0.42,0.48);
+  const p=C.createStereoPanner?C.createStereoPanner():null;
+  lp.connect(g);
+  if(p){p.pan.value=pan; g.connect(p); p.connect(AU.sfx);} else g.connect(AU.sfx);
+  [[168,"sine"],[84,"triangle"]].forEach(([f0,type])=>{
+    const o=C.createOscillator(); o.type=type;
+    o.frequency.setValueAtTime(f0*rand(0.97,1.03),t);
+    o.frequency.exponentialRampToValueAtTime(f0*0.27,t+0.42);
+    o.connect(lp); o.start(t); o.stop(t+0.6);
+  });
+}
+
 /* the level's resting state: sound severely muted, a faint low rumble the
    only floor under the silence — plus the librarian's skitter bed, bound to
    its position every frame by spider.js */
@@ -625,7 +649,7 @@ export function startLibraryAmbience(){
     const src=C.createBufferSource(); src.buffer=buf; src.loop=true;
     const lp=C.createBiquadFilter(); lp.type="lowpass"; lp.frequency.value=62; lp.Q.value=0.6;
     const g=C.createGain(); g.gain.setValueAtTime(0.0001,t);
-    g.gain.linearRampToValueAtTime(0.06,t+4);
+    g.gain.linearRampToValueAtTime(0.156,t+4);     // pre-burnout bed +30%
     src.connect(lp); lp.connect(g); g.connect(AU.music); src.start(t);
     lib.rumbleGain=g; lib.rumbleLP=lp; lib.rumbleSrc=src;
   }
@@ -655,9 +679,9 @@ export function escalateLibraryAmbience(){
   if(!AU.ctx||!AU.lib||AU.lib.escalated) return;
   const C=AU.ctx, t=C.currentTime, lib=AU.lib;
   lib.escalated=true;
-  lib.rumbleGain.gain.setTargetAtTime(0.17,t,1.2);
+  lib.rumbleGain.gain.setTargetAtTime(0.34,t,1.2);
   lib.rumbleLP.frequency.setTargetAtTime(86,t,2);
-  [[30.8,"sine",0.060,0.061],[38.9,"sine",0.046,0.083],[47.3,"triangle",0.034,0.057]]
+  [[30.8,"sine",0.120,0.061],[38.9,"sine",0.092,0.083],[47.3,"triangle",0.068,0.057]]
   .forEach(([f,type,v,lf])=>{
     const o=C.createOscillator(); o.type=type; o.frequency.value=f;
     const g=C.createGain(); g.gain.setValueAtTime(0.0001,t);
@@ -677,7 +701,7 @@ export function escalateLibraryAmbience(){
     for(let i=0;i<len;i++) d[i]=Math.random()*2-1;
     const src=C.createBufferSource(); src.buffer=buf;
     const lp=C.createBiquadFilter(); lp.type="lowpass"; lp.frequency.value=rand(90,150);
-    const g=C.createGain(); env(g,tt,dur*0.45,rand(0.05,0.09),dur*0.55);
+    const g=C.createGain(); env(g,tt,dur*0.45,rand(0.10,0.18),dur*0.55);
     src.connect(lp); lp.connect(g); g.connect(AU.music); src.start(tt);
   },11000);
 }
