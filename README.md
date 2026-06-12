@@ -1,6 +1,6 @@
 # NOCLIP — Escape the Backrooms
 
-**Version: v1.1.0**
+**Version: v1.3.0**
 
 A browser-based survival horror game set in Level 0 of the Backrooms, playable at
 [danieldees.github.io](https://danieldees.github.io). Vanilla JS ES modules built
@@ -30,6 +30,53 @@ it is.
 Headphones recommended — audio is positional and the entity is easier to track by ear.
 
 ## Changelog
+
+### v1.3.0 (2026-06-11)
+- **The entity's arrival.** Taking the first bottle of almond water now lights a
+  ~4-second fuse; when it expires the entity wakes and a shockwave of light
+  disruption sweeps outward from its spawn point across the whole map. Each panel
+  the ring crosses slams to deep blood-red, strobes violently for a few seconds,
+  then eases back to normal — so a second "recovery" ring chases the first out
+  from the same origin. A layered, dissonant drone (overlapping detuned voices
+  across four octaves) holds for the full sweep.
+- **Darkness aura.** The entity is wreathed in ten concentric shells of near-black
+  fog that dim the floor, walls, and air around it in true 3D out to ~48m,
+  ramping from a faint far halo to a deep core — ambiguity that smooths the
+  game-asset look without reading as a fog cloud.
+- **Body steam.** Wafting dark vapor hugs the entity's silhouette, blurring its
+  edges like dark steam.
+- **Slime-mold overhaul.** Baseboard mold is now grown per-splotch as a unique
+  branching colony with patchy density, can overhang a wall section and continue
+  onto the neighbouring wall or wrap around corners, and is spaced out across the
+  map (no two colonies in adjacent cells) while appearing more often overall.
+- **Proximity static** is now black/red analogue interference biting into the
+  image (was a white wash), at lower intensity.
+- The entity's light-disruption radius and orange/red hue shift are stronger, its
+  in-sight detection and chase range is ~20% longer, and a pathfinding bug where
+  it could come to rest inside a wall and stop moving entirely is fixed.
+
+### v1.2.0 (2026-06-11)
+- **Much darker.** The ambient lighting floor was cut dramatically — corridors
+  away from any fixture now sit in real murk instead of universal low light.
+- **Living lights.** Each healthy fixture idles at 85–100% brightness with a faint
+  yellow tint on the dimmer ones; the fog is darker and reaches farther, so the
+  entity's silhouette stays readable deep into the distance before it's swallowed.
+- **Grime.** Procedural slime-mold colonies creep along the baseboards (blackish
+  with dark-green hints, growing from wall onto floor); rare water stains and
+  irregular blotches mark the ceilings; ceiling tiles are now the classic drop-tile
+  size.
+- **The entity, heard.** Its breathing, groans, knocking, and proximity bed are
+  positionally panned to its true direction with a wider stereo curve, calm-state
+  audio is louder and more frequent, and its head now twitches in stepped jolts —
+  occasional when alone, near-constant while hunting.
+- **The entity, smarter.** Chase paths are straightened (no more grid zig-zag), it
+  drifts toward the player's side of the map more often than chance, walks right
+  up to a wall before knocking on it, and is recolored near-black with a faint-red
+  mouth and eyes.
+- **Proximity static** overlay intensifies as the entity closes in.
+- The two top-right HUD buttons were consolidated into a single **MENU [ESC]**
+  button, and button wiring is fail-soft (a missing element warns instead of
+  crashing the page).
 
 ### v1.1.0 (2026-06-11)
 - Reduced ceiling fixture density (~30% of slots are now dark, up from 15%),

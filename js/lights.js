@@ -42,6 +42,18 @@ function panelValue(L,t){
 }
 export function updateLights(dt,t){
   const px=STATE.pos.x, pz=STATE.pos.z;
+  /* spawn shockwave: a slow ring expands from the wake point and slams
+     every panel it crosses red-orange for 2.1s. Recovery isn't managed —
+     each panel's effect simply wears off 2.1s after impact, which reads as
+     a natural second ring rolling out behind the first. */
+  const sh=monster.shock;
+  if(sh){
+    sh.t+=dt;
+    const R=sh.t*19.23;                    // faster spread; the wide hold band keeps it a thick ring
+    for(const L of lights)
+      if(!L.shocked && Math.hypot(L.world.x-sh.x,L.world.z-sh.z)<=R){ L.shocked=true; L.shockT=3.5; }
+    if(R>sh.maxR+25) monster.shock=null;   // ring has cleared the far corner
+  }
   for(const L of lights){
     const dl=Math.hypot(L.world.x-px,L.world.z-pz);
     /* the AOE is centered on the ENTITY: panels near IT misbehave,
@@ -49,8 +61,9 @@ export function updateLights(dt,t){
     let near=0;
     if(monster.active){
       const dm=Math.hypot(L.world.x-monster.pos.x,L.world.z-monster.pos.z);
-      near=clamp(1-dm/20,0,1);   // disruption AOE +25% (16 → 20)
+      near=clamp(1-dm/22,0,1);   // disruption AOE +10% again (20 → 22)
     }
+    L.near=near;                 // pool dimming reads this below
     L.timer-=dt;
     if(near>0.2) L.timer-=dt*near*7.7;     // its approach collapses calm periods already in progress
     if(L.mode==="steady"){
@@ -76,11 +89,30 @@ export function updateLights(dt,t){
       L.burstT-=dt;
       if(L.burstT<=0) L.mode="steady";
     }
-    const v=panelValue(L,t);
+    let v=panelValue(L,t);
     /* warmth 0→1 drags the tube color toward end-of-life orange. Dying
        fixtures sit at 1 permanently; healthy ones get pushed there by the
        entity's proximity — an extra tell on top of the flickering */
-    const warmth = L.warm? 1 : clamp(near*1.55,0,1);
+    let warmth = L.warm? 1 : clamp(near*1.7,0,1);   // hue push +10%
+    if(L.shockT>0){
+      /* the wake shockwave passing through: a hard strobe on impact, then
+         held dim and DEEP — dimness drags the hue past orange into red,
+         so full-bright flashes stay at the normal max orange and the held
+         glow sits redder beneath it. The last half second eases back to
+         the panel's normal state: recovery is the effect wearing off. */
+      L.shockT-=dt;
+      /* deep blood-red the whole span (warmth >1 extrapolates the gradient
+         past orange into red); bright like a dim healthy panel (~0.85) but
+         violently unstable — fast hard strobe on impact, then a rapid
+         stepped sputter with frequent hard dropouts */
+      const wS = 1.85;
+      const vS = L.shockT>3.1
+        ? (hash(Math.floor(t*30)+L.seed)>0.5? 0.9:0.02)            // impact strobe
+        : (hash(Math.floor(t*20)+L.seed*1.3)<0.30? 0.05            // dropout
+           : 0.72+hash(Math.floor(t*15)+L.seed)*0.22);            // ~0.85 mean
+      const k = L.shockT<0.5? L.shockT/0.5 : 1;                    // ease back at the end
+      v=lerp(v,vS,k); warmth=lerp(warmth,wS,k);
+    }
     if(Math.abs(v-L.on)>0.04 || Math.abs(warmth-L.warmth)>0.02){
       /* ballast tick fires WITH the visible transition, from the fixture's
          direction, fading with distance — classic fluorescent static */
@@ -129,7 +161,9 @@ export function updateLights(dt,t){
     const dist=Math.sqrt(d2);
     let fade=clamp((LIGHT_BIND_RADIUS-dist)/band,0,1);
     fade=fade*fade*(3-2*fade); // smoothstep
-    const I=base*L.on*fade*(L.warm? 0.5:L.bright);   // dying tubes cast half the light
+    /* dying tubes cast half the light; the entity's aura physically dims
+       fixtures around it so floor & walls darken with it in true 3D */
+    const I=base*L.on*fade*(L.warm? 0.5:L.bright)*(1-(L.near||0)*0.35);
     if(dist<TUBE_SPLIT_D && jobs.length+2<=lightPool.length){
       jobs.push({x:L.world.x, z:L.world.z-0.32, I:I*0.55, L:L});
       jobs.push({x:L.world.x, z:L.world.z+0.32, I:I*0.55, L:L});
@@ -141,9 +175,11 @@ export function updateLights(dt,t){
       const j=jobs[i];
       pl.position.x=j.x; pl.position.z=j.z;
       pl.intensity=j.I;
+      /* warmth >1 (shockwave) extrapolates the gradient into red — clamp so
+         the channels never go negative and subtract light */
       pl.color.setRGB(1,
-        lerp(lerp(0.933,0.875,j.L.dimY),0.55,j.L.warmth),
-        lerp(lerp(0.753,0.55,j.L.dimY),0.20,j.L.warmth));
+        Math.max(0, lerp(lerp(0.933,0.875,j.L.dimY),0.55,j.L.warmth)),
+        Math.max(0, lerp(lerp(0.753,0.55,j.L.dimY),0.20,j.L.warmth)));
     } else pl.intensity=0;
   }
 

@@ -17,7 +17,9 @@ canvas{display:block}
 @keyframes grain{0%{transform:translate(0,0)}25%{transform:translate(-12px,8px)}50%{transform:translate(9px,-10px)}75%{transform:translate(-7px,-6px)}100%{transform:translate(0,0)}}
 #flash{background:#fff;opacity:0}
 /* entity-proximity static: TV-snow noise, driven by distance in monster.js */
-#staticfx{inset:-24px;opacity:0;mix-blend-mode:screen;filter:grayscale(1) contrast(2.6) brightness(0.82);
+/* multiply blend + red-shifted noise: the snow reads as black/red interference
+   chewing into the image rather than a white glow over it */
+#staticfx{inset:-24px;opacity:0;mix-blend-mode:multiply;filter:grayscale(1) contrast(2.4) brightness(1.32) sepia(1) saturate(2.8) hue-rotate(-30deg);
   background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='s'><feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23s)'/></svg>");
   animation:staticjit .14s steps(2) infinite;transition:opacity .18s linear}
 @keyframes staticjit{0%{transform:translate(0,0)}25%{transform:translate(-18px,12px)}50%{transform:translate(14px,-16px)}75%{transform:translate(-10px,-9px)}100%{transform:translate(0,0)}}

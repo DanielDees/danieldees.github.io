@@ -2,7 +2,8 @@
 import { clamp, lerp, angLerp, rand } from "./utils.js";
 import { STATE, monster } from "./state.js";
 import { W, H, CELL, cellToWorld, worldToCell, isWall, losCells, bfsPath, randomOpenCell, farOpenWorldPoint } from "./map.js";
-import { AU, panTo, sfxAlert, sfxStinger, sfxGroan, sfxHeartbeat, sfxKnock } from "./audio.js";
+import { AU, panTo, sfxAlert, sfxStinger, sfxGroan, sfxHeartbeat, sfxKnock, sfxShockwave } from "./audio.js";
+import { makeCanvas } from "./textures.js";
 import { ui, toast } from "./ui.js";
 import { die } from "./lifecycle.js";
 
@@ -39,6 +40,44 @@ export function makeMonster(){
   lL.position.set(-0.13,1.3,0); lR.position.set(0.13,1.3,0);
   g.add(lL); g.add(lR);
   g.userData.legL=lL; g.userData.legR=lR;
+  /* ---- darkness aura & body steam ----
+     aura: nested transparent black shells spanning the light-disruption
+     radius. TRUE 3D — it darkens floor, walls and air around it from any
+     angle (a single billboard read as a flat band clipped by floor and
+     ceiling). Per-shell alphas are tiny; the view ray stacks more shells
+     the closer it passes to the body, giving an exponential-feeling ramp
+     that tops out ≈20% through the centre. Black-on-black compositing is
+     order-independent, so the shells need no manual sorting. */
+  const auraMat=op=>new THREE.MeshBasicMaterial({color:0x000000, transparent:true,
+    opacity:op, side:THREE.DoubleSide, depthWrite:false});
+  /* 10 shells (was 5) for a smoother ramp — per-shell opacity roughly halved
+     so the cumulative darkening through the centre stays put, then tuned up
+     ~10% (deepest core) and out ~10% in radius, same gradient shape */
+  g.userData.aura=[[48.05,0.01241],[42.71,0.01385],[37.37,0.01530],[32.43,0.01697],
+    [27.62,0.01871],[23.09,0.02075],[18.82,0.02306],[14.79,0.02524],[11.48,0.02698],[8.17,0.02872]]
+    .map(([r,op])=>{
+      const s=new THREE.Mesh(new THREE.SphereGeometry(r/1.12,18,12), auraMat(op));
+      s.position.y=1.7; g.add(s); return s;
+    });
+  const smokeTex=()=>makeCanvas(128,128,(c,w,h)=>{
+    c.clearRect(0,0,w,h);
+    for(let i=0;i<60;i++){
+      const a=Math.random()*Math.PI*2, rr=Math.pow(Math.random(),0.7)*w*0.36;
+      const x=w/2+Math.cos(a)*rr, y=h/2+Math.sin(a)*rr;
+      const r=8+Math.random()*18;
+      const al=(0.16+0.42*(1-rr/(w*0.4)))*(0.7+Math.random()*0.5);
+      const gr=c.createRadialGradient(x,y,0.4,x,y,r);
+      gr.addColorStop(0,`rgba(4,3,5,${al})`);gr.addColorStop(1,"rgba(4,3,5,0)");
+      c.fillStyle=gr;c.beginPath();c.arc(x,y,r,0,7);c.fill();
+    }
+  });
+  const mkSmoke=(sx,sy,op)=>{
+    const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:smokeTex(),
+      transparent:true, opacity:op, depthWrite:false}));
+    sp.scale.set(sx,sy,1); sp.position.y=1.7; g.add(sp); return sp;
+  };
+  g.userData.smokeA=mkSmoke(1.9,4.1,0.85);
+  g.userData.smokeB=mkSmoke(2.5,4.6,0.55);
   g.scale.setScalar(1.12);
   g.visible=false;
   return g;
@@ -50,14 +89,20 @@ export function wakeMonster(){
   const p=farOpenWorldPoint(STATE.pos.x,STATE.pos.z,40);
   monster.pos.set(p.x,0,p.z);
   monster.groanT=2.5;
-  toast("…Something, far off, has shifted. It knows things are being moved.",4200);
+  /* announce it: a slow two-phase ring of light-disruption rolls out from
+     the spawn point (swept in lights.js) under a layered sinister drone
+     held until the farthest panel has recovered */
+  const SZ2=W*CELL/2;
+  const mdx=Math.max(p.x+SZ2, SZ2-p.x), mdz=Math.max(p.z+SZ2, SZ2-p.z);
+  monster.shock={t:0, x:p.x, z:p.z, maxR:Math.hypot(mdx,mdz)};
+  sfxShockwave(monster.shock.maxR/19.23 + 3.5);   // the lights + drone say it all — no toast
 }
 export function monsterCanSee(){
   const d=monster.pos.distanceTo(STATE.pos);
-  let range = STATE.crouch? 9 : 16;
-  if(STATE.sprinting&&STATE.moving) range=22;
+  let range = STATE.crouch? 11 : 19;          // +20% sight
+  if(STATE.sprinting&&STATE.moving) range=26;
   if(d>range) return false;
-  if(STATE.crouch && d>6 && !STATE.moving) return false;
+  if(STATE.crouch && d>7 && !STATE.moving) return false;
   return losCells(monster.pos.x,monster.pos.z,STATE.pos.x,STATE.pos.z);
 }
 function monsterHears(){
@@ -98,7 +143,20 @@ function smoothPath(path){
   return out;
 }
 function setPathTo(wx,wz){
-  const a=worldToCell(monster.pos.x,monster.pos.z), b=worldToCell(wx,wz);
+  let a=worldToCell(monster.pos.x,monster.pos.z);
+  /* recovery: if it somehow ended up inside a wall cell, BFS can never
+     start and it stands inert forever — snap to the nearest open cell */
+  if(isWall(a.cx,a.cy)){
+    for(const[ox,oy]of[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]){
+      if(!isWall(a.cx+ox,a.cy+oy)){
+        const q=cellToWorld(a.cx+ox,a.cy+oy);
+        monster.pos.x=q.x; monster.pos.z=q.z;
+        a=worldToCell(q.x,q.z);
+        break;
+      }
+    }
+  }
+  const b=worldToCell(wx,wz);
   const p=bfsPath(a.cx,a.cy,clamp(b.cx,0,W-1),clamp(b.cy,0,H-1));
   monster.path = p? p.map(c=>cellToWorld(c.cx,c.cy)) : [];
   if(monster.path.length>1) monster.path.shift();
@@ -124,6 +182,11 @@ function startAlert(){
 const hash=n=>{const s=Math.sin(n)*43758.5453;return s-Math.floor(s);};
 const SPEED_TARGETS={wander:2.0, investigate:3.4, alert:0, chase:6.4, hunt:3.4};
 export function updateMonster(dt){
+  /* delayed first wake: the almond-water grab lights a short fuse */
+  if(!monster.active && monster.wakeT>0 && !STATE.dead && !STATE.won){
+    monster.wakeT-=dt;
+    if(monster.wakeT<=0) wakeMonster();
+  }
   if(!monster.active||STATE.dead||STATE.won) return;
   const m=monster;
   const dx=STATE.pos.x-m.pos.x, dz=STATE.pos.z-m.pos.z;
@@ -213,7 +276,12 @@ export function updateMonster(dt){
       else { m.pos.x+=wx/wl*m.curSpeed*dt; m.pos.z+=wz/wl*m.curSpeed*dt; m.faceAng=Math.atan2(wx,wz); }
     } else if(m.state==="chase"){
       const dl=d||1;
-      m.pos.x+=dx/dl*m.curSpeed*dt; m.pos.z+=dz/dl*m.curSpeed*dt; m.faceAng=Math.atan2(dx,dz);
+      /* never beeline into a wall cell — ending up inside one used to brick
+         every later BFS start (the "spawned but never pathing" bug) */
+      const nx=m.pos.x+dx/dl*m.curSpeed*dt, nz=m.pos.z+dz/dl*m.curSpeed*dt;
+      const cc=worldToCell(nx,nz);
+      if(!isWall(cc.cx,cc.cy)){ m.pos.x=nx; m.pos.z=nz; }
+      m.faceAng=Math.atan2(dx,dz);
     }
   }
   const movedSpeed=Math.hypot(m.pos.x-prevX,m.pos.z-prevZ)/Math.max(dt,1e-5);
@@ -247,6 +315,16 @@ export function updateMonster(dt){
       m.twitchDur = agitated? rand(0.5,1.3) : rand(0.25,0.7);
       m.twitchSeed = Math.floor(Math.random()*1e4);
     }
+  }
+  /* body steam: slow counter-swaying, breathing dark vapour at its edges */
+  if(u.smokeA){
+    u.smokeA.material.rotation = Math.sin(tNow*0.31)*0.12;
+    u.smokeB.material.rotation = Math.cos(tNow*0.23)*-0.10;
+    const pa=1+Math.sin(tNow*0.7)*0.05, pb=1+Math.sin(tNow*0.53+2)*0.05;
+    u.smokeA.scale.set(1.9*pa, 4.1/pa, 1);
+    u.smokeB.scale.set(2.5/pb, 4.6*pb, 1);
+    u.smokeA.material.opacity=0.85+Math.sin(tNow*0.9)*0.08;
+    u.smokeB.material.opacity=0.55+Math.sin(tNow*0.77+1.3)*0.06;
   }
   m.mesh.position.set(m.pos.x, Math.abs(Math.sin(m.anim))*0.06*sp01, m.pos.z);
   const turnRate = m.state==="alert"? 0.16 : 0.1;   // deliberate, unsettling turn
@@ -309,7 +387,7 @@ export function updateMonster(dt){
   ui.dread.style.opacity = m.state==="chase"? (0.35+prox*0.6) : prox*0.55;
   /* analogue static climbs as it closes in — strongest when it could touch you */
   ui.staticfx.style.opacity = prox<=0? 0
-    : Math.pow(prox,1.6)*0.5 + (d<2.6? (1-d/2.6)*0.32 : 0);
+    : Math.pow(prox,1.6)*0.4 + (d<2.6? (1-d/2.6)*0.26 : 0);
   AU.heartTimer-=dt;
   if(prox>0.25 && AU.heartTimer<=0){ sfxHeartbeat(); AU.heartTimer = lerp(1.4,0.45,prox); }
 }

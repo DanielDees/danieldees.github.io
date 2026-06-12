@@ -4,7 +4,6 @@ import { scene } from "./scene.js";
 import { interactables, exitDoor } from "./props.js";
 import { sfxPickup, sfxClunk, sfxPowerOn } from "./audio.js";
 import { ui, toast, renderObjectives } from "./ui.js";
-import { wakeMonster } from "./monster.js";
 import { win } from "./lifecycle.js";
 
 let focusedItem=null;
@@ -14,7 +13,9 @@ export function tryInteract(){
   if(it.kind==="bottle"){
     it.taken=true; scene.remove(it.mesh); sfxPickup();
     STATE.bottles++;
-    if(STATE.bottles===1 && !monster.active) wakeMonster();
+    /* the first bottle lights a ~4s fuse instead of waking it instantly —
+       updateMonster runs the countdown and fires wakeMonster */
+    if(STATE.bottles===1 && !monster.active && monster.wakeT<=0) monster.wakeT=4;
     if(STATE.bottles>=3 && STATE.objective===0){
       STATE.objective=1; toast("Hydrated. Now find a fuse for the breaker.");
     } else toast(`Almond water ${STATE.bottles}/3.`);

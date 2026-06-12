@@ -2,7 +2,7 @@
 import { rand, clamp } from "./utils.js";
 import { W, H, CELL, WALL_H, grid, genMap, cellToWorld, isWall } from "./map.js";
 import { makeCanvas, texWall, texCarpet, texStains, texCeil, texCeilStains,
-         makeMoldTextures } from "./textures.js";
+         makeMoldTextures, sliceTexture } from "./textures.js";
 import { $ } from "./utils.js";
 
 export const FOG_COLOR = 0x050402;       // ~98% black, a whisper of yellow: full darkness, never backlit
@@ -90,39 +90,108 @@ export function buildLevel(){
       specular:0x000000, shininess:1}));
   ceilStains.rotation.x=Math.PI/2; ceilStains.position.y=WALL_H-0.012; scene.add(ceilStains);
 
-  /* ---- slime-mold at the baseboards: decals on random wall faces, each a
-     UNIQUE procedurally grown colony rendered onto a paired wall+floor
-     texture so the growth wraps the seam. Width 20–80% of a wall section
-     (averaging ~50%); height FOLLOWS width at a 3.3–5.5:1 ratio (clamped to
-     4–18% of the wall) so colonies read low and wide, never square. */
+  /* ---- slime-mold at the baseboards ----
+     Each colony is a UNIQUE procedural growth on a paired wall+floor
+     texture (width 20–80% of a wall section, height locked to 3.3–5.5:1).
+     Placement is a global lottery: shuffled candidate faces are taken until
+     the quota is met, skipping any face whose 3×3 cell neighbourhood
+     already hosts a colony — spreads mold across the map instead of
+     clustering while raising the total count (a skipped face simply
+     re-rolls to the next shuffled candidate).
+     A colony may sit anywhere along its section, INCLUDING overhanging an
+     edge: it then continues onto the co-planar neighbour wall, or wraps
+     around a convex/concave corner — the texture is sliced at the fold so
+     it reads as one organism bending around the geometry. */
   const moldMat=t=>new THREE.MeshPhongMaterial({map:t,
     transparent:true, depthWrite:false, specular:0x000000, shininess:1});
+  const E=CELL/2;
+  const moldFaces=[];
   for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
     if(grid[y][x]!==0) continue;
-    for(const[dx,dz]of[[1,0],[-1,0],[0,1],[0,-1]]){
-      if(!isWall(x+dx,y+dz)||Math.random()>=0.30) continue;
-      const p=cellToWorld(x,y);
-      const wid=CELL*rand(0.20,0.80);
-      const hgt=clamp(wid*rand(0.18,0.30), WALL_H*0.04, WALL_H*0.18);
-      const dep=WALL_H*rand(0.025,0.06);
-      const tex=makeMoldTextures(wid,hgt,dep);
-      const off=rand(-1,1)*(CELL/2-wid/2-0.15);
-      const inset=CELL/2-0.02;
-      const wallM=new THREE.Mesh(new THREE.PlaneGeometry(wid,hgt), moldMat(tex.wall));
-      if(dx){ wallM.position.set(p.x+dx*inset, hgt/2, p.z+off); wallM.rotation.y=dx>0? -Math.PI/2: Math.PI/2; }
-      else  { wallM.position.set(p.x+off, hgt/2, p.z+dz*inset); wallM.rotation.y=dz>0? Math.PI: 0; }
-      scene.add(wallM);
-      /* the same colony's spill, flush against the wall base */
-      const f=new THREE.Mesh(new THREE.PlaneGeometry(wid,dep), moldMat(tex.floor));
-      /* Euler XYZ applies Z first: spin the decal so its dense edge meets
-         the wall, then X lays it flat on the carpet */
-      f.rotation.x=-Math.PI/2;
-      f.rotation.z = dx>0? -Math.PI/2 : dx<0? Math.PI/2 : dz>0? Math.PI : 0;
-      const fInset=CELL/2-dep/2-0.025;
-      if(dx) f.position.set(p.x+dx*fInset, 0.022, p.z+off);
-      else   f.position.set(p.x+off, 0.022, p.z+dz*fInset);
-      scene.add(f);
+    for(const[dx,dz]of[[1,0],[-1,0],[0,1],[0,-1]])
+      if(isWall(x+dx,y+dz)) moldFaces.push({x,y,dx,dz});
+  }
+  for(let i=moldFaces.length-1;i>0;i--){
+    const j=(Math.random()*(i+1))|0; [moldFaces[i],moldFaces[j]]=[moldFaces[j],moldFaces[i]];
+  }
+  const moldCells=new Set(), mKey=(cx,cy)=>cy*W+cx;
+  let quota=Math.round(moldFaces.length*0.5);
+  for(const fc of moldFaces){
+    if(quota<=0) break;
+    let near=false;
+    for(let by=-1;by<=1&&!near;by++)for(let bx=-1;bx<=1&&!near;bx++)
+      if(moldCells.has(mKey(fc.x+bx,fc.y+by))) near=true;
+    if(near) continue;
+    const {x,y,dx,dz}=fc;
+    const p=cellToWorld(x,y);
+    const wid=CELL*rand(0.20,0.80);
+    const hgt=clamp(wid*rand(0.18,0.30), WALL_H*0.04, WALL_H*0.18);
+    const dep=WALL_H*rand(0.025,0.06);
+    /* anywhere along the section — overhang past the edge becomes the
+       continued/wrapped part */
+    let off=rand(-1,1)*(E-0.3);
+    const s=off>=0?1:-1;                                  // side it may overhang
+    let o=s*off+wid/2-E;                                  // overhang length
+    const lcx=dx?0:s, lcy=dx?s:0;                         // lateral cell step
+    let mode="none";
+    if(o>0.12){
+      o=Math.min(o,CELL*0.45);
+      if(isWall(x+lcx,y+lcy)) mode="concave";             // wall turns INTO the room
+      else if(isWall(x+dx+lcx,y+dz+lcy)) mode="coplanar"; // wall plane keeps going
+      else mode="convex";                                 // wall ends — wrap its side
+    } else { off-=s*Math.max(0,o); o=0; }                 // tuck fully inside
+    const tex=makeMoldTextures(wid,hgt,dep);
+    const ry = dx? (dx>0?-Math.PI/2:Math.PI/2) : (dz>0?Math.PI:0);
+    const fzMain = dx>0?-Math.PI/2 : dx<0?Math.PI/2 : dz>0?Math.PI : 0;
+    const addWall=(t,wd,wx,wz,rot)=>{
+      const mm=new THREE.Mesh(new THREE.PlaneGeometry(wd,hgt),moldMat(t));
+      mm.position.set(wx,hgt/2,wz); mm.rotation.y=rot; scene.add(mm);
+    };
+    const addFloor=(t,wd,wx,wz,rot)=>{
+      const ff=new THREE.Mesh(new THREE.PlaneGeometry(wd,dep),moldMat(t));
+      /* Euler XYZ applies Z first: spin so the dense edge meets its wall,
+         then X lays it flat on the carpet */
+      ff.rotation.x=-Math.PI/2; ff.rotation.z=rot;
+      ff.position.set(wx,0.022,wz); scene.add(ff);
+    };
+    /* main segment, clipped at the fold when wrapping */
+    const wrap = mode==="convex"||mode==="concave";
+    const w1 = wrap? wid-o : wid;
+    const t1 = wrap? s*(E-w1/2) : off;
+    /* which texture-u end the overhang lives on: u runs +z,−z,−x,+x for the
+       four face directions (plane local +x after its Y-rotation) */
+    const overAtU1 = (dx? dx*s : -dz*s) > 0;
+    const q=o/wid;
+    const wallT = wrap? sliceTexture(tex.wall,  overAtU1?0:q, overAtU1?1-q:1) : tex.wall;
+    const floorT= wrap? sliceTexture(tex.floor, overAtU1?0:q, overAtU1?1-q:1) : tex.floor;
+    if(dx){ addWall(wallT,w1, p.x+dx*(E-0.02), p.z+t1, ry);
+            addFloor(floorT,w1, p.x+dx*(E-dep/2-0.025), p.z+t1, fzMain); }
+    else  { addWall(wallT,w1, p.x+t1, p.z+dz*(E-0.02), ry);
+            addFloor(floorT,w1, p.x+t1, p.z+dz*(E-dep/2-0.025), fzMain); }
+    if(wrap){
+      /* the wrapped remainder on the perpendicular face */
+      const Sx=dx?0:s, Sz=dx?s:0;                         // lateral world axis
+      const conv = mode==="convex";
+      const Nx=conv?Sx:-Sx, Nz=conv?Sz:-Sz;               // wrap plane normal
+      const Cx=conv?dx:-dx, Cz=conv?dz:-dz;               // direction away from the fold
+      const ryW = Nx>0? Math.PI/2 : Nx<0? -Math.PI/2 : Nz>0? 0 : Math.PI;
+      const fzW = -Nx>0? -Math.PI/2 : -Nx<0? Math.PI/2 : -Nz>0? Math.PI : 0;
+      /* u-axis of the wrap plane in world; mirror the strip if it runs back
+         toward the fold so the cut edges stay glued together */
+      const Ux=Nz, Uz=-Nx;
+      const flip = overAtU1? (Ux*Cx+Uz*Cz)<0 : (Ux*Cx+Uz*Cz)>0;
+      const wallW = sliceTexture(tex.wall,  overAtU1?1-q:0, overAtU1?1:q, flip);
+      const floorW= sliceTexture(tex.floor, overAtU1?1-q:0, overAtU1?1:q, flip);
+      const dA = conv? E+o/2 : E-o/2;                     // distance along the face direction
+      const sWall = conv? E+0.02 : E-0.02;                // wrap plane offsets on the lateral axis
+      const sFloor= conv? E+dep/2+0.012 : E-dep/2-0.012;
+      addWall(wallW,o, p.x+dx*dA+Sx*sWall, p.z+dz*dA+Sz*sWall, ryW);
+      addFloor(floorW,o, p.x+dx*dA+Sx*sFloor, p.z+dz*dA+Sz*sFloor, fzW);
+      if(conv) moldCells.add(mKey(x+dx+lcx,y+dz+lcy));    // the wrap lives in that open cell
     }
+    if(mode==="coplanar") moldCells.add(mKey(x+lcx,y+lcy));
+    moldCells.add(mKey(x,y));
+    quota--;
   }
 
   /* fluorescent fixtures: a shallow housing with an OPEN bottom face —
@@ -234,7 +303,8 @@ export function buildLevel(){
         warm:warm, warmth:warm?1:0, bright:bright, dimY:warm?0:(1-bright)/0.15,
         phase:Math.random()*100, on:1,
         mode:"steady", timer:rand(1,12), pattern:0, rate:20,
-        burstDur:0, burstT:0, descT:2, riseT:0.5, seed:Math.random()*1000, lastTick:0});
+        burstDur:0, burstT:0, descT:2, riseT:0.5, seed:Math.random()*1000, lastTick:0,
+        near:0, shocked:false, shockT:0});
     }
   }
 }
