@@ -389,11 +389,7 @@ export const texDeskWood  = woodTex("#5a452c","36,24,12","122,96,58");
    with three UV regions — the spine strip, the front-cover plate, and a
    plain patch for back cover, board edges and endpapers. Titles are real,
    legible, and very much of this place. */
-export const BOOK_COVER_UV={
-  spine:[0.0,52/256],
-  front:[56/256,192/256],
-  plain:[200/256,250/256],
-};
+/* (regions are computed per design — see makeBookCoverTexture) */
 export const BOOK_TITLES=[
   ["HOW TO LEAVE","ANON"],
   ["ROOMS WITHOUT DOORS","E. VOSS"],
@@ -430,95 +426,117 @@ function fitText(g,txt,x,y,maxW,size,minSize,font){
   g.font=`${font[0]} ${minSize}px ${font[1]}`;
   g.fillText(txt,x,y); return minSize;
 }
-export function makeBookCoverTexture(title,author,base,motif,vol){
-  const t=makeCanvas(256,256,(g,w,h)=>{
+/* The canvas is laid out PER DESIGN at a uniform pixels-per-meter, so the
+   spine strip matches the spine's real arc width and the front plate
+   matches the board's real aspect — text maps 1:1 with no stretching.
+   Returns {tex, uv} with the design's own region windows. */
+export function makeBookCoverTexture(title,author,base,motif,vol,bh,btx,bd){
+  const H=384, ppm=H/bh;
+  const spineW=Math.max(30,Math.round(btx*1.3*ppm));   // ≈ the arc's unrolled width
+  const frontW=Math.round(bd*ppm), plainW=40, gd=8;
+  const W=spineW+gd+frontW+gd+plainW;
+  const t=makeCanvas(W,H,(g,w,h)=>{
     const [br,bg,bb]=base;
     g.fillStyle=`rgb(${br},${bg},${bb})`;g.fillRect(0,0,w,h);
-    for(let i=0;i<900;i++){                       // cloth weave / leather grain
+    for(let i=0;i<w*h/180;i++){                   // cloth weave / leather grain
       const v=Math.random()<0.5?-18:14;
       g.fillStyle=`rgba(${br+v},${bg+v},${bb+v},${0.05+Math.random()*0.10})`;
-      g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*3,1+Math.random()*4);
+      g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*4,2+Math.random()*6);
     }
     const gilt="rgba(206,172,96,0.92)", giltDim="rgba(206,172,96,0.55)";
     const shadow="rgba(0,0,0,0.4)";
     const serif=["bold","Georgia, 'Times New Roman', serif"];
-    /* ---- spine strip (x 0..52) ---- */
-    g.save();g.beginPath();g.rect(0,0,52,h);g.clip();
-    g.fillStyle="rgba(0,0,0,0.18)";g.fillRect(0,0,52,h);         // spine sits darker
-    /* raised bands: highlight over shadow */
-    for(const by of[16,34,h-34,h-16]){
-      g.fillStyle="rgba(0,0,0,0.35)";g.fillRect(4,by+2,44,2);
-      g.fillStyle=giltDim;g.fillRect(4,by,44,2);
+    /* ---- spine strip (x 0..spineW) ---- */
+    g.save();g.beginPath();g.rect(0,0,spineW,h);g.clip();
+    g.fillStyle="rgba(0,0,0,0.18)";g.fillRect(0,0,spineW,h);     // spine sits darker
+    for(const by of[24,50,h-50,h-24]){                           // raised bands
+      g.fillStyle="rgba(0,0,0,0.35)";g.fillRect(5,by+3,spineW-10,3);
+      g.fillStyle=giltDim;g.fillRect(5,by,spineW-10,3);
     }
-    /* title reading top-to-bottom */
     g.fillStyle=gilt;g.textAlign="center";g.textBaseline="middle";
-    g.save();g.translate(27,h/2);g.rotate(Math.PI/2);
+    g.save();g.translate(spineW*0.52,h/2);g.rotate(Math.PI/2);
     g.shadowColor=shadow;g.shadowOffsetX=1;g.shadowOffsetY=1;g.shadowBlur=0;
-    fitText(g,title,0,1,h-110,22,11,serif);
+    fitText(g,title,0,1,h-160,Math.min(32,Math.round(spineW*0.5)),14,serif);
     g.restore();
-    if(vol){ g.font="bold 13px Georgia";g.fillStyle=giltDim;g.fillText(vol,26,h-44); }
+    if(vol){
+      g.font=`bold ${Math.min(20,Math.round(spineW*0.34))}px Georgia`;
+      g.fillStyle=giltDim;g.fillText(vol,spineW/2,h-66);
+    }
     g.restore();
-    /* ---- front cover plate (x 56..192) ---- */
-    const fx=56,fw=136;
+    /* ---- front cover plate ---- */
+    const fx=spineW+gd,fw=frontW;
     g.save();g.beginPath();g.rect(fx,0,fw,h);g.clip();
-    g.strokeStyle=giltDim;g.lineWidth=2;
-    g.strokeRect(fx+8,10,fw-16,h-20);
-    g.strokeStyle="rgba(206,172,96,0.3)";g.lineWidth=1;
-    g.strokeRect(fx+13,15,fw-26,h-30);
+    g.strokeStyle=giltDim;g.lineWidth=3;
+    g.strokeRect(fx+12,15,fw-24,h-30);
+    g.strokeStyle="rgba(206,172,96,0.3)";g.lineWidth=1.5;
+    g.strokeRect(fx+19,22,fw-38,h-44);
     g.fillStyle=gilt;g.textAlign="center";g.textBaseline="alphabetic";
     g.shadowColor=shadow;g.shadowOffsetX=1;g.shadowOffsetY=1;
     /* wrap the title into the plate */
-    g.font="bold 19px Georgia";
+    const tSize=Math.min(30,Math.round(fw*0.15));
+    g.font=`bold ${tSize}px Georgia`;
     const words=title.split(" "),lines=[];let ln="";
     for(const wd of words){
       const tl=ln? ln+" "+wd:wd;
-      if(g.measureText(tl).width>fw-40&&ln){lines.push(ln);ln=wd;}else ln=tl;
+      if(g.measureText(tl).width>fw-56&&ln){lines.push(ln);ln=wd;}else ln=tl;
     }
     if(ln)lines.push(ln);
-    let ty=46;
-    for(const l of lines){ fitText(g,l,fx+fw/2,ty,fw-36,19,12,serif); ty+=24; }
-    if(vol){ g.font="bold 13px Georgia";g.fillText(vol,fx+fw/2,ty+2); ty+=18; }
-    g.strokeStyle=giltDim;g.lineWidth=1.5;
-    g.beginPath();g.moveTo(fx+34,ty+2);g.lineTo(fx+fw-34,ty+2);g.stroke();
-    /* central gilt motif */
-    const mx=fx+fw/2,my=h*0.62;
-    g.strokeStyle=gilt;g.lineWidth=2;g.shadowColor="rgba(0,0,0,0)";
+    let ty=66;
+    for(const l of lines){ fitText(g,l,fx+fw/2,ty,fw-52,tSize,15,serif); ty+=tSize+10; }
+    if(vol){ g.font="bold 18px Georgia";g.fillText(vol,fx+fw/2,ty+4); ty+=24; }
+    g.strokeStyle=giltDim;g.lineWidth=2;
+    g.beginPath();g.moveTo(fx+fw*0.25,ty+4);g.lineTo(fx+fw*0.75,ty+4);g.stroke();
+    /* central gilt motif, scaled to the plate */
+    const mx=fx+fw/2,my=h*0.62,ms=fw/180;
+    g.strokeStyle=gilt;g.lineWidth=2.5;g.shadowColor="rgba(0,0,0,0)";
+    g.save();g.translate(mx,my);g.scale(ms,ms);
     if(motif===0){            // an eye
-      g.beginPath();g.ellipse(mx,my,24,13,0,0,7);g.stroke();
-      g.beginPath();g.arc(mx,my,6,0,7);g.stroke();
+      g.beginPath();g.ellipse(0,0,32,17,0,0,7);g.stroke();
+      g.beginPath();g.arc(0,0,8,0,7);g.stroke();
     } else if(motif===1){     // a door, ajar
-      g.strokeRect(mx-14,my-22,28,44);
-      g.beginPath();g.moveTo(mx-14,my-22);g.lineTo(mx+4,my-16);g.lineTo(mx+4,my+28);g.lineTo(mx-14,my+22);g.closePath();g.stroke();
+      g.strokeRect(-19,-29,38,58);
+      g.beginPath();g.moveTo(-19,-29);g.lineTo(5,-21);g.lineTo(5,37);g.lineTo(-19,29);g.closePath();g.stroke();
     } else if(motif===2){     // a spiral
       g.beginPath();
-      for(let a=0;a<Math.PI*5;a+=0.25) g.lineTo(mx+Math.cos(a)*a*1.6,my+Math.sin(a)*a*1.6);
+      for(let a=0;a<Math.PI*5;a+=0.25) g.lineTo(Math.cos(a)*a*2.1,Math.sin(a)*a*2.1);
       g.stroke();
     } else if(motif===3){     // an hourglass
-      g.beginPath();g.moveTo(mx-16,my-20);g.lineTo(mx+16,my-20);g.lineTo(mx-16,my+20);g.lineTo(mx+16,my+20);g.closePath();g.stroke();
+      g.beginPath();g.moveTo(-21,-26);g.lineTo(21,-26);g.lineTo(-21,26);g.lineTo(21,26);g.closePath();g.stroke();
     } else if(motif===4){     // a key
-      g.beginPath();g.arc(mx-10,my,9,0,7);g.stroke();
-      g.beginPath();g.moveTo(mx-1,my);g.lineTo(mx+20,my);g.moveTo(mx+13,my);g.lineTo(mx+13,my+8);g.moveTo(mx+19,my);g.lineTo(mx+19,my+8);g.stroke();
+      g.beginPath();g.arc(-13,0,12,0,7);g.stroke();
+      g.beginPath();g.moveTo(-1,0);g.lineTo(26,0);g.moveTo(17,0);g.lineTo(17,10);g.moveTo(25,0);g.lineTo(25,10);g.stroke();
     } else {                  // a stair descending
-      g.beginPath();let sx=mx-20,sy=my-16;
-      for(let i=0;i<4;i++){g.lineTo(sx,sy);sx+=10;g.lineTo(sx,sy);sy+=9;}
+      g.beginPath();let sx=-26,sy=-21;
+      for(let i=0;i<4;i++){g.lineTo(sx,sy);sx+=13;g.lineTo(sx,sy);sy+=12;}
       g.lineTo(sx,sy);g.stroke();
     }
+    g.restore();
     g.shadowColor=shadow;
-    g.font="bold 12px Georgia";g.fillStyle=giltDim;
-    fitText(g,author,mx,h-22,fw-40,12,9,serif);
+    const aSize=Math.min(17,Math.round(fw*0.1));
+    g.font=`bold ${aSize}px Georgia`;g.fillStyle=giltDim;
+    fitText(g,author,mx,h-32,fw-56,aSize,11,serif);
     g.restore();
     /* corner & edge wear over everything */
     g.shadowColor="rgba(0,0,0,0)";
-    for(let i=0;i<70;i++){
+    for(let i=0;i<90;i++){
       g.fillStyle=`rgba(${br+30},${bg+30},${bb+26},${0.08+Math.random()*0.14})`;
-      const ex=Math.random()<0.5? Math.random()*22 : w-Math.random()*22;
-      g.fillRect(ex,Math.random()*h,1+Math.random()*3,1+Math.random()*6);
+      const ex=Math.random()<0.5? Math.random()*30 : w-Math.random()*30;
+      g.fillRect(ex,Math.random()*h,1+Math.random()*4,2+Math.random()*8);
     }
-    const vg=g.createRadialGradient(w/2,h/2,h*0.35,w/2,h/2,h*0.75);
+    const vg=g.createRadialGradient(w/2,h/2,h*0.35,w/2,h/2,h*0.78);
     vg.addColorStop(0,"rgba(0,0,0,0)");vg.addColorStop(1,"rgba(0,0,0,0.22)");
     g.fillStyle=vg;g.fillRect(0,0,w,h);
   });
-  return t;
+  /* non-power-of-two by design: clamp + mipmap-free filtering keeps WebGL1
+     from resampling (and blurring) the text */
+  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping;
+  t.minFilter=THREE.LinearFilter;
+  t.generateMipmaps=false;
+  return {tex:t, uv:{
+    spine:[0,spineW/W],
+    front:[(spineW+gd)/W,(spineW+gd+frontW)/W],
+    plain:[(W-plainW+4)/W,(W-4)/W],
+  }};
 }
 /* page-block edges: fine layered striations. The leaves laminate through
    the book's THICKNESS, which maps to u on the exposed faces — so the
@@ -545,7 +563,7 @@ export const texPagesAged = makeCanvas(64,64,(g,w,h)=>{
 });
 /* an open spread: two columns of unreadable lines under one legible epigraph */
 export function makeOpenPagesTexture(){
-  return makeCanvas(256,160,(g,w,h)=>{
+  const t=makeCanvas(256,160,(g,w,h)=>{
     g.fillStyle="#d4c9a8";g.fillRect(0,0,w,h);
     for(let i=0;i<500;i++){
       g.fillStyle=`rgba(120,104,72,${Math.random()*0.1})`;
@@ -571,6 +589,11 @@ export function makeOpenPagesTexture(){
       g.save();g.translate(w-10,h*0.55);g.rotate(-0.16);g.fillText("why",0,0);g.restore();
     }
   });
+  /* non-POT: keep WebGL1 from resampling it blurry */
+  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping;
+  t.minFilter=THREE.LinearFilter;
+  t.generateMipmaps=false;
+  return t;
 }
 /* temporal decay: a jagged dark crack wandering down a wall, with branches.
    Alpha decal — each call grows a unique one. */

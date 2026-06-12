@@ -19,7 +19,7 @@ import { STATE } from "./state.js";
 import { scene, lights, hemi, amb, makeLightRecord } from "./scene.js";
 import { makeCanvas, texLibWall, texLibCarpet, texLibCeil, texShelfWood, texDeskWood,
          makeCrackTexture, makeEndTextTexture, makePosterTexture, makeArtTexture,
-         makeBookCoverTexture, BOOK_COVER_UV, BOOK_TITLES, BOOK_BASES,
+         makeBookCoverTexture, BOOK_TITLES, BOOK_BASES,
          texPages, texPagesAged, makeOpenPagesTexture, scaleBoxUV } from "./textures.js";
 import { makeElevator, ELEV, addInteractable } from "./props.js";
 import { sfxLightsOut, escalateLibraryAmbience, sfxComputerBoot, sfxComputerStatic } from "./audio.js";
@@ -345,10 +345,11 @@ let OPEN_BOOK=null;             // prototype group, cloned per placement
 let pageMats=null;
 function buildBookDesign(title,author,vol){
   const base=BOOK_BASES[Math.floor(Math.random()*BOOK_BASES.length)];
-  const h=0.20+Math.random()*0.10;        // page length (standing height)
-  const tx=0.025+Math.random()*0.04;      // thickness
-  const d=0.14+Math.random()*0.05;        // cover width (depth on the shelf)
-  const UV=BOOK_COVER_UV;
+  const h=(0.20+Math.random()*0.10)*1.1;  // page length (standing height)
+  const tx=(0.025+Math.random()*0.04)*1.1;// thickness
+  const d=(0.14+Math.random()*0.05)*1.1;  // cover width (depth on the shelf)
+  const {tex,uv:UV}=makeBookCoverTexture(title,author,base,
+    Math.floor(Math.random()*6),vol,h,tx,d);
   const cover=new GeoAcc(), pages=new GeoAcc();
   const plainAll=geo=>{for(let f=0;f<6;f++)
     setFaceUV(geo,f,UV.plain[0]+0.02,0.3,UV.plain[1]-0.02,0.7);};
@@ -374,9 +375,7 @@ function buildBookDesign(title,author,vol){
   const pg=new THREE.BoxGeometry(tx-0.014,h-0.012,d-0.014);
   pg.translate(0,h/2,0.001);
   pages.add(pg);
-  const coverMat=new THREE.MeshPhongMaterial({
-    map:makeBookCoverTexture(title,author,base,Math.floor(Math.random()*6),vol),
-    specular:0x1a1610, shininess:14});
+  const coverMat=new THREE.MeshPhongMaterial({map:tex, specular:0x1a1610, shininess:14});
   return {geo:mergeGroups(cover,pages),
           mats:[coverMat,pageMats[Math.floor(Math.random()*pageMats.length)]],
           h,tx,d};
@@ -396,7 +395,7 @@ function ensureBooks(){
     BOOKS.push(buildBookDesign(title,author,vol));
   }
   /* the open book: covers splayed flat, two page slabs meeting at a gutter */
-  const od=0.165, oh=0.235;
+  const od=0.18, oh=0.26;
   const leather=new THREE.MeshPhongMaterial({color:0x3a2c20, specular:0x161208, shininess:12});
   OPEN_BOOK=new THREE.Group();
   const cov=new THREE.Mesh(new THREE.BoxGeometry(od*2+0.012,0.006,oh+0.006),leather);
@@ -508,11 +507,11 @@ function makeShelfRun(run){
     sp.position.y=H/2; g.add(sp);
   }
   /* ---- the books ----
-     The stacks are nearly empty — whatever happened here, the collection
-     left first. Each run holds 0–12 real volumes in small arrangements:
-     lone survivors, short rows, a leaner, books left flat or open mid-read.
-     Every occupied interval is recorded in run.occ so the floppy disks can
-     later pick spots the books left open. */
+     Thinned out, not stripped: every board keeps 0–12 volumes (≈4 on
+     average) in small arrangements — lone survivors, short rows, a leaner,
+     books left flat or open mid-read. Every occupied interval is recorded
+     in run.occ so the floppy disks can later pick spots the books left
+     open. */
   run.occ={};
   const Y=[0.10,0.53,0.96,1.39];
   const occAt=(s,lv)=>run.occ[s+"|"+lv]||(run.occ[s+"|"+lv]=[]);
@@ -521,12 +520,13 @@ function makeShelfRun(run){
     if(occ.some(([a,b])=>a<x1+0.06&&b>x0-0.06)) return false;
     occ.push([x0,x1]); return true;
   };
-  let budget=Math.floor(Math.pow(Math.random(),1.25)*13);   // 0–12, lighter more often
-  let tries=46;
+  for(let lv=0;lv<4;lv++){
+  let budget=Math.floor(Math.pow(Math.random(),2)*13);   // 0–12 per board, avg ≈4
+  let tries=30;
+  const yTop=Y[lv]+0.0275;
   while(budget>0&&tries-->0){
     const s=Math.random()<0.5?1:-1;
-    const lv=1+Math.floor(Math.random()*3);                  // books survive at eye level
-    const occ=occAt(s,lv), yTop=Y[lv]+0.0275, z=s*0.20;
+    const occ=occAt(s,lv), z=s*0.20;
     const x=rand(-len/2+0.35,len/2-0.35);
     const r=Math.random();
     if(r<0.32){
@@ -596,6 +596,7 @@ function makeShelfRun(run){
       g.add(ob);
       budget--;
     }
+  }
   }
   /* sparse non-book clutter — a couple of things per run at most */
   const nAcc=Math.random()<0.7? 1+Math.floor(Math.random()*2):0;
@@ -763,17 +764,17 @@ function makeBookCart(){
     const caster=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,0.04,8),darkMetalMat);
     caster.rotation.z=Math.PI/2; caster.position.set(sx,0.05,sz); g.add(caster);
   }
-  /* its last load: 0–5 real volumes nobody reshelved — a couple standing
+  /* its last load: 2–12 real volumes nobody reshelved — some standing
      (one usually slumped), the rest lying flat on the decks */
-  let load=Math.floor(Math.random()*6);
+  let load=2+Math.floor(Math.random()*11);
   const decks=[0.16,0.52,0.88];
-  let guard=12;
+  let guard=40;
   const used=[];                       // [deckY, x0, x1] claims
   while(load>0&&guard-->0){
     const sy=decks[Math.floor(Math.random()*decks.length)]+0.0175;
     const s=Math.random()<0.5?1:-1;
     const des=pickBook();
-    const flat=Math.random()<0.45;
+    const flat=Math.random()<0.35;
     const hw=flat? des.h/2+0.02 : des.tx/2+0.02;
     const bx=rand(-0.34+hw,0.34-hw);
     if(used.some(([uy,a,b])=>uy===sy&&a<bx+hw&&b>bx-hw)) continue;
@@ -1106,11 +1107,14 @@ export function buildLibrary(){
   dropFloor(makeMannequin,9,0.3);
   dropFloor(makeBookCart,8,0.52);
   dropFloor(makeGlobe,5,0.34);
-  /* wall dressing: posters, cracks, and the level's name — meaninglessly */
+  /* wall dressing: posters, cracks, and the level's name — meaninglessly.
+     The stretch of south wall holding the crashed cab stays bare: nothing
+     may spawn over (or hang beside) the elevator. */
   const wallFaces=[];
   for(let x=1;x<LW-1;x++){
     wallFaces.push({x:cellToWorld2(x,0).x,        z:cellToWorld2(x,0).z+CELL/2+0.03,  ry:0});
-    wallFaces.push({x:cellToWorld2(x,LH-1).x,     z:cellToWorld2(x,LH-1).z-CELL/2-0.03, ry:Math.PI});
+    if(Math.abs(x-exC)>1)
+      wallFaces.push({x:cellToWorld2(x,LH-1).x,   z:cellToWorld2(x,LH-1).z-CELL/2-0.03, ry:Math.PI});
   }
   for(let y=1;y<LH-1;y++){
     wallFaces.push({x:cellToWorld2(0,y).x+CELL/2+0.03,  z:cellToWorld2(0,y).z, ry:Math.PI/2});
