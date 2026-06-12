@@ -300,27 +300,43 @@ export function makeDripTextures(wid,len){
   return {wall,ceil};
 }
 /* ================= THE END — the infinite library ================= */
-/* aged institutional plaster: putty-grey, faintly streaked, with a dark
-   wood baseboard band. Cracks are separate decals (makeCrackTexture). */
+/* aged institutional plaster, TILEABLE: the walls are 8m boxes mixed with
+   odd-sized elevator flanks, so the texture must map at a fixed world
+   scale (scaleBoxUV below) and wrap seamlessly — no baked-in baseboard
+   (that's real geometry now), no features that betray the tile seam. */
 export const texLibWall = makeCanvas(256,256,(g,w,h)=>{
   g.fillStyle="#878173";g.fillRect(0,0,w,h);
-  for(let i=0;i<700;i++){               // plaster mottling
+  for(let i=0;i<700;i++){               // plaster mottling, low contrast
     const v=Math.random();
-    g.fillStyle=`rgba(${v<0.5?96:140},${v<0.5?90:134},${v<0.5?78:118},${0.05+Math.random()*0.08})`;
-    g.fillRect(Math.random()*w,Math.random()*h,Math.random()*6+2,Math.random()*14+3);
+    g.fillStyle=`rgba(${v<0.5?100:134},${v<0.5?94:128},${v<0.5?82:112},${0.04+Math.random()*0.06})`;
+    g.fillRect(Math.random()*w,Math.random()*h,Math.random()*5+2,Math.random()*10+3);
   }
-  for(let i=0;i<10;i++){                // long vertical water-grime streaks
-    const x=Math.random()*w, ww=2+Math.random()*7;
-    const gr=g.createLinearGradient(0,0,0,h);
-    gr.addColorStop(0,`rgba(60,56,46,${0.05+Math.random()*0.1})`);
+  for(let i=0;i<8;i++){                 // faint grime bands that fade in AND out (seam-safe)
+    const x=Math.random()*w, ww=2+Math.random()*6, y0=Math.random()*h*0.5;
+    const gr=g.createLinearGradient(0,y0,0,y0+h*0.45);
+    const a=0.04+Math.random()*0.07;
+    gr.addColorStop(0,"rgba(60,56,46,0)");
+    gr.addColorStop(0.5,`rgba(60,56,46,${a})`);
     gr.addColorStop(1,"rgba(60,56,46,0)");
-    g.fillStyle=gr;g.fillRect(x,0,ww,h);
+    g.fillStyle=gr;g.fillRect(x,y0,ww,h*0.45);
   }
-  /* dado rail + baseboard: the institutional read */
-  g.fillStyle="rgba(58,48,36,0.5)";g.fillRect(0,h*0.62,w,3);
-  g.fillStyle="#3c3226";g.fillRect(0,h-16,w,16);
-  g.fillStyle="rgba(20,16,10,0.6)";g.fillRect(0,h-16,w,2);
 });
+/* rescale a BoxGeometry's per-face UVs so a RepeatWrapping texture maps at
+   `m` meters per tile on every face, whatever the box dimensions — adjacent
+   odd-sized boxes (walls, elevator flanks, headers) then share one scale */
+export function scaleBoxUV(geo,w,h,d,m){
+  const uv=geo.attributes.uv;
+  const dims=[[d,h],[d,h],[w,d],[w,d],[w,h],[w,h]];   // ±x, ±y, ±z face sizes
+  for(let f=0;f<6;f++){
+    const [fw,fh]=dims[f];
+    for(let i=0;i<4;i++){
+      const idx=f*4+i;
+      uv.setXY(idx, uv.getX(idx)*fw/m, uv.getY(idx)*fh/m);
+    }
+  }
+  uv.needsUpdate=true;
+  return geo;
+}
 /* the thick grey-blue carpet that mutes every footstep */
 export const texLibCarpet = makeCanvas(512,512,(g,w,h)=>{
   g.fillStyle="#3a4250";g.fillRect(0,0,w,h);
@@ -412,35 +428,96 @@ export function makeEndTextTexture(txt="THE END"){
   t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearFilter; t.generateMipmaps=false;
   return t;
 }
-/* faded posters: aged paper, illegible blocks of text, one big smudged
-   figure or glyph, a torn corner */
+/* faded posters: aged notices and clippings with REAL, readable text that
+   almost parses — headline, dateline, body copy, the works — and means
+   nothing at all if you actually try to follow it. */
+const P_HEAD=["ALL RETURNS ARE FINAL","THE STACKS CLOSE AT NEVER","SILENCE IS DUE BACK",
+  "RENEW YOUR SELF TODAY","LATE FEES ACCRUE INWARD","SHELVING IS A PRIVILEGE",
+  "THE CATALOG KNOWS","MIND THE AISLES","REPORT MISSING HOURS","QUIET IS MANDATORY"];
+const P_MAST=["THE DAILY STACK","THE CIRCULAR","END TIMES","THE RETURNS DESK","THE QUIET PAGE"];
+const P_SUBJ=["Patrons","Borrowers","The shelves","All visitors","Lost items","The hours",
+  "Quiet readers","Overdue persons","The aisles","Returning members","Unattended books"];
+const P_VERB=["must remain","will be considered","are reminded to become","may not exceed",
+  "should report","have always been","will be shelved as","must not describe",
+  "are encouraged to misplace","remain the property of","were never issued"];
+const P_OBJ=["the library","their own absence","section ∅","the second silence",
+  "whatever is missing","the front desk","themselves","the floor below the floor",
+  "unmarked hours","the last page","a quieter shape"];
+const P_TAIL=["until further notice.","before closing.","at all times.","without exception.",
+  "upon request.","in alphabetical order.","quietly.","as scheduled.","for your safety.","again."];
+const pick=a=>a[Math.floor(Math.random()*a.length)];
+const nonsense=()=>`${pick(P_SUBJ)} ${pick(P_VERB)} ${pick(P_OBJ)} ${pick(P_TAIL)}`;
+/* word-wrap a string into lines that fit `maxW` with the current font */
+function wrapText(g,txt,maxW){
+  const words=txt.split(" "), lines=[]; let line="";
+  for(const wd of words){
+    const t=line? line+" "+wd : wd;
+    if(g.measureText(t).width>maxW&&line){ lines.push(line); line=wd; }
+    else line=t;
+  }
+  if(line) lines.push(line);
+  return lines;
+}
 export function makePosterTexture(){
-  const t=makeCanvas(96,128,(g,w,h)=>{
-    const tone=200+Math.random()*30|0;
+  const t=makeCanvas(256,344,(g,w,h)=>{
+    const tone=204+Math.random()*26|0;
     g.fillStyle=`rgb(${tone-22},${tone-26},${tone-52})`;g.fillRect(0,0,w,h);
-    g.strokeStyle="rgba(40,34,22,0.55)";g.lineWidth=3;g.strokeRect(3,3,w-6,h-6);
-    /* headline + body smudge-lines */
-    g.fillStyle="rgba(30,26,18,0.75)";g.fillRect(12,12,w-24,9);
-    for(let y=30;y<h-20;y+=7){
-      if(Math.random()<0.18) continue;
-      g.fillStyle=`rgba(36,32,22,${0.25+Math.random()*0.3})`;
-      g.fillRect(10+Math.random()*6,y,(w-26)*(0.5+Math.random()*0.5),3);
-    }
-    /* one central faded glyph/figure */
-    if(Math.random()<0.6){
-      g.fillStyle="rgba(50,40,26,0.30)";
-      g.beginPath();g.arc(w/2,h*0.5,12+Math.random()*9,0,7);g.fill();
+    g.strokeStyle="rgba(40,34,22,0.55)";g.lineWidth=5;g.strokeRect(6,6,w-12,h-12);
+    const ink="rgba(34,30,20,0.85)", inkSoft="rgba(40,36,26,0.66)";
+    if(Math.random()<0.5){
+      /* ---- official notice: header, ruled line, numbered directives ---- */
+      g.fillStyle=ink; g.textAlign="center";
+      g.font="bold 19px Courier New";
+      const head=wrapText(g,pick(P_HEAD),w-44);
+      let y=40;
+      for(const ln of head){ g.fillText(ln,w/2,y); y+=22; }
+      g.fillRect(24,y-8,w-48,2); y+=18;
+      g.textAlign="left"; g.font="11px Courier New"; g.fillStyle=inkSoft;
+      const n=3+Math.floor(Math.random()*3);
+      for(let i=0;i<n&&y<h-46;i++){
+        for(const ln of wrapText(g,`${i+1}. ${nonsense()}`,w-52)){
+          if(y>h-40) break;
+          g.fillText(ln,26,y); y+=14;
+        }
+        y+=7;
+      }
+      g.textAlign="center"; g.font="bold 11px Courier New"; g.fillStyle=ink;
+      g.fillText("— BY ORDER OF THE DESK —",w/2,h-26);
+    } else {
+      /* ---- newspaper clipping: masthead, dateline, headline, columns ---- */
+      g.fillStyle=ink; g.textAlign="center";
+      g.font="bold 22px Courier New"; g.fillText(pick(P_MAST),w/2,34);
+      g.font="9px Courier New"; g.fillStyle=inkSoft;
+      g.fillText(`VOL. ∅ · NO. ${1000+Math.floor(Math.random()*9000)} · PRICE: ONE HOUR`,w/2,48);
+      g.fillStyle=ink; g.fillRect(20,54,w-40,2);
+      g.font="bold 15px Courier New";
+      let y=74;
+      for(const ln of wrapText(g,pick(P_HEAD),w-44)){ g.fillText(ln,w/2,y); y+=17; }
+      y+=8;
+      /* two columns of small print */
+      g.textAlign="left"; g.font="9px Courier New"; g.fillStyle=inkSoft;
+      const colW=(w-56)/2, x1=22, x2=22+colW+12;
+      for(const x of[x1,x2]){
+        let cy=y;
+        while(cy<h-30){
+          for(const ln of wrapText(g,nonsense(),colW)){
+            if(cy>h-30) break;
+            g.fillText(ln,x,cy); cy+=11;
+          }
+          cy+=5;
+        }
+      }
     }
     /* foxing stains */
-    for(let i=0;i<5;i++){
-      const x=Math.random()*w,y=Math.random()*h,r=4+Math.random()*12;
-      const gr=g.createRadialGradient(x,y,1,x,y,r);
-      gr.addColorStop(0,"rgba(110,82,40,0.22)");gr.addColorStop(1,"rgba(110,82,40,0)");
+    for(let i=0;i<6;i++){
+      const x=Math.random()*w,y=Math.random()*h,r=10+Math.random()*28;
+      const gr=g.createRadialGradient(x,y,2,x,y,r);
+      gr.addColorStop(0,"rgba(110,82,40,0.16)");gr.addColorStop(1,"rgba(110,82,40,0)");
       g.fillStyle=gr;g.beginPath();g.arc(x,y,r,0,7);g.fill();
     }
     /* torn corner */
     g.globalCompositeOperation="destination-out";
-    g.beginPath();g.moveTo(w,0);g.lineTo(w-10-Math.random()*16,0);g.lineTo(w,12+Math.random()*16);g.closePath();g.fill();
+    g.beginPath();g.moveTo(w,0);g.lineTo(w-22-Math.random()*36,0);g.lineTo(w,26+Math.random()*36);g.closePath();g.fill();
     g.globalCompositeOperation="source-over";
   });
   t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearFilter; t.generateMipmaps=false;

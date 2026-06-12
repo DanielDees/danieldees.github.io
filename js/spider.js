@@ -18,13 +18,14 @@ import { clamp, lerp, angLerp, rand } from "./utils.js";
 import { CELL } from "./map.js";
 import { STATE, spider } from "./state.js";
 import { LIB, ROOM_SPAN, cellToWorld2, worldToCell2, isBlockedSpider, bfsPath2,
-         losCells2, underTable, randomReachCell } from "./library.js";
+         losCells2, underTable, randomReachCell, cellAt } from "./library.js";
 import { AU, panTo, sfxHeartbeat, sfxSpiderTap, sfxSpiderScratch, sfxSpiderSniff,
          sfxSpiderShriek } from "./audio.js";
 import { ui, toast } from "./ui.js";
 import { die } from "./lifecycle.js";
 
 const SPRINT=8.0;                       // the player's sprint speed — its base unit
+const FEM=1.35, TIB=2.25, PITCH=0.42, KNEE=-1.62;   // leg chain dimensions
 
 /* ================= the body ================= */
 export function makeSpider(){
@@ -51,7 +52,6 @@ export function makeSpider(){
   }
   /* ---- 8 legs: hip yaw + femur pitch + fixed knee, animated as two
      alternating tetrapods ---- */
-  const FEM=1.35, TIB=2.25, PITCH=0.42, KNEE=-1.62;
   const femGeo=new THREE.CylinderGeometry(0.075,0.055,FEM,7);
   femGeo.rotateZ(-Math.PI/2); femGeo.translate(FEM/2,0,0);      // extends along +x
   const tibGeo=new THREE.CylinderGeometry(0.05,0.022,TIB,7);
@@ -71,7 +71,8 @@ export function makeSpider(){
       const tibG=new THREE.Group(); tibG.position.x=FEM; tibG.rotation.z=KNEE; femG.add(tibG);
       tibG.add(new THREE.Mesh(tibGeo,chitinD));
       g.add(hip);
-      legs.push({hip, femG, basePhi:phi, phase:(i%2===0)===(side===0)? 0:Math.PI, front:i===0});
+      legs.push({hip, femG, basePhi:phi, phase:(i%2===0)===(side===0)? 0:Math.PI,
+                 front:i===0, fold:0});
     }
   }
   g.userData={legs, eyeMat, abd, ceph, BODY_Y, scratchAnim:0, sniffAnim:0};
@@ -188,6 +189,18 @@ export function updateSpider(dt){
   const hiding=underTable(STATE.pos.x,STATE.pos.z)&&STATE.crouch;
   s.repath-=dt; s.mildCD-=dt; s.screechCD-=dt;
 
+  /* ---- investigative sniffing: a couple of questioning puffs whenever it
+     stops to inspect a spot (armed by investigate/peruse), never a
+     proximity loop ---- */
+  if(s.sniffsLeft>0){
+    s.sniffT-=dt;
+    if(s.sniffT<=0){
+      s.sniffsLeft--;
+      s.sniffT=rand(1.8,3.0);
+      sfxSpiderSniff(clamp(1-d/34,0.06,1)*0.55, panTo(s.pos.x,s.pos.z));
+    }
+  }
+
   /* ---- the reaction countdown from disc pickups ---- */
   if(s.pendingT>0){
     s.pendingT-=dt;
@@ -226,6 +239,8 @@ export function updateSpider(dt){
       if(s.target&&Math.hypot(s.target.x-s.pos.x,s.target.z-s.pos.z)<1.2){
         s.state="peruse"; s.pauseT=rand(3,7); s.scratchT=rand(0.6,1.6);
         s.faceAng=s.target.face; s.path=[];
+        /* sometimes it noses the shelf before it starts to scratch */
+        if(Math.random()<0.3){ s.sniffsLeft=1; s.sniffT=rand(0.8,1.6); }
       }
       break;
     case "peruse":
@@ -250,19 +265,15 @@ export function updateSpider(dt){
       if(dLK<2.0||(s.path.length===0&&dLK<CELL*1.5)){
         if(hiding&&d<5.5){ startStalk(s); break; }
         if(s.lastKnown){ s.faceAng=Math.atan2(s.lastKnown.x-s.pos.x,s.lastKnown.z-s.pos.z); }
-        s.state="investigate"; s.searchT=rand(2.6,4.6); s.sniffT=0.2; s.path=[];
+        s.state="investigate"; s.searchT=rand(2.6,4.6); s.path=[];
+        s.sniffsLeft=2; s.sniffT=rand(0.4,0.9);   // a couple of questioning sniffs, no more
       }
       break;
     }
     case "investigate":
       if(sees){ startChase(s); break; }
       s.searchT-=dt;
-      s.sniffT-=dt;
       u.sniffAnim=Math.min(1,u.sniffAnim+dt*3);
-      if(s.sniffT<=0){
-        s.sniffT=rand(0.9,1.7);
-        sfxSpiderSniff(clamp(1-d/34,0.06,1)*0.7, panTo(s.pos.x,s.pos.z));
-      }
       s.faceAng+=dt*0.9;                       // slow scanning turn
       if(hiding&&d<5){ startStalk(s); break; }
       if(s.searchT<=0){
@@ -348,18 +359,29 @@ export function updateSpider(dt){
   const sp01=clamp(movedSpeed/10,0,1);
   s.anim += dt*(1.2+movedSpeed*1.35);
   const tNow=performance.now()/1000;
+  const cosY=Math.cos(s.mesh.rotation.y), sinY=Math.sin(s.mesh.rotation.y);
   for(const leg of u.legs){
     const sw=Math.sin(s.anim+leg.phase);
     const lift=Math.max(0,Math.sin(s.anim+leg.phase+1.3));
     let yaw=-leg.basePhi+sw*0.30*clamp(movedSpeed/3,0,1);
-    let pitch=0.42+lift*0.34*clamp(movedSpeed/3,0,1);
+    let pitch=PITCH+lift*0.34*clamp(movedSpeed/3,0,1);
     if(u.scratchAnim>0&&leg.front){
       /* a flurry against the shelf face */
       yaw=-leg.basePhi+Math.sin(tNow*30+leg.phase)*0.18;
       pitch=0.85+Math.sin(tNow*34+leg.phase*2)*0.4;
     }
+    /* terrain: where would this foot land? Tall things (walls, shelves)
+       fold the leg up against the face instead of skewering it; low things
+       (tables, the desk — under half its height) it simply steps onto */
+    const phiEff=-yaw;
+    const horiz=FEM*Math.cos(pitch)+TIB*Math.cos(-KNEE-pitch);
+    const lx=leg.hip.position.x+Math.cos(phiEff)*horiz;
+    const lz=leg.hip.position.z+Math.sin(phiEff)*horiz;
+    const ct=cellAt(s.pos.x+lx*cosY+lz*sinY, s.pos.z-lx*sinY+lz*cosY);
+    const foldTgt = (ct===1||ct===2||ct===3)? 0.55 : (ct===4||ct===5)? 0.30 : 0;
+    leg.fold+=(foldTgt-leg.fold)*Math.min(1,dt*7);
     leg.hip.rotation.y=yaw;
-    leg.femG.rotation.z=pitch;
+    leg.femG.rotation.z=pitch+leg.fold;
   }
   if(u.scratchAnim>0) u.scratchAnim-=dt;
   if(s.state!=="investigate") u.sniffAnim=Math.max(0,u.sniffAnim-dt*2);
@@ -428,6 +450,6 @@ export function resetSpider(farFromX,farFromZ,minDist=46){
   s.pos.set(p.x,0,p.z);
   s.state="browse"; s.path=[]; s.repath=0; s.curSpeed=0;
   s.pendingT=0; s.speedMult=1; s.stacking=false; s.seekRun=false;
-  s.lastKnown=null; s.target=null; s.mildCD=0; s.screechCD=0; s.stepAcc=0;
+  s.lastKnown=null; s.target=null; s.mildCD=0; s.screechCD=0; s.stepAcc=0; s.sniffsLeft=0;
   if(s.mesh) s.mesh.position.set(p.x,0,p.z);
 }

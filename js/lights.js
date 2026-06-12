@@ -170,7 +170,7 @@ export function updateLights(dt,t){
   }
   cand.sort((a,b)=>a[0]-b[0]);
   /* THE END's strips hang low over the stacks and run a poorer current */
-  const base = STATE.level===1? 1.16 : STATE.powerOn? 1.43 : 1.19;
+  const base = STATE.level===1? 1.39 : STATE.powerOn? 1.43 : 1.19;
   const band = LIGHT_BIND_RADIUS-LIGHT_FADE_START;
   /* each fixture holds two tubes 0.64m apart. Near the player that split is
      visible, so close fixtures get one pool light PER TUBE at just over half
@@ -225,7 +225,7 @@ export function updateLights(dt,t){
   }
   /* murk floor: THE END's minimum ambient is HALF of level 0's, and it
      sinks further once the lights drop */
-  const hemiTgt = STATE.level===1? (STATE.libDim? 0.027:0.04)
+  const hemiTgt = STATE.level===1? (STATE.libDim? 0.032:0.048)
                                  : (STATE.powerOn? 0.10:0.08);
   hemi.intensity = lerp(hemi.intensity, hemiTgt, 0.1);
 }

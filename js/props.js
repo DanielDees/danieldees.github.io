@@ -1,7 +1,7 @@
 /* ---------------- props ---------------- */
 import { rand } from "./utils.js";
 import { W, H, CELL, WALL_H as WALL_H0, cellToWorld, randomOpenCell, isWall } from "./map.js";
-import { makeCanvas, texWall } from "./textures.js";
+import { makeCanvas, texWall, scaleBoxUV } from "./textures.js";
 import { scene, wallMeshes, removeDecalsOnWall } from "./scene.js";
 
 export let interactables=[];    // {kind, mesh, label, taken}
@@ -100,12 +100,19 @@ export function makeElevator(p,facing,opts={}){
   const metal=new THREE.MeshPhongMaterial({color:0x9aa0a4, specular:0x222426, shininess:22});
   const darkMetal=new THREE.MeshPhongMaterial({color:0x53585c, specular:0x303336, shininess:40});
   const add=(geo,mat,x,y,z)=>{const m=new THREE.Mesh(geo,mat);m.position.set(x,y,z);g.add(m);return m;};
-  /* rebuilt wall around the opening */
+  /* rebuilt wall around the opening. With opts.uvTile the odd-sized flank/
+     header boxes map the wall texture at a fixed world scale, so they sit
+     seamlessly beside the regular full-size wall cells. */
+  const wallGeo=(w,h,d)=>{
+    const geo=new THREE.BoxGeometry(w,h,d);
+    if(opts.uvTile) scaleBoxUV(geo,w,h,d,opts.uvTile);
+    return geo;
+  };
   const flankW=(CELL-OPEN_W)/2;
-  add(new THREE.BoxGeometry(flankW,WALL_H,CELL),wallM,-(OPEN_W/2+flankW/2),WALL_H/2,-CELL/2);
-  add(new THREE.BoxGeometry(flankW,WALL_H,CELL),wallM, (OPEN_W/2+flankW/2),WALL_H/2,-CELL/2);
-  add(new THREE.BoxGeometry(OPEN_W,WALL_H-OPEN_H,CELL),wallM,0,(WALL_H+OPEN_H)/2,-CELL/2);
-  add(new THREE.BoxGeometry(OPEN_W,OPEN_H,CELL-DEPTH),wallM,0,OPEN_H/2,-(DEPTH+(CELL-DEPTH)/2));
+  add(wallGeo(flankW,WALL_H,CELL),wallM,-(OPEN_W/2+flankW/2),WALL_H/2,-CELL/2);
+  add(wallGeo(flankW,WALL_H,CELL),wallM, (OPEN_W/2+flankW/2),WALL_H/2,-CELL/2);
+  add(wallGeo(OPEN_W,WALL_H-OPEN_H,CELL),wallM,0,(WALL_H+OPEN_H)/2,-CELL/2);
+  add(wallGeo(OPEN_W,OPEN_H,CELL-DEPTH),wallM,0,OPEN_H/2,-(DEPTH+(CELL-DEPTH)/2));
   /* ---- cab shell: brushed panelled walls, speckled vinyl floor ---- */
   const cabWallTex=makeCanvas(256,256,(gx,w,h)=>{
     gx.fillStyle="#878d91";gx.fillRect(0,0,w,h);

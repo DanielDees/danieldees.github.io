@@ -282,10 +282,11 @@ function updateElevator(dt){
   /* ---- cab light: hue strobes only until the lights die at the lurch ---- */
   let inten=0.72*seg(t,3.5,4.3), col=[1,0.93,0.78];
   if(t>=T_HAY && t<T_LURCH){
-    /* the hue snaps between blood-red and normal, faster and harder */
-    const st=Math.floor(t*16);
+    /* the hue stumbles between blood-red and normal — kept at a slow
+       sputter (≈6/s) with mild level swings: dread, not a strobe test */
+    const st=Math.floor(t*6);
     if(hash(st)< 0.35+0.3*seg(t,T_HAY,T_LURCH)) col=[1,0.16,0.10];
-    inten=0.78*(0.55+hash(st*1.7+9)*0.55);
+    inten=0.78*(0.72+hash(st*1.7+9)*0.28);
   }
   if(t>=T_LURCH){ col=[1,0.13,0.07]; inten=0.18; }            // emergency light only
   u.cabLight.intensity=inten;
@@ -446,11 +447,15 @@ export function startTheEndIntro(){
   const aOut={yaw:Math.atan2(-out.x,-out.z), pitch:-0.04};
   D={fired:new Set(), u, g, out, cabEye, aOut,
      spawn:LIB.spawn.clone()};
-  /* the wreck: doors shut, the cab steeped in emergency-lamp red */
+  /* the wreck: doors shut, lit only by the emergency lamp — a REAL point
+     source parked at the lamp itself, with distance falloff like every
+     other light in the game, not a screen wash */
   u.doorL.position.x=-0.515; u.doorR.position.x=0.515;
   u.emergMat.color.set(0xff2515);
-  u.cabLight.intensity=0.4; u.cabLight.color.setRGB(1,0.15,0.09);
-  u.cabLightMat.color.setRGB(0.10,0.015,0.01);
+  u.cabLight.position.set(0,2.3,-2.35);
+  u.cabLight.distance=5; u.cabLight.decay=2;
+  u.cabLight.intensity=0.42; u.cabLight.color.setRGB(1,0.15,0.09);
+  u.cabLightMat.color.setRGB(0.02,0.004,0.003);   // the main panel is dead
   u.drawFloor("--","#ff4030");
   /* hold the screen black; the first cue lifts it onto the red-lit cab */
   ui.flash.style.transition="none"; ui.flash.style.background="#000";
@@ -469,16 +474,18 @@ function updateLibIntro(dt){
   const slide = 0.34*seg(t,LI_DOOR1,LI_STUCK) + 0.66*seg(t,LI_DOOR2,LI_OPEN);
   u.doorL.position.x=-(0.515+1.0*slide);
   u.doorR.position.x= (0.515+1.0*slide);
-  /* the cab swims in emergency red; the dead main light coughs a few dying
-     white flickers as the doors fight their track */
-  if(t>=LI_DOOR1&&t<LI_OPEN){
-    const fl=hash(Math.floor(t*13))<0.3;
-    u.cabLight.intensity=fl?0.3:0.34;
-    if(fl) u.cabLight.color.setRGB(1,0.85,0.65); else u.cabLight.color.setRGB(1,0.15,0.09);
-    u.cabLightMat.color.setRGB(fl?0.3:0.1,fl?0.27:0.015,fl?0.2:0.01);
-  } else if(t>=LI_OPEN){
-    u.cabLight.intensity=0.22; u.cabLight.color.setRGB(1,0.14,0.08);
-    u.cabLightMat.color.setRGB(0.07,0.012,0.008);
+  /* the emergency lamp breathes, slow and red, from its corner of the cab;
+     the dead main panel gives exactly TWO brief dying-white blinks as the
+     doors fight their track — discrete events, never a strobe */
+  const blink=(t>=LI_DOOR1+0.25&&t<LI_DOOR1+0.37)||(t>=LI_DOOR2+0.45&&t<LI_DOOR2+0.55);
+  if(blink){
+    u.cabLight.intensity=0.5;
+    u.cabLight.color.setRGB(1,0.85,0.62);
+    u.cabLightMat.color.setRGB(0.32,0.28,0.2);
+  } else {
+    u.cabLight.intensity=(t>=LI_OPEN?0.3:0.42)+0.05*Math.sin(t*2.6);
+    u.cabLight.color.setRGB(1,0.14,0.08);
+    u.cabLightMat.color.setRGB(0.02,0.004,0.003);
   }
   /* the library wakes in a wave rolling out from the doorway */
   cue("wake",LI_WAKE,()=>{ STATE.libWakeT=0; });
@@ -518,11 +525,13 @@ function updateLibIntro(dt){
     cy=1.55+Math.sin(k*Math.PI*3.2)*0.035*(1-k*0.5);
     /* one unsteady stumble on the threshold */
     cy-=0.05*seg(t,LI_WALK0+0.9,LI_WALK0+1.15)*(1-seg(t,LI_WALK0+1.15,LI_WALK0+1.7));
-    /* take in the height of the place, then settle level */
-    const upk=seg(t,LI_LOOKUP,LI_LOOKUP+1.3)*(1-seg(t,LI_TITLE_OFF-1.6,LI_TITLE_OFF-0.2));
-    pitch=lerp(-0.04,0.52,upk);
-    /* and sweep slowly across the stacks under the title */
-    yaw=D.aOut.yaw+Math.sin(seg(t,LI_TITLE,LI_END)*Math.PI)*0.34;
+    /* one brief glance up at the hanging lights, then back to level */
+    const upk=seg(t,LI_LOOKUP,LI_LOOKUP+1.0)*(1-seg(t,LI_LOOKUP+1.6,LI_LOOKUP+2.6));
+    pitch=lerp(-0.04,0.18,upk);
+    /* the real reveal is lateral: a slow left-then-right scan across the
+       stacks — someone getting their bearings, not studying the ceiling */
+    const lp=seg(t,LI_LOOKUP+0.2,LI_END-0.2);
+    yaw=D.aOut.yaw+0.55*Math.sin(lp*Math.PI*2)*Math.sin(lp*Math.PI);
   }
   STATE.yaw=yaw; STATE.pitch=pitch;
   setCam(cx,cy,cz,yaw,pitch);

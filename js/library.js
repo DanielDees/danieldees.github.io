@@ -16,9 +16,9 @@
 import { rand, clamp, lerp, srand } from "./utils.js";
 import { CELL } from "./map.js";
 import { STATE } from "./state.js";
-import { scene, lights, hemi, amb } from "./scene.js";
+import { scene, lights, hemi, amb, makeLightRecord } from "./scene.js";
 import { makeCanvas, texLibWall, texLibCarpet, texLibCeil, texShelfWood, texDeskWood,
-         makeCrackTexture, makeEndTextTexture, makePosterTexture } from "./textures.js";
+         makeCrackTexture, makeEndTextTexture, makePosterTexture, scaleBoxUV } from "./textures.js";
 import { makeElevator, ELEV, addInteractable } from "./props.js";
 import { sfxLightsOut, escalateLibraryAmbience, sfxComputerBoot, sfxComputerStatic } from "./audio.js";
 import { toast } from "./ui.js";
@@ -36,7 +36,8 @@ export const LIB={
   elev:null, spawn:null, spawnYaw:0,
   deskPos:null, term:null,            // term: {group, screen} — the objective terminal
   reach:null,                         // Set of reachable open-cell keys
-  runs:[],                            // shelf runs (visual + browse targets)
+  runs:[],                            // shelf segments (visual + browse targets)
+  obstacles:[],                       // free-standing circle colliders (chairs, lecterns, ladders)
   pcAnims:[],                         // decor computers mid-boot
   blackT:0, nextBlack:45,             // temporary whole-floor light failures
 };
@@ -82,7 +83,20 @@ export function libCollide(px,pz,r,crouched){
       else if(m===dzl)nz=minZ; else nz=maxZ;
     }
   }
+  /* free-standing furniture: simple radial push-out */
+  for(const o of LIB.obstacles){
+    const dx=nx-o.x, dz=nz-o.z, d=Math.hypot(dx,dz), min=o.r+r;
+    if(d<min){
+      if(d>1e-4){ nx=o.x+dx/d*min; nz=o.z+dz/d*min; }
+      else nx=o.x+min;                  // dead-centre (teleport) — pick a side
+    }
+  }
   return {x:nx,z:nz};
+}
+/* grid code at a world point — the spider's legs read the terrain with it */
+export function cellAt(wx,wz){
+  const c=worldToCell2(wx,wz);
+  return (c.cx<0||c.cy<0||c.cx>=LW||c.cy>=LH)? 1 : grid2[c.cy][c.cx];
 }
 /* spider pathfinding: best-effort BFS — an unreachable target (say, the
    player under a table) routes to the closest cell it CAN stand in, so the
@@ -124,8 +138,9 @@ function genLibrary(){
   /* the librarian's desk: a 3-cell counter across the heart of the room */
   for(let x=cx0-1;x<=cx0+1;x++) grid2[cy0][x]=5;
   /* shelf runs: random lengths, some anchored to the perimeter walls,
-     free to converge with one another */
-  LIB.runs=[];
+     free to converge with one another. Carving only marks grid cells —
+     the visual/browse segments are derived from the FINAL grid below, so
+     collision and graphics can never drift apart. */
   for(let t=0;t<48;t++){
     const fromWall=srand()<0.30;
     let ax,ay,axis;                      // start cell + run axis (0=x, 1=z)
@@ -141,7 +156,6 @@ function genLibrary(){
     }
     const len=3+Math.floor(srand()*6);   // 3–8 cells
     const dir=fromWall? (axis===0?(ax===1?1:-1):(ay===1?1:-1)) : (srand()<0.5?1:-1);
-    const cells=[];
     for(let i=0;i<len;i++){
       const x=axis===0? ax+dir*i : ax, y=axis===0? ay : ay+dir*i;
       if(!inB(x,y)) break;
@@ -149,9 +163,7 @@ function genLibrary(){
       const cur=grid2[y][x];
       if(cur===1||cur===4||cur===5) break;
       if(cur===0) grid2[y][x]=axis===0?2:3;
-      cells.push({x,y});
     }
-    if(cells.length>=2) LIB.runs.push({axis,cells});
   }
   /* tables: scattered islands, never in the protected clearings */
   const tables=[];
@@ -191,8 +203,6 @@ function genLibrary(){
         for(const[ex,ey]of[[1,0],[-1,0],[0,1],[0,-1]]){
           if(seen.has(K(bx+ex,by+ey))){
             grid2[by][bx]=0; fixed=true;
-            for(const run of LIB.runs)
-              run.cells=run.cells.filter(c=>!(c.x===bx&&c.y===by));
             break outer;
           }
         }
@@ -200,11 +210,37 @@ function genLibrary(){
     }
     if(!fixed) break;
   }
-  LIB.runs=LIB.runs.filter(r=>r.cells.length>=2);
+  /* the repair may have knocked out table cells too — drop their visuals */
+  const liveTables=tables.filter(t=>grid2[t.y][t.x]===4);
+  /* derive shelf segments from the final grid: every maximal contiguous
+     row of type-2 (along x) or type-3 (along z) cells becomes exactly one
+     visual unit, so the boards always cover precisely the cells that
+     collide — no offsets, no phantom walls */
+  LIB.runs=[];
+  for(let y=1;y<LH-1;y++){
+    let x=1;
+    while(x<LW-1){
+      if(grid2[y][x]===2){
+        const cells=[];
+        while(x<LW-1&&grid2[y][x]===2){ cells.push({x,y}); x++; }
+        LIB.runs.push({axis:0,cells});
+      } else x++;
+    }
+  }
+  for(let x=1;x<LW-1;x++){
+    let y=1;
+    while(y<LH-1){
+      if(grid2[y][x]===3){
+        const cells=[];
+        while(y<LH-1&&grid2[y][x]===3){ cells.push({x,y}); y++; }
+        LIB.runs.push({axis:1,cells});
+      } else y++;
+    }
+  }
   const seen=flood();
   LIB.reach=seen;
   LIB.reachList=[...seen].map(k=>({cx:k%LW, cy:(k/LW)|0}));
-  return {cx0,cy0,spawnC,tables};
+  return {cx0,cy0,spawnC,tables:liveTables};
 }
 
 /* ---------------- prop builders ---------------- */
@@ -222,9 +258,9 @@ function makeShelfRun(run){
      long bare boards spanning the whole run, the occasional lone book or
      sagging board — virtually devoid of books, exactly as described */
   const g=new THREE.Group();
-  const len=run.cells.length*CELL, H=2.7, D=1.5;
+  const len=run.cells.length*CELL, H=2.3, D=1.5;   // capped a row lower for sightlines
   const boardGeo=new THREE.BoxGeometry(len,0.055,D);
-  for(const by of[0.12,0.66,1.2,1.74,2.28,2.7]){
+  for(const by of[0.12,0.66,1.2,1.74,2.28]){
     const b=new THREE.Mesh(boardGeo,shelfMat); b.position.y=by; g.add(b);
   }
   const upGeo=new THREE.BoxGeometry(0.09,H,D);
@@ -295,14 +331,14 @@ function makeChair(wrapped){
   return g;
 }
 function makeLadder(){
-  const g=new THREE.Group(), H=2.9;
+  const g=new THREE.Group(), H=2.5;
   const railGeo=new THREE.BoxGeometry(0.06,H,0.1);
   for(const sx of[-0.3,0.3]){
     const r=new THREE.Mesh(railGeo,shelfMat); r.position.set(sx,H/2,0); g.add(r);
   }
-  for(let i=0;i<7;i++){
+  for(let i=0;i<6;i++){
     const rung=new THREE.Mesh(new THREE.BoxGeometry(0.6,0.05,0.05),shelfMat);
-    rung.position.y=0.3+i*0.38; g.add(rung);
+    rung.position.y=0.28+i*0.37; g.add(rung);
   }
   g.rotation.x=-0.22;                            // leant against the stack
   return g;
@@ -453,6 +489,7 @@ function makeFixture(wx,wz,alongZ){
 
 /* ---------------- build ---------------- */
 export function buildLibrary(){
+  LIB.obstacles=[]; LIB.pcAnims=[]; LIB.blackT=0; LIB.nextBlack=45;
   const {cx0,cy0,spawnC,tables}=genLibrary();
   const SZ=LW*CELL;
   const libWallMat=new THREE.MeshPhongMaterial({map:texLibWall, specular:0x0c0b09, shininess:5});
@@ -465,9 +502,11 @@ export function buildLibrary(){
   const ceil=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),
     new THREE.MeshPhongMaterial({map:texLibCeil, specular:0x000000, shininess:1}));
   ceil.rotation.x=Math.PI/2; ceil.position.y=LIB_WALL_H; scene.add(ceil);
-  /* perimeter walls — one cell is the crashed elevator's */
+  /* perimeter walls — one cell is the crashed elevator's. UVs are scaled
+     to 4m-per-tile world space so the plaster maps at one density on every
+     box, however it's sized (this is what un-distorts the walls). */
   const exC=cx0, eyC=LH-1;
-  const wallGeo2=new THREE.BoxGeometry(CELL,LIB_WALL_H,CELL);
+  const wallGeo2=scaleBoxUV(new THREE.BoxGeometry(CELL,LIB_WALL_H,CELL),CELL,LIB_WALL_H,CELL,4);
   for(let y=0;y<LH;y++)for(let x=0;x<LW;x++){
     if(grid2[y][x]!==1) continue;
     if(x===exC&&y===eyC) continue;
@@ -476,11 +515,30 @@ export function buildLibrary(){
     m.position.set(p.x,LIB_WALL_H/2,p.z);
     scene.add(m);
   }
+  /* the baseboard is real geometry now (a texture band can't survive
+     world-scaled tiling): dark skirting strips along the inner perimeter,
+     parted at the elevator doorway */
+  {
+    const bbMat=new THREE.MeshPhongMaterial({color:0x39301f, specular:0x0c0a06, shininess:8});
+    const inner=ROOM_SPAN/2-CELL;                 // inner wall plane
+    const bb=(w,d,x,z)=>{
+      const m=new THREE.Mesh(new THREE.BoxGeometry(w,0.42,d),bbMat);
+      m.position.set(x,0.21,z); scene.add(m);
+    };
+    const L=inner*2;
+    bb(L,0.09, 0,-(inner-0.045));                 // north
+    bb(0.09,L, -(inner-0.045),0);                 // west
+    bb(0.09,L,  (inner-0.045),0);                 // east
+    const door=ELEV.OPEN_W/2+0.45;                // skip the elevator portal
+    const sw=(inner-door);
+    bb(sw,0.09, -(door+sw/2), inner-0.045);       // south, left of the doors
+    bb(sw,0.09,  (door+sw/2), inner-0.045);       // south, right of the doors
+  }
   /* the crashed arrival cab, carved into the south wall */
   {
     const p=cellToWorld2(exC,eyC);
     const dp=new THREE.Vector3(p.x,0,p.z-CELL/2);
-    const elev=makeElevator(dp,Math.PI,{wallH:LIB_WALL_H, wallMat:libWallMat});
+    const elev=makeElevator(dp,Math.PI,{wallH:LIB_WALL_H, wallMat:libWallMat, uvTile:4});
     elev.rotation.z=0.022;                       // it did not land well
     scene.add(elev);
     LIB.elev=elev;
@@ -506,6 +564,7 @@ export function buildLibrary(){
       ch.position.set(p.x+Math.sin(ang)*2.2,0,p.z+Math.cos(ang)*2.2);
       ch.rotation.y=ang+Math.PI+(srand()-0.5)*0.6;
       scene.add(ch);
+      LIB.obstacles.push({x:ch.position.x, z:ch.position.z, r:0.34});
     }
     if(pcTables.has(i)){
       const pc=makeVintagePC(0.85);
@@ -543,6 +602,7 @@ export function buildLibrary(){
     lad.position.set(p.x+dx*1.05,0,p.z+dy*1.05);
     lad.rotation.y=Math.atan2(-dx,-dy);
     scene.add(lad); placed++;
+    LIB.obstacles.push({x:lad.position.x, z:lad.position.z, r:0.42});
   }
   for(let i=0;i<8;i++){
     const c=LIB.reachList[Math.floor(srand()*LIB.reachList.length)];
@@ -551,6 +611,7 @@ export function buildLibrary(){
     lec.position.set(p.x+rand(-1,1),0,p.z+rand(-1,1));
     lec.rotation.y=srand()*Math.PI*2;
     scene.add(lec);
+    LIB.obstacles.push({x:lec.position.x, z:lec.position.z, r:0.36});
   }
   /* wall dressing: posters, cracks, and the level's name — meaninglessly */
   const wallFaces=[];
@@ -597,25 +658,24 @@ export function buildLibrary(){
     cr.rotation.y=f.ry;
     scene.add(cr);
   }
-  /* hanging lights: sparse, faulty, with one dependable strip at the desk */
+  /* hanging lights: faulty and uneven, but no longer rare — and every one
+     of them is a standard makeLightRecord, the same self-contained
+     filament asset as level 0's troffers. The wider dimDen band means the
+     strips idle a deep yellow; the burnout's warmth push drags the same
+     pipeline on into orange-red. */
   for(let gy=2;gy<LH-2;gy+=3)for(let gx=2;gx<LW-2;gx+=3){
     const x=clamp(gx+Math.floor(srand()*3)-1,1,LW-2), y=clamp(gy+Math.floor(srand()*3)-1,1,LH-2);
     if(grid2[y][x]!==0) continue;
     if(Math.abs(x-cx0)<2&&Math.abs(y-cy0)<2) continue;     // the desk gets its own
     if(x===cx0&&y===LH-3) continue;                         // …and so does the wreck apron
-    if(srand()<0.38) continue;                              // dark slots: a poorer grid than level 0
+    if(srand()<0.19) continue;                              // a few dark slots remain
     const p=cellToWorld2(x,y);
     const fx=makeFixture(p.x,p.z,srand()<0.5);
     scene.add(fx.group);
-    const warm=Math.random()<0.12, bright=warm?1:rand(0.8,1);
-    lights.push({glowMat:fx.glowMat, tubeMat:fx.tubeMat, cx:x, cy:y, world:p,
-      fixY:fx.fixY, wakeAt:0,
-      flickery:Math.random()<0.40,                          // the building's lights are faulty
-      warm:warm, warmth:warm?1:0, bright:bright, dimY:warm?0:(1-bright)/0.2,
-      phase:Math.random()*100, on:1,
-      mode:"steady", timer:rand(1,12), pattern:0, rate:20,
-      burstDur:0, burstT:0, descT:2, riseT:0.5, seed:Math.random()*1000, lastTick:0,
-      near:0, shocked:false, shockT:0});
+    const warm=Math.random()<0.12;
+    lights.push(makeLightRecord(fx.glowMat,fx.tubeMat,x,y,p,
+      {warm, bright:warm?1:rand(0.72,0.92), dimDen:0.28,
+       flickery:Math.random()<0.40, fixY:fx.fixY}));
   }
   /* two strips are never left dark or faulty: one over the desk (the beacon
      you steer by) and one over the wreck apron (the first to wake) */
@@ -623,11 +683,8 @@ export function buildLibrary(){
     const p=cellToWorld2(fcx,fcy);
     const fx=makeFixture(p.x,p.z,false);
     scene.add(fx.group);
-    lights.push({glowMat:fx.glowMat, tubeMat:fx.tubeMat, cx:fcx, cy:fcy, world:p,
-      fixY:fx.fixY, wakeAt:0, flickery:false, warm:false, warmth:0, bright:1, dimY:0,
-      phase:Math.random()*100, on:1, mode:"steady", timer:rand(6,16), pattern:0, rate:20,
-      burstDur:0, burstT:0, descT:2, riseT:0.5, seed:Math.random()*1000, lastTick:0,
-      near:0, shocked:false, shockT:0});
+    lights.push(makeLightRecord(fx.glowMat,fx.tubeMat,fcx,fcy,p,
+      {warm:false, bright:1, flickery:false, fixY:fx.fixY}));
   }
   /* the intro wakes the grid in a wave rolling away from the elevator */
   for(const L of lights)
@@ -688,9 +745,9 @@ export function updateLibrary(dt){
     STATE.libWakeT+=dt;
     if(STATE.libWakeT>14) STATE.libWakeT=-1;      // every fixture is long awake
   }
-  /* 45 seconds after the first disk leaves its shelf, the building answers:
+  /* 70 seconds after the first disk leaves its shelf, the building answers:
      every light drops to a quarter of its brightness and goes sodium-warm */
-  if(!STATE.libDim && STATE.libFirstPickup>=0 && STATE.time-STATE.libFirstPickup>=45){
+  if(!STATE.libDim && STATE.libFirstPickup>=0 && STATE.time-STATE.libFirstPickup>=70){
     STATE.libDim=true;
     sfxLightsOut();
     escalateLibraryAmbience();

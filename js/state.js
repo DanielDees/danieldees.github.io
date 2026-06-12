@@ -44,6 +44,6 @@ export const spider={
   speedMult:1,          // 1..3 × player sprint speed while seeking/chasing
   stacking:false,       // true from a pickup until it reaches the latest pickup spot
   seekRun:false,        // seek at run speed (disc/strong alert) vs walk (mild)
-  browseT:0, pauseT:0, scratchT:6, sniffT:0, searchT:0, stalkT:0,
+  browseT:0, pauseT:0, scratchT:6, sniffT:0, sniffsLeft:0, searchT:0, stalkT:0,
   mildCD:0, stepAcc:0, screechCD:0,
 };
