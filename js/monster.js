@@ -50,15 +50,18 @@ export function makeMonster(){
      order-independent, so the shells need no manual sorting. */
   const auraMat=op=>new THREE.MeshBasicMaterial({color:0x000000, transparent:true,
     opacity:op, side:THREE.DoubleSide, depthWrite:false});
-  /* 10 shells (was 5) for a smoother ramp — per-shell opacity roughly halved
-     so the cumulative darkening through the centre stays put, then tuned up
-     ~10% (deepest core) and out ~10% in radius, same gradient shape */
-  g.userData.aura=[[48.05,0.01241],[42.71,0.01385],[37.37,0.01530],[32.43,0.01697],
-    [27.62,0.01871],[23.09,0.02075],[18.82,0.02306],[14.79,0.02524],[11.48,0.02698],[8.17,0.02872]]
-    .map(([r,op])=>{
-      const s=new THREE.Mesh(new THREE.SphereGeometry(r/1.12,18,12), auraMat(op));
-      s.position.y=1.7; g.add(s); return s;
-    });
+  /* 20 concentric shells (was 10) for a smoother ramp: opacity rises linearly
+     outer→inner. Doubling the shell count halves the per-step increase, so the
+     cumulative darkening through the centre stays a smooth gradient instead of
+     stacking up — tuned here to ~44% at the core (another +20%). */
+  g.userData.aura=[];
+  const AURA_N=20, R_OUT=52.86, R_IN=8.99, OP_OUT=0.00875, OP_IN=0.02025;
+  for(let i=0;i<AURA_N;i++){
+    const f=i/(AURA_N-1);                                   // 0 outer … 1 inner
+    const r=R_OUT+(R_IN-R_OUT)*f, op=OP_OUT+(OP_IN-OP_OUT)*f;
+    const s=new THREE.Mesh(new THREE.SphereGeometry(r/1.12,18,12), auraMat(op));
+    s.position.y=1.7; s.userData.baseOp=op; g.add(s); g.userData.aura.push(s);
+  }
   const smokeTex=()=>makeCanvas(128,128,(c,w,h)=>{
     c.clearRect(0,0,w,h);
     for(let i=0;i<60;i++){
@@ -84,23 +87,47 @@ export function makeMonster(){
 }
 
 /* ---------------- monster AI ---------------- */
+/* a slow two-phase ring of light-disruption rolls out from (x,z), swept in
+   lights.js, under a layered sinister drone held until the farthest panel
+   has recovered. Fires at wake, then recurs from wherever it now stands. */
+function triggerShockwave(x,z){
+  const SZ2=W*CELL/2;
+  const mdx=Math.max(x+SZ2, SZ2-x), mdz=Math.max(z+SZ2, SZ2-z);
+  monster.shock={t:0, x, z, maxR:Math.hypot(mdx,mdz)};
+  sfxShockwave(monster.shock.maxR/19.23 + 3.5);   // the lights + drone say it all — no toast
+}
+/* the disruption pulse starts at 60s and tightens by 10s per objective
+   cleared (down to a floor of 20s); the entity also sees ~5% farther and
+   drifts toward the player more eagerly with each step */
+const SHOCK_BASE=60, SHOCK_STEP=10, SHOCK_MIN=20;
+export function shockPeriod(){ return Math.max(SHOCK_MIN, SHOCK_BASE-SHOCK_STEP*monster.escalation); }
+export const sightMult=()=> 1+0.05*monster.escalation;     // +5% detection per objective
+/* called on every objective progression after the first bottle */
+export function escalateMonster(){
+  monster.escalation++;
+  monster.shockTimer=Math.min(monster.shockTimer, shockPeriod());  // pull in an in-flight wait
+  /* the darkness aura grows 5% wider and 5% deeper each step */
+  if(monster.mesh){
+    const k=1+0.05*monster.escalation;
+    for(const s of monster.mesh.userData.aura){
+      s.scale.setScalar(k);
+      s.material.opacity=s.userData.baseOp*k;
+    }
+  }
+}
 export function wakeMonster(){
   monster.active=true; monster.mesh.visible=true;
   const p=farOpenWorldPoint(STATE.pos.x,STATE.pos.z,40);
   monster.pos.set(p.x,0,p.z);
   monster.groanT=2.5;
-  /* announce it: a slow two-phase ring of light-disruption rolls out from
-     the spawn point (swept in lights.js) under a layered sinister drone
-     held until the farthest panel has recovered */
-  const SZ2=W*CELL/2;
-  const mdx=Math.max(p.x+SZ2, SZ2-p.x), mdz=Math.max(p.z+SZ2, SZ2-p.z);
-  monster.shock={t:0, x:p.x, z:p.z, maxR:Math.hypot(mdx,mdz)};
-  sfxShockwave(monster.shock.maxR/19.23 + 3.5);   // the lights + drone say it all — no toast
+  triggerShockwave(p.x,p.z);            // announce it from the spawn point
+  monster.shockTimer=shockPeriod();     // …then recurring, tightening per objective
 }
 export function monsterCanSee(){
   const d=monster.pos.distanceTo(STATE.pos);
   let range = STATE.crouch? 11 : 19;          // +20% sight
-  if(STATE.sprinting&&STATE.moving) range=26;
+  if(STATE.sprinting&&STATE.moving) range=27.3;   // max chase reach +5%
+  range *= sightMult();                            // grows 5% per objective cleared
   if(d>range) return false;
   if(STATE.crouch && d>7 && !STATE.moving) return false;
   return losCells(monster.pos.x,monster.pos.z,STATE.pos.x,STATE.pos.z);
@@ -189,6 +216,9 @@ export function updateMonster(dt){
   }
   if(!monster.active||STATE.dead||STATE.won) return;
   const m=monster;
+  /* the disruption pulse recurs from its current position */
+  m.shockTimer-=dt;
+  if(m.shockTimer<=0){ triggerShockwave(m.pos.x,m.pos.z); m.shockTimer=shockPeriod(); }
   const dx=STATE.pos.x-m.pos.x, dz=STATE.pos.z-m.pos.z;
   const d=Math.hypot(dx,dz);
   m.repath-=dt;
@@ -247,7 +277,9 @@ export function updateMonster(dt){
            more often than chance — strongly so from very far away. It never
            paths AT the player, just into their general direction. */
         const farAway = d > W*CELL*0.65;
-        const c = Math.random()<(farAway? 0.65 : 0.28)
+        /* each objective cleared raises the toward-player bias another 5% */
+        const esc=sightMult();
+        const c = Math.random()<(farAway? Math.min(0.95,0.78*esc) : Math.min(0.88,0.34*esc))
           ? openCellToward(m.pos,STATE.pos) : randomOpenCell(0);
         const p=cellToWorld(c.cx,c.cy);
         setPathTo(p.x,p.z); m.repath=1.5;
