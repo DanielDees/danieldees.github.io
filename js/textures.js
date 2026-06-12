@@ -136,7 +136,9 @@ export function makeMoldTextures(wid,hgt,dep){
      in small steps so neighbouring lobes always overlap — independent
      scatter let big colonies split into separate-looking growths */
   const cx0=0.3+Math.random()*0.4;
-  const lobes=[{x:cx0, s:0.75+Math.random()*0.25}];     // dominant central lobe
+  /* d = per-lobe vigor: some patches of a colony are dense rot, others a
+     thin dusting — uniform density read as a homogeneous stamp */
+  const lobes=[{x:cx0, s:0.75+Math.random()*0.25, d:0.7+Math.random()*0.3}];
   const nL=Math.max(3,Math.round(wid*2.2+Math.random()*2));
   let xL=cx0, xR=cx0;
   for(let i=1;i<nL;i++){
@@ -144,7 +146,8 @@ export function makeMoldTextures(wid,hgt,dep){
     let x;
     if(Math.random()<0.5){ xL=Math.max(0.08,xL-step); x=xL; }
     else                 { xR=Math.min(0.92,xR+step); x=xR; }
-    lobes.push({x, s:(0.45+Math.random()*0.55)*(1-Math.abs(x-cx0)*0.45)});
+    lobes.push({x, s:(0.45+Math.random()*0.55)*(1-Math.abs(x-cx0)*0.45),
+                d:0.35+Math.random()*0.65});
   }
   const dab=(g,x,y,r,boost=1)=>{
     /* clamp sideways so no blob crosses the canvas border — a clipped blob
@@ -152,7 +155,7 @@ export function makeMoldTextures(wid,hgt,dep){
        left alone: they meet the floor seam / fade out by design. */
     x=Math.min(g.canvas.width-r,Math.max(r,x));
     const col=Math.random()<0.4? "26,46,22" : "10,14,9";
-    const a=(0.26+Math.random()*0.38)*boost;
+    const a=(0.16+Math.random()*0.46)*boost;     // wide alpha spread: patchy, not uniform
     const gr=g.createRadialGradient(x,y,0.3,x,y,r);
     gr.addColorStop(0,`rgba(${col},${a})`);gr.addColorStop(1,`rgba(${col},0)`);
     g.fillStyle=gr;g.beginPath();g.arc(x,y,r,0,7);g.fill();
@@ -163,7 +166,8 @@ export function makeMoldTextures(wid,hgt,dep){
       /* branching walk climbing up from the seam; a wide angle fan lets it
          also creep sideways so neighboring lobes knit together */
       const nodes=[{x:lo.x*w, y:h, r:h*(0.11+Math.random()*0.13)*lo.s+3}];
-      for(let i=0;i<60;i++){
+      const nN=Math.round((28+Math.random()*44)*lo.d);
+      for(let i=0;i<nN;i++){
         /* parent choice biased to early (big, low) nodes: growth stays
            bottom-heavy instead of spraying fine speckles up the wall */
         const n=nodes[Math.floor(Math.pow(Math.random(),1.6)*nodes.length)];
@@ -173,11 +177,14 @@ export function makeMoldTextures(wid,hgt,dep){
         nodes.push({x:Math.min(w-r,Math.max(r,n.x+Math.cos(a)*n.r*1.4)),
                     y:Math.min(h,Math.max(r,n.y+Math.sin(a)*n.r*1.4)), r});
       }
-      for(const n of nodes) dab(g,n.x,n.y,n.r, 0.55+0.45*(n.y/h));   // thins with height
+      for(const n of nodes){
+        if(Math.random()<0.22) continue;                // dropout: gaps inside the mass
+        dab(g,n.x,n.y,n.r, (0.45+0.75*lo.d)*(0.55+0.45*(n.y/h)));   // thins with height
+      }
       /* heavier rot right at the seam, only under this lobe — never a
          uniform full-width band (that read as a hard slab edge) */
-      for(let i=0;i<8;i++)
-        dab(g, lo.x*w+(Math.random()-0.5)*w*0.16*lo.s, h-Math.random()*3, (2.5+Math.random()*4*lo.s)*h/64+1, 1.25);
+      for(let i=0,nC=3+5*lo.d;i<nC;i++)
+        dab(g, lo.x*w+(Math.random()-0.5)*w*0.16*lo.s, h-Math.random()*3, (2.5+Math.random()*4*lo.s)*h/64+1, 1.25*lo.d);
     }
     /* connective crust: low dabs strung between the outermost lobes so the
        colony stays one organism, thinning toward its edges */
@@ -195,14 +202,14 @@ export function makeMoldTextures(wid,hgt,dep){
     for(const lo of lobes){
       /* the same lobe spilling outward: speckles crowd the wall edge and
          thin out across the carpet */
-      const n=24+Math.random()*18;
+      const n=(24+Math.random()*18)*lo.d;
       for(let i=0;i<n;i++){
         const y=Math.pow(Math.random(),2)*h*lo.s;
         const x=lo.x*w+(Math.random()-0.5)*w*(0.10+0.14*lo.s)*(0.4+y/h);
-        dab(g, x, y, (1.2+Math.random()*4.2*lo.s)*(1.1-y/h*0.6), 1.15);
+        dab(g, x, y, (1.2+Math.random()*4.2*lo.s)*(1.1-y/h*0.6), 0.7+0.6*lo.d);
       }
-      for(let i=0;i<6;i++)   // seam crust mirroring the wall side
-        dab(g, lo.x*w+(Math.random()-0.5)*w*0.14*lo.s, Math.random()*2.5, 2+Math.random()*3.5*lo.s, 1.2);
+      for(let i=0,nC=2+4*lo.d;i<nC;i++)   // seam crust mirroring the wall side
+        dab(g, lo.x*w+(Math.random()-0.5)*w*0.14*lo.s, Math.random()*2.5, 2+Math.random()*3.5*lo.s, 1.2*lo.d);
     }
   });
   /* decals never tile and their canvases aren't power-of-two: clamp +
@@ -213,4 +220,21 @@ export function makeMoldTextures(wid,hgt,dep){
     t.generateMipmaps=false;
   }
   return {wall,floor};
+}
+/* cut a vertical strip [u0,u1] out of a colony texture — used when a colony
+   overhangs its wall section and continues around a corner. flip mirrors the
+   strip for wrap planes whose u-axis runs back toward the fold, so the
+   growth stays pixel-continuous across the corner. */
+export function sliceTexture(tex,u0,u1,flip=false){
+  const src=tex.image;
+  const sw=Math.max(2,Math.round(src.width*(u1-u0)));
+  const c=document.createElement("canvas"); c.width=sw; c.height=src.height;
+  const g=c.getContext("2d");
+  if(flip){ g.translate(sw,0); g.scale(-1,1); }
+  g.drawImage(src, src.width*u0,0,src.width*(u1-u0),src.height, 0,0,sw,src.height);
+  const t=new THREE.CanvasTexture(c);
+  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping;
+  t.minFilter=THREE.LinearFilter;
+  t.generateMipmaps=false;
+  return t;
 }

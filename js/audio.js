@@ -266,6 +266,43 @@ export function sfxGroan(vol,pan=0){ // distant wandering vocalization, panned t
   if(p){p.pan.value=pan; g.connect(p); p.connect(AU.sfx);} else g.connect(AU.sfx);
   o.start(t);o.stop(t+2);o2.start(t);o2.stop(t+2);
 }
+export function sfxShockwave(dur=9){
+  /* the wake announcement, held for as long as the light ring travels:
+     a deep pressure swell under a staggered cluster of detuned voices —
+     minor seconds and tritones across four octaves, each with its own slow
+     attack, stereo position and pitch drift, smearing into one wrong chord */
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  const out=C.createGain(); out.gain.value=1; out.connect(AU.sfx);
+  // sub pressure: swells up, then bends down and away
+  const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(30,t);
+  o.frequency.linearRampToValueAtTime(50,t+dur*0.3);
+  o.frequency.exponentialRampToValueAtTime(22,t+dur);
+  const g=C.createGain();env(g,t,dur*0.45,0.5,dur*0.55);
+  o.connect(g);g.connect(out);o.start(t);o.stop(t+dur+0.4);
+  // the cluster: [freq, peak, wave, entry delay]
+  [[55,0.20,"sine",0],[82.4,0.13,"triangle",0.5],[110,0.11,"sine",0.9],
+   [155.6,0.085,"sine",1.5],[164.8,0.07,"triangle",2.2],[311.1,0.05,"sine",1.1],
+   [466.2,0.035,"sine",2.8],[392,0.06,"sine",0.4],[415.3,0.055,"sine",0.4]
+  ].forEach(([f,v,type,at])=>{
+    const o2=C.createOscillator();o2.type=type;
+    o2.frequency.setValueAtTime(f*(1+rand(-0.008,0.008)),t+at);
+    o2.frequency.linearRampToValueAtTime(f*(Math.random()<0.5?0.94:1.06),t+dur);
+    const g2=C.createGain();env(g2,t+at,(dur-at)*0.65,v,(dur-at)*0.35);   // rises late, holds through the sweep
+    const p2=C.createStereoPanner?C.createStereoPanner():null;
+    o2.connect(g2);
+    if(p2){p2.pan.value=rand(-0.7,0.7);g2.connect(p2);p2.connect(out);}
+    else g2.connect(out);
+    o2.start(t+at);o2.stop(t+dur+0.4);
+  });
+  // airy rising sweep across the whole span
+  const len=Math.floor(C.sampleRate*dur),buf=C.createBuffer(1,len,C.sampleRate);
+  const d=buf.getChannelData(0);for(let i=0;i<len;i++)d[i]=Math.random()*2-1;
+  const src=C.createBufferSource();src.buffer=buf;
+  const f=C.createBiquadFilter();f.type="bandpass";f.Q.value=1.1;
+  f.frequency.setValueAtTime(260,t);f.frequency.exponentialRampToValueAtTime(2600,t+dur);
+  const g3=C.createGain();env(g3,t,dur*0.3,0.07,dur*0.7);
+  src.connect(f);f.connect(g3);g3.connect(out);src.start(t);
+}
 export function sfxDeath(){
   if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
   const o=C.createOscillator();o.type="sawtooth";o.frequency.setValueAtTime(300,t);
