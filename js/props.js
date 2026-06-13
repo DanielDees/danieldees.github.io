@@ -172,7 +172,8 @@ export function makeElevator(p,facing,opts={}){
   /* red emergency lamp over the back wall */
   const emergMat=new THREE.MeshBasicMaterial({color:0x1c0404});
   const emerg=new THREE.Mesh(new THREE.SphereGeometry(0.045,8,8),emergMat);
-  emerg.position.set(0,OPEN_H-0.22,-DEPTH+0.1); g.add(emerg); g.userData.emergMat=emergMat;
+  emerg.position.set(0,OPEN_H-0.22,-DEPTH+0.1); g.add(emerg);
+  g.userData.emergMat=emergMat; g.userData.emerg=emerg;
   /* handrails on the back and both sides */
   const railM=darkMetal;
   const railB=new THREE.Mesh(new THREE.CylinderGeometry(0.025,0.025,OPEN_W-0.45,8),railM);

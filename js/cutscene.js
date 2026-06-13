@@ -7,7 +7,7 @@
 import { clamp, lerp, angLerp } from "./utils.js";
 import { STATE, monster, spider } from "./state.js";
 import { worldToCell, isWall, losCells } from "./map.js";
-import { camera, playerLight } from "./scene.js";
+import { camera, playerLight, amb } from "./scene.js";
 import { AU, panTo, sfxAlert, sfxStinger, sfxClunk, sfxPowerOn,
          sfxBoxOpen, sfxBoxClose, sfxFuseHum,
          sfxElevButton, sfxElevDing, sfxElevDoors, sfxElevThud, sfxElevJolt, sfxFloorBlip,
@@ -42,6 +42,7 @@ export function updateCinematic(dt){
   if(!CINE.active) return;
   if(STATE.dead||STATE.won){                  // safety: nothing to script anymore
     if(CINE.kind==="breaker"&&D) playerLight.intensity=D.savedPL;
+    if(CINE.kind==="elev"){ STATE.ambDim=1; playerLight.intensity=0.12; }
     CINE.active=false; CINE.kind=null; D=null;
     monster.holdAt30=false; monster.held=false;
     return;
@@ -164,6 +165,12 @@ export function startElevatorCine(item){
        yaw=angLerp(aOutY,yaw,0.90);
        return {yaw,pitch}; })(),
      cabEye, descend:null, monRun:null, sparks:makeSparks(g)};
+  /* the emergency lamp gets a REAL point source parked at the fixture —
+     the same dim, distance-falloff red as the crashed cab in THE END —
+     instead of recoloring the bright ceiling panel into a screen wash */
+  const eml=new THREE.PointLight(0xff2515,0,5,2);
+  eml.position.copy(u.emerg.position); eml.position.z+=0.25; eml.position.y-=0.08;
+  g.add(eml); D.emergLight=eml;
   /* the entity is wherever its AI left it — vanish it until the script
      conjures it sprinting down the corridor */
   monster.mesh.visible=false;
@@ -278,20 +285,35 @@ function updateElevator(dt){
   const slide=seg(t,T_DOORS_O,T_DOORS_O+1.4)-seg(t,T_DOORS_C,T_DOORS_C+1.3);
   u.doorL.position.x=-(0.515+1.0*slide);
   u.doorR.position.x= (0.515+1.0*slide);
-  /* ---- cab light: hue strobes only until the lights die at the lurch ---- */
-  let inten=0.72*seg(t,3.5,4.3), col=[1,0.93,0.78];
+  /* ---- cab light: the main panel stays WHITE — its level sags and
+     stutters as the power fails, and it dies outright at the lurch. The
+     red lives where it belongs: the emergency lamp at the back of the cab,
+     a dim point source with the same falloff as the crashed cab in THE
+     END, sputtering awake through the haywire phase and settling into a
+     slow breathe once it is the only light left. ---- */
+  let inten=0.72*seg(t,3.5,4.3);
+  const col=[1,0.93,0.78];
+  let em=0;                                   // emergency lamp drive 0..1
   if(t>=T_HAY && t<T_LURCH){
-    /* the hue stumbles between blood-red and normal — kept at a slow
-       sputter (≈6/s) with mild level swings: dread, not a strobe test */
-    const st=Math.floor(t*6);
-    if(hash(st)< 0.35+0.3*seg(t,T_HAY,T_LURCH)) col=[1,0.16,0.10];
-    inten=0.78*(0.72+hash(st*1.7+9)*0.28);
+    const st=Math.floor(t*6);                 // ≈6/s sputter: dread, not a strobe
+    inten=0.78*(0.55+hash(st*1.7+9)*0.45);    // brown-out level swings, still white
+    if(hash(st)< 0.35+0.3*seg(t,T_HAY,T_LURCH)) em=1;
   }
-  if(t>=T_LURCH){ col=[1,0.13,0.07]; inten=0.18; }            // emergency light only
+  if(t>=T_LURCH){ inten=0; em=1; }            // panel dead; emergency lamp only
   u.cabLight.intensity=inten;
   u.cabLight.color.setRGB(col[0],col[1],col[2]);
   const pb=clamp(inten/0.72,0,1)*0.85+0.08;
   u.cabLightMat.color.setRGB(col[0]*pb,col[1]*pb,col[2]*pb);
+  if(D.emergLight){
+    D.emergLight.intensity=em*(t>=T_LURCH? 0.42+0.05*Math.sin(t*2.6) : 0.5);
+    u.emergMat.color.setHex(em? 0xff2515 : 0x1c0404);
+  }
+  /* the ambient floor drains away through the failure — by the lurch the
+     cab is ~50% darker and what light remains is the lamp and the sparks.
+     hemi follows via STATE.ambDim (lights.js owns that lerp). */
+  const dimA=1-0.5*seg(t,T_POP,T_LURCH);
+  STATE.ambDim=dimA;
+  amb.intensity=0.05*dimA; playerLight.intensity=0.12*dimA;
   /* ---- floor indicator & button panel going haywire: self-lit, so they
      keep glitching through the dark fall, all the way to full black ---- */
   if(t>=T_HAY && t<T_FADE1){
@@ -420,6 +442,10 @@ function updateElevator(dt){
   if(t>=T_END){
     CINE.active=false; CINE.kind=null; D=null;
     ui.dread.style.opacity=0; ui.staticfx.style.opacity=0;
+    /* hand the lighting rig back: THE END sets its own hemi/amb profile,
+       but the dim multiplier and player fill are ours to restore */
+    STATE.ambDim=1;
+    playerLight.intensity=0.12;
     /* the brakes never caught. The screen is already black: the crash IS
        the transition — you wake up somewhere much quieter. */
     enterTheEnd();

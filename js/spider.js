@@ -156,11 +156,14 @@ function setPath2(wx,wz){
   if(spider.path.length>1) spider.path.shift();
   spider.path=smoothPath2(spider.path);
 }
-/* nearly blind, but not blind: it spots open movement at short range */
+/* nearly blind, but not blind: it spots open MOVEMENT at short range.
+   Standing perfectly still reads the same as crouching — it keys on motion,
+   not posture, so freezing in place (camera turns included) is safe down to
+   the crouch radius. */
 function spiderCanSee(){
   if(underTable(STATE.pos.x,STATE.pos.z)) return false;
   const d=spider.pos.distanceTo(STATE.pos);
-  const range=STATE.crouch? 6:13;
+  const range=(STATE.crouch||!STATE.moving)? 6:13;
   if(d>range) return false;
   return losCells2(spider.pos.x,spider.pos.z,STATE.pos.x,STATE.pos.z);
 }

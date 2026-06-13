@@ -25,8 +25,13 @@ canvas{display:block}
 @keyframes staticjit{0%{transform:translate(0,0)}25%{transform:translate(-18px,12px)}50%{transform:translate(14px,-16px)}75%{transform:translate(-10px,-9px)}100%{transform:translate(0,0)}}
 
 /* ---------- HUD ---------- */
-#hud{position:fixed;inset:0;pointer-events:none;opacity:0;transition:opacity .4s}
+#hud{position:fixed;inset:0;pointer-events:none;opacity:0;transition:opacity 1s}
 #hud.on{opacity:1}
+/* cutscenes own the screen: while the camera is scripted the whole HUD —
+   objectives, stamina, menu button, key hints — bows out on a 1s fade,
+   and the faded menu button stops catching clicks */
+#hud.cine{opacity:0}
+#hud.cine #topright{pointer-events:none}
 .panel{background:rgba(8,7,4,.72);border:1px solid rgba(216,194,102,.28);backdrop-filter:blur(2px)}
 #objectives{position:fixed;top:18px;left:18px;padding:16px 20px;max-width:410px}
 #objectives h3{font-size:14px;letter-spacing:.28em;color:var(--yellow);font-weight:400;margin-bottom:10px}

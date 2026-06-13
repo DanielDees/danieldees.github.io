@@ -27,7 +27,9 @@ function collide(px,pz,r){
   return {x:nx,z:nz};
 }
 export function updatePlayer(dt){
-  const wantCrouch = STATE.grounded && !!(KEYS["KeyC"]||KEYS["ControlLeft"]);
+  const crouchKey = STATE.crouchToggle? STATE.crouchLatch
+                                      : !!(KEYS["KeyC"]||KEYS["ControlLeft"]);
+  const wantCrouch = STATE.grounded && crouchKey;
   /* in the library you cannot stand up with a tabletop over your head */
   STATE.crouch = wantCrouch ||
     (STATE.level===1 && STATE.crouch && underTable(STATE.pos.x,STATE.pos.z));
