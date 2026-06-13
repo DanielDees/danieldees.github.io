@@ -131,6 +131,39 @@ export function debugSkipToTheEnd(){
     toast("DEBUG: every disk pocketed.",2000);
   }
 }
+/* debug warp (type "the end"): set THE END up for the final cutscene — every
+   disk in your pockets, the librarian parked far off, and you standing right
+   at the terminal. Press [E] to play the ending. Works from either level. */
+export function debugWarpToTerminal(){
+  if(!STATE.playing||STATE.dead||STATE.won) return;
+  if(STATE.level===0){
+    STATE.bottles=3; STATE.hasFuse=true; STATE.powerOn=true; STATE.objective=3;
+    enterTheEnd();                       // builds the library + starts the intro
+  }
+  /* skip whatever cinematic is running and lift its black hold */
+  if(CINE.active){ CINE.active=false; CINE.kind=null; }
+  ui.flash.style.transition="none"; ui.flash.style.opacity=0;
+  ui.dread.style.opacity=0; ui.staticfx.style.opacity=0;
+  /* the level is fully awake and the librarian is on its rounds */
+  STATE.libWakeT=-1;
+  spider.active=true;
+  if(spider.mesh) spider.mesh.visible=true;
+  /* pocket every remaining disk so a single delivery clears the count */
+  for(const it of interactables){
+    if(it.kind!=="disc"||it.taken) continue;
+    it.taken=true; scene.remove(it.mesh);
+    STATE.discsCarried++; STATE.discsFound++;
+  }
+  if(STATE.libFirstPickup<0) STATE.libFirstPickup=STATE.time;
+  /* park it far from the desk so it can't crash the test */
+  resetSpider(LIB.deskPos.x, LIB.deskPos.z, 40);
+  /* stand just south of the desk (the terminal faces that way), looking at it */
+  STATE.pos.set(LIB.deskPos.x, 0, LIB.deskPos.z+1.9);
+  STATE.y=0; STATE.vy=0; STATE.grounded=true; STATE.velX=0; STATE.velZ=0;
+  STATE.yaw=0; STATE.pitch=-0.05; STATE.crouch=false; STATE.crouchLatch=false;
+  renderObjectives();
+  toast("DEBUG: at the terminal, disks in hand.",2200);
+}
 export function die(){
   if(STATE.dead) return;
   STATE.dead=true; STATE.deaths++;

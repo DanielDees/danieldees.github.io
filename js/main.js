@@ -22,7 +22,7 @@ import { updateFocus } from "./interact.js";
 import { CINE, updateCinematic, startBreakerCine, startElevatorCine,
          startTheEndIntro, startTerminalCine } from "./cutscene.js";
 import { updateLibrary, LIB, grid2 } from "./library.js";
-import { enterTheEnd, debugSkipToTheEnd } from "./lifecycle.js";
+import { enterTheEnd, debugSkipToTheEnd, debugWarpToTerminal } from "./lifecycle.js";
 import { ui, renderObjectives } from "./ui.js";
 import "./input.js";
 
@@ -58,7 +58,7 @@ requestAnimationFrame(loop);
 /* console/debug handle (also used by automated smoke tests) */
 window.NOCLIP_DEBUG={STATE, monster, spider, CINE, scene, camera,
   startBreakerCine, startElevatorCine, startTheEndIntro, startTerminalCine,
-  enterTheEnd, debugSkipToTheEnd,
+  enterTheEnd, debugSkipToTheEnd, debugWarpToTerminal,
   get interactables(){ return interactables; },
   get exitDoor(){ return exitDoor; },
   get LIB(){ return LIB; },
