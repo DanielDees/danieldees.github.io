@@ -1,6 +1,6 @@
 # NOCLIP — Escape the Backrooms
 
-**Version: v2.2.0**
+**Version: v2.3.0**
 
 A browser-based survival horror game, playable at
 [danieldees.github.io](https://danieldees.github.io). Vanilla JS ES modules built
@@ -27,10 +27,13 @@ of the cab on the floor of a vast, dim library: half-abandoned stacks, dead
 machines, and a horse-sized blind spider that pads between the shelves. It cannot see you — it
 **hears** you, and it keys on **motion**: every footfall above a crouch, every floppy
 disk you pull from a shelf, draws it closer, but holding perfectly still — even
-uncrouched, even turning to look — reads as safe. Find the scattered disks and feed
-them to the terminal at the heart of the room while staying quiet and using the tables
-for cover. Fifty-five seconds after you take the first disk, the lights burn down to
-embers and the library wakes up the rest of the way.
+uncrouched, even turning to look — reads as safe. And it does not stay on the floor:
+when it loses your trail it **crawls the walls and webs up to the ceiling** to cut across
+the room, then **drops on you** from above — a telegraphed plunge you survive only by
+moving clear, crouch or not. Find the scattered disks and feed them to the terminal at
+the heart of the room while staying quiet and using the tables for cover. About a minute
+and a half after you take the first disk, the lights burn down to embers and the library
+wakes up the rest of the way.
 
 ## Controls
 
@@ -47,6 +50,35 @@ Headphones recommended — audio is positional, and both monsters are far easier
 track by ear.
 
 ## Changelog
+
+### v2.3.0 (2026-06-13)
+- **The librarian climbs.** The spider gains a third dimension. When it loses your
+  trail it crawls the **perimeter walls** and webs itself up to the **ceiling** to
+  reposition across the room, righting its whole body and eight-leg gait to whatever
+  surface it's on. On a far disc pickup it now takes the faster surface route —
+  rounding wall corners or gliding straight over the ceiling — instead of slogging the
+  floor. New pickups **re-route it mid-glide** to the newest disk (unless it's already
+  committed to a descent).
+- **Drop attacks & silk.** Once overhead it **rappels straight down head-first on a
+  silk line** — a telegraphed plunge (1.5 s wind-up + a fast descent) you escape only
+  by moving out from under it; crouching does **not** save you from a drop. Severed
+  rappel lines shrivel into **persistent coils that accumulate on the ceiling**,
+  dressing the room with the evidence of the hunt.
+- **Surface-aware hearing.** Detection is now properly **cylindrical** — the spider
+  hears you by horizontal distance whether it's on the floor, a wall, or the ceiling
+  (so a player directly below an overhead spider is squarely in range). A wall-mounted
+  spider only faces a semicircle, so its hearing reaches **+40%** to compensate, and a
+  player who runs near it on the wall now pulls it off its errand to pursue.
+- **Faster, tenser loop.** Base wander speed is doubled and the calm browse → pause
+  cycle is much shorter, so the spider covers ground and leaves the floor far more
+  often instead of plodding. Chase / stalk / mild-seek sit at 1.4× / 1.25× / 1.1× the
+  wander pace. Fewer bookshelf runs and **two to three more disks** tighten the search;
+  the burnout blackout is pushed back to give the new pace room to breathe.
+- **More survivable stealth.** Crouched-and-still detection drops 30% and ordinary
+  movement 20%, with running read a touch farther than walking — quiet, deliberate
+  play is rewarded against a spider that is now much more mobile.
+- **Atmosphere.** The library ceiling's faint backlight is brighter and its hue dialed
+  toward neutral so the climbing silhouette reads cleanly overhead against it.
 
 ### v2.2.0 (2026-06-12)
 - **Distinct 3D bookend & archive-box assets.** Bookends that used to read as

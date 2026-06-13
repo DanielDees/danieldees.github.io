@@ -12,10 +12,10 @@
      airborne; crouching slips under the library's tables.
    ===================================================================== */
 import { STATE, monster, spider } from "./state.js";
-import { scene, camera, renderer } from "./scene.js";
+import { scene, camera, renderer, lights } from "./scene.js";
 import { updatePlayer } from "./player.js";
 import { updateMonster } from "./monster.js";
-import { updateSpider } from "./spider.js";
+import { updateSpider, debugSpiderToWall, debugSpiderToCeiling, spiderHearDisc, debugSpiderDiscTransit } from "./spider.js";
 import { updateLights } from "./lights.js";
 import { updateProps, interactables, exitDoor } from "./props.js";
 import { updateFocus } from "./interact.js";
@@ -59,7 +59,9 @@ requestAnimationFrame(loop);
 window.NOCLIP_DEBUG={STATE, monster, spider, CINE, scene, camera,
   startBreakerCine, startElevatorCine, startTheEndIntro, startTerminalCine,
   enterTheEnd, debugSkipToTheEnd, debugWarpToTerminal,
+  debugSpiderToWall, debugSpiderToCeiling, spiderHearDisc, debugSpiderDiscTransit,
   get interactables(){ return interactables; },
   get exitDoor(){ return exitDoor; },
   get LIB(){ return LIB; },
-  get grid2(){ return grid2; }};
+  get grid2(){ return grid2; },
+  get lights(){ return lights; }};

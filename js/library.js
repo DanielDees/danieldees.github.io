@@ -25,13 +25,14 @@ import { makeCanvas, texLibWall, texLibCarpet, texLibCeil, texShelfWood, texDesk
 import { makeElevator, ELEV, addInteractable } from "./props.js";
 import { sfxLightsOut, escalateLibraryAmbience, sfxComputerBoot, sfxComputerStatic } from "./audio.js";
 
-export const LW=25, LH=25, LIB_WALL_H=8.0;       // −30% footprint: it dragged at 35²
+export const LW=25, LH=25, LIB_WALL_H=24.0;      // −30% footprint; tall ceiling gives the spider room to climb
 export const ROOM_SPAN=LW*CELL;                  // 100m — reaction times scale off this
 export let grid2=null;
 export const cellToWorld2=(cx,cy)=>({x:(cx-LW/2+0.5)*CELL, z:(cy-LH/2+0.5)*CELL});
 export const worldToCell2=(x,z)=>({cx:Math.floor(x/CELL+LW/2), cy:Math.floor(z/CELL+LH/2)});
 const inB=(cx,cy)=>cx>0&&cy>0&&cx<LW-1&&cy<LH-1;
 const K=(cx,cy)=>cy*LW+cx;
+const hashLib=n=>{const s=Math.sin(n)*43758.5453; return s-Math.floor(s);};   // deterministic 0..1 noise (blackout flicker)
 
 /* shared level handles: the cutscenes and the spider read these */
 export const LIB={
@@ -41,7 +42,8 @@ export const LIB={
   runs:[],                            // shelf segments (visual + browse targets)
   obstacles:[],                       // free-standing circle colliders (chairs, lecterns, ladders)
   pcAnims:[],                         // decor computers mid-boot
-  blackT:0, nextBlack:45,             // temporary whole-floor light failures
+  blackActive:false, blackElapsed:0, blackDur:0, nextBlack:35,   // periodic light failures (staggered 2s wave)
+  webs:[], webGroup:null,             // the spider's silk: live rappel strands + shrivelled coils left on the ceiling
 };
 /* the stacks' shared dimensions: collision, the ladders and the disc sites
    all derive from these so a resize can never strand them again */
@@ -169,7 +171,7 @@ function genLibrary(){
      free to converge with one another. Carving only marks grid cells —
      the visual/browse segments are derived from the FINAL grid below, so
      collision and graphics can never drift apart. */
-  for(let t=0;t<36;t++){             // scaled with the smaller floor, −10%
+  for(let t=0;t<32;t++){             // fewer runs → fewer disc-search spots (faster pace)
     /* the wall-hugging ring (cells 1 / LW-2) stays shelf-free: there is
        always a clear lap around the edge of the room */
     const fromWall=srand()<0.30;
@@ -986,11 +988,11 @@ const housingGeo2=new THREE.BoxGeometry(2.2,0.1,0.34);
 const housingMat2=new THREE.MeshPhongMaterial({color:0x6a6e66,emissive:0x070706,
   specular:0x3a3c36,shininess:40});
 const cordGeo=new THREE.CylinderGeometry(0.012,0.012,1,4);
-function makeFixture(wx,wz,alongZ){
+function makeFixture(wx,wz,alongZ,fy=3.78){     // base layer hung +20% higher (3.15→3.78) to widen each pool against the new dropoff
   const g=new THREE.Group();
   const glowMat=new THREE.MeshBasicMaterial({color:0x111008});
   const tubeMat=new THREE.MeshBasicMaterial({color:0x111008});
-  const FY=3.15;                                   // hung 3.15m up, far below the 8m ceiling
+  const FY=fy;                                     // hung this high; the cord reaches up from here to the ceiling
   const housing=new THREE.Mesh(housingGeo2,housingMat2);
   housing.position.y=FY+0.05; g.add(housing);
   const plate=new THREE.Mesh(new THREE.PlaneGeometry(2.1,0.3),glowMat);
@@ -1012,18 +1014,24 @@ function makeFixture(wx,wz,alongZ){
 /* ---------------- build ---------------- */
 export function buildLibrary(){
   ensureBooks();                       // the design pool, built on first visit
-  LIB.obstacles=[]; LIB.pcAnims=[]; LIB.blackT=0; LIB.nextBlack=45;
+  LIB.obstacles=[]; LIB.pcAnims=[]; LIB.blackActive=false; LIB.blackElapsed=0; LIB.nextBlack=35;
+  LIB.webs=[]; LIB.webGroup=new THREE.Group(); scene.add(LIB.webGroup);
   const {cx0,cy0,spawnC,tables}=genLibrary();
   const SZ=LW*CELL;
-  const libWallMat=new THREE.MeshPhongMaterial({map:texLibWall, specular:0x0c0b09, shininess:5});
+  /* a very faint warm self-glow on the walls & ceiling: not light to see BY,
+     just enough that the dark spider reads as a silhouette against them */
+  const libWallMat=new THREE.MeshPhongMaterial({map:texLibWall, specular:0x0c0b09, shininess:5,
+    emissive:0x010101});
   /* floor & high ceiling */
   texLibCarpet.repeat.set(LW,LH);
   const floor=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),
     new THREE.MeshPhongMaterial({map:texLibCarpet, specular:0x000000, shininess:1}));
   floor.rotation.x=-Math.PI/2; scene.add(floor);
   texLibCeil.repeat.set(LW/2,LH/2);
-  const ceil=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),
-    new THREE.MeshPhongMaterial({map:texLibCeil, specular:0x000000, shininess:1}));
+  const ceilMat=new THREE.MeshPhongMaterial({map:texLibCeil, specular:0x000000, shininess:1, emissive:0x020100});
+  ceilMat.emissive.setRGB(1.25/255, 1.0/255, 0.75/255);  // hue nudged 75% from warm 0x020100 toward the neutral wall backlight (0x010101)
+  ceilMat.emissiveIntensity=3.00;     // ceiling backlight brightness (renderer scales the emissive)
+  const ceil=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ), ceilMat);
   ceil.rotation.x=Math.PI/2; ceil.position.y=LIB_WALL_H; scene.add(ceil);
   /* perimeter walls — one cell is the crashed elevator's. UVs are scaled
      to 4m-per-tile world space so the plaster maps at one density on every
@@ -1226,7 +1234,8 @@ export function buildLibrary(){
      strips idle a deep yellow; the burnout's warmth push drags the same
      pipeline on into orange-red. */
   for(let gy=2;gy<LH-2;gy+=3)for(let gx=2;gx<LW-2;gx+=3){
-    const x=clamp(gx+Math.floor(srand()*3)-1,1,LW-2), y=clamp(gy+Math.floor(srand()*3)-1,1,LH-2);
+    /* marginal jitter: mostly grid-true, an occasional ±1 — softens the lattice without clustering */
+    const x=clamp(gx+(srand()<0.6?0:(srand()<0.5?-1:1)),1,LW-2), y=clamp(gy+(srand()<0.6?0:(srand()<0.5?-1:1)),1,LH-2);
     if(grid2[y][x]!==0) continue;
     if(Math.abs(x-cx0)<2&&Math.abs(y-cy0)<2) continue;     // the desk gets its own
     if(x===cx0&&y===LH-3) continue;                         // …and so does the wreck apron
@@ -1238,6 +1247,27 @@ export function buildLibrary(){
     lights.push(makeLightRecord(fx.glowMat,fx.tubeMat,x,y,p,
       {warm, bright:warm?1:rand(0.72,0.92), dimDen:0.28,
        flickery:Math.random()<0.40, fixY:fx.fixY}));
+  }
+  /* v2.3: a second, higher tier of strips — same count, but scattered UP
+     through the new air so the tall space doesn't read as empty. Elevations
+     run from ~50% above the low strips (4.7m) to within a floor-to-strip gap
+     of the ceiling. Offset half a grid step to intersperse with the low set. */
+  {
+    const HI_LO=3.15*1.5, HI_HI=LIB_WALL_H-3.15;
+    for(let gy=3;gy<LH-2;gy+=3)for(let gx=3;gx<LW-2;gx+=3){
+      /* fully even grid, NO xz jitter and NO random skip — every interior cell gets a
+         strip, floating free above everything (clips nothing, never clusters). Only the
+         elevation varies, so the layer reads as an even canopy at mixed heights. */
+      if(Math.abs(gx-cx0)<2&&Math.abs(gy-cy0)<2) continue;     // the desk has its own beacon
+      const fy=HI_LO+srand()*(HI_HI-HI_LO);
+      const p=cellToWorld2(gx,gy);
+      const fx=makeFixture(p.x,p.z,srand()<0.5,fy);
+      scene.add(fx.group);
+      const warm=Math.random()<0.12;
+      lights.push(makeLightRecord(fx.glowMat,fx.tubeMat,gx,gy,p,
+        {warm, bright:warm?1:rand(0.72,0.92), dimDen:0.28,
+         flickery:Math.random()<0.40, fixY:fx.fixY}));
+    }
   }
   /* two strips are never left dark or faulty: one over the desk (the beacon
      you steer by) and one over the wreck apron (the first to wake) */
@@ -1252,7 +1282,7 @@ export function buildLibrary(){
   for(const L of lights)
     L.wakeAt=0.4+Math.hypot(L.world.x-LIB.spawn.x,L.world.z-LIB.spawn.z)*0.055+Math.random()*0.3;
   /* ---- the floppy disks ---- */
-  STATE.discTotal=16+Math.floor(srand()*7);                 // 16–22
+  STATE.discTotal=18+Math.floor(srand()*6);                 // 18–23
   const sites=[];
   for(const run of LIB.runs){
     const [dx,dy]=run.axis===0? [0,1] : [1,0];
@@ -1313,15 +1343,68 @@ export function buildLibrary(){
 }
 
 /* ---------------- per-frame level logic ---------------- */
+/* ---------------- the librarian's silk ----------------
+   Webs hang from the ceiling. A LIVE strand follows the spider as it shoots
+   up to / rappels down from the ceiling; on severing it shrivels into a
+   shorter, wavy coil that stays forever (they accumulate). None of them
+   collide — they are pure dressing. */
+const webMat=new THREE.MeshBasicMaterial({color:0xd9dee1, transparent:true,
+  opacity:0.32, depthWrite:false});
+/* a strand hanging from ceiling point `top`, `len` metres long. `wavy` (0..1)
+   bows it out of plumb so a settled coil reads as silk, not wire. */
+function buildStrand(top,len,wavy,seed){
+  const N=10, pts=[];
+  for(let i=0;i<=N;i++){
+    const f=i/N;
+    let ox=0, oz=0;
+    if(wavy>0){
+      const amp=wavy*0.22*Math.sin(f*Math.PI);          // bows most at the middle
+      ox=Math.sin(seed*1.7+f*8.5)*amp;
+      oz=Math.cos(seed*2.3+f*7.1)*amp;
+    }
+    pts.push(new THREE.Vector3(top.x+ox, top.y-len*f, top.z+oz));
+  }
+  return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts),14,0.013,4,false);
+}
+function reskin(rec,len,wavy){
+  if(rec.mesh.geometry) rec.mesh.geometry.dispose();
+  rec.mesh.geometry=buildStrand(rec.top,len,wavy,rec.seed);
+}
+/* begin a live strand from ceiling `top` down to world point `bottom` */
+export function spawnWeb(top,bottom){
+  const rec={top:top.clone(), len:Math.max(0.1,top.y-bottom.y), botY:bottom.y,
+             seed:Math.random()*99, live:true, dirty:false, sever:false,
+             shrivelT:0, fullLen:0, finalLen:0};
+  rec.mesh=new THREE.Mesh(buildStrand(rec.top,rec.len,0,rec.seed),webMat);
+  LIB.webGroup.add(rec.mesh); LIB.webs.push(rec);
+  return rec;
+}
+/* the spider has moved: re-anchor the live strand's lower end */
+export function updateWeb(rec,bottomY){ if(rec&&rec.live){ rec.botY=bottomY; rec.dirty=true; } }
+/* pull the strand back in (floor→ceiling ascent leaves no trace) */
+export function removeWeb(rec){
+  if(!rec) return;
+  if(rec.mesh.geometry) rec.mesh.geometry.dispose();
+  LIB.webGroup.remove(rec.mesh);
+  LIB.webs=LIB.webs.filter(w=>w!==rec);
+}
+/* cut it loose at the floor: it shrivels to 40–70% length, bows, and stays */
+export function severWeb(rec){
+  if(!rec||!rec.live) return;
+  rec.live=false; rec.sever=true; rec.shrivelT=0;
+  rec.fullLen=Math.max(0.1,rec.top.y-rec.botY);
+  rec.finalLen=rec.fullLen*rand(0.4,0.7);
+}
+
 export function updateLibrary(dt){
   /* the intro's wake-up wave clock */
   if(STATE.libWakeT>=0){
     STATE.libWakeT+=dt;
     if(STATE.libWakeT>14) STATE.libWakeT=-1;      // every fixture is long awake
   }
-  /* 55 seconds after the first disk leaves its shelf, the building answers:
+  /* 95 seconds after the first disk leaves its shelf, the building answers:
      every light drops to a quarter of its brightness and goes sodium-warm */
-  if(!STATE.libDim && STATE.libFirstPickup>=0 && STATE.time-STATE.libFirstPickup>=55){
+  if(!STATE.libDim && STATE.libFirstPickup>=0 && STATE.time-STATE.libFirstPickup>=95){
     STATE.libDim=true;
     /* deal each strip its burn: most settle at orange (warmth ≈1 is the
        brightest hue the grid will reach again), ~40% burn past it into
@@ -1335,14 +1418,30 @@ export function updateLibrary(dt){
   }
   /* post-drop: an almost unnoticeable, slow sway in the world */
   STATE.shakeAmp=lerp(STATE.shakeAmp, STATE.libDim?0.013:0, Math.min(1,dt*0.5));
-  /* the lights sometimes shut off temporarily, all of them */
-  if(LIB.blackT>0){
-    LIB.blackT-=dt;
-    STATE.libBlackout=Math.min(1,STATE.libBlackout+dt*9);
-    if(LIB.blackT<=0){ STATE.libBlackout=0; LIB.nextBlack=rand(55,115); }
+  /* the lights sometimes shut off temporarily — not all at once: over a 2s
+     window each strip flickers for 1s at its own random moment, drops dark for
+     the failure's length, then flicks back on. Each strip's blackMul (read in
+     lights.js) carries its state; STATE.libBlackout stays reserved for the
+     scripted cutscene black. */
+  if(LIB.blackActive){
+    LIB.blackElapsed+=dt;
+    const tN=performance.now()/1000;
+    const total=2+1+LIB.blackDur;                       // onset window + 1s flicker + dark
+    for(const L of lights){
+      const e=LIB.blackElapsed-(L.blackStart||0);
+      if(e<=0) L.blackMul=1;                                                  // not its turn yet
+      else if(e<1) L.blackMul=(hashLib(Math.floor(tN*22)+(L.seed||0))<e*0.85)? 0.04:1;  // 1s dying flicker
+      else if(e<1+LIB.blackDur) L.blackMul=0.03;                             // out cold
+      else L.blackMul=1;                                                      // flicked back on
+    }
+    if(LIB.blackElapsed>=total){ LIB.blackActive=false; for(const L of lights) L.blackMul=1; LIB.nextBlack=rand(45,70); }
   } else if(STATE.libWakeT<0){
     LIB.nextBlack-=dt;
-    if(LIB.nextBlack<=0){ LIB.blackT=rand(1.3,2.6); sfxLightsOut(); }
+    if(LIB.nextBlack<=0){
+      LIB.blackActive=true; LIB.blackElapsed=0; LIB.blackDur=rand(1.3,2.6)*0.7;   // −30% time fully dark
+      for(const L of lights) L.blackStart=Math.random()*2;                   // stagger the onset across 2s
+      sfxLightsOut();
+    }
   }
   /* decor machines mid-boot: seconds of life, then static, then never again */
   for(const a of LIB.pcAnims){
@@ -1356,6 +1455,17 @@ export function updateLibrary(dt){
     }
   }
   LIB.pcAnims=LIB.pcAnims.filter(a=>a.phase!=="dead");
+  /* silk: live strands track the spider; severed ones shrivel once, then rest */
+  for(const rec of LIB.webs){
+    if(rec.live){
+      if(rec.dirty){ rec.len=Math.max(0.1,rec.top.y-rec.botY); reskin(rec,rec.len,0); rec.dirty=false; }
+    } else if(rec.sever){
+      rec.shrivelT+=dt;
+      const p=Math.min(1,rec.shrivelT/0.5);
+      reskin(rec, lerp(rec.fullLen,rec.finalLen,p), p);
+      if(p>=1) rec.sever=false;                          // settled — it stays forever
+    }
+  }
 }
 /* the one decor machine that still turns on — once */
 export function startDeadPC(it){
