@@ -2,7 +2,7 @@
 import { clamp } from "./utils.js";
 import { STATE, KEYS } from "./state.js";
 import { renderer } from "./scene.js";
-import { ui, setPaused, toggleHow, toggleSound } from "./ui.js";
+import { ui, setPaused, toggleSound } from "./ui.js";
 import { tryInteract } from "./interact.js";
 import { debugSkipToElevator, debugSkipToTheEnd, debugWarpToTerminal } from "./lifecycle.js";
 
@@ -13,7 +13,6 @@ addEventListener("keydown",e=>{
   KEYS[e.code]=true;
   if(e.code==="Space") e.preventDefault();
   if(!STATE.playing||STATE.dead||STATE.won) return;
-  if(e.code==="KeyH") toggleHow();
   if(e.code==="KeyO") toggleSound();
   if(e.code==="KeyE") tryInteract();
   /* toggle-mode crouch: each fresh press of a crouch key flips the latch */
