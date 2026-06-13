@@ -1,6 +1,6 @@
 # NOCLIP — Escape the Backrooms
 
-**Version: v2.1.0**
+**Version: v2.2.0**
 
 A browser-based survival horror game, playable at
 [danieldees.github.io](https://danieldees.github.io). Vanilla JS ES modules built
@@ -25,11 +25,12 @@ down is not the clean escape it looks like.
 **THE END — the infinite library.** The brakes never caught. You wake in the wreck
 of the cab on the floor of a vast, dim library: half-abandoned stacks, dead
 machines, and a horse-sized blind spider that pads between the shelves. It cannot see you — it
-**hears** you. Every footfall above a crouch, every floppy disk you pull from a
-shelf, draws it closer. Find the scattered disks and feed them to the terminal at
-the heart of the room while staying quiet and using the tables for cover. Fifty-five
-seconds after you take the first disk, the lights burn down to embers and the
-library wakes up the rest of the way.
+**hears** you, and it keys on **motion**: every footfall above a crouch, every floppy
+disk you pull from a shelf, draws it closer, but holding perfectly still — even
+uncrouched, even turning to look — reads as safe. Find the scattered disks and feed
+them to the terminal at the heart of the room while staying quiet and using the tables
+for cover. Fifty-five seconds after you take the first disk, the lights burn down to
+embers and the library wakes up the rest of the way.
 
 ## Controls
 
@@ -38,14 +39,43 @@ library wakes up the rest of the way.
 | `WASD` + mouse | move / look |
 | `SHIFT` | sprint (drains stamina / makes noise; bottomless once adrenaline kicks in) |
 | `SPACE` | jump |
-| `C` | crouch / hide (silent in THE END; the only way past the spider) |
+| `C` | crouch / hide (silent in THE END; the only way past the spider). Hold by default, or switch to a toggle in the sound/options sheet |
 | `E` | interact |
-| `H` / `O` / `ESC` | how to play / sound mixer / pause |
+| `O` / `ESC` | sound mixer / pause (how to play lives on the pause sheet) |
 
 Headphones recommended — audio is positional, and both monsters are far easier to
 track by ear.
 
 ## Changelog
+
+### v2.2.0 (2026-06-12)
+- **Distinct 3D bookend & archive-box assets.** Bookends that used to read as
+  untextured "ghost books" are now thin brushed-gunmetal plates with a foot the
+  end volumes stand on. The plain brown storage boxes are rebuilt to the books'
+  standard: a pool of kraft-cardboard archive boxes, each laid out per-design at a
+  uniform texel scale (no stretching) with a pasted, bordered label — eight label
+  variants — oval handle cut-outs in the ends, and a creased, corrugated lid.
+- **Fuller shelves.** Each shelf board now carries 0–20 volumes (≈8 on average, so
+  a four-row case holds ~32) instead of the old 0–12, while staying convincingly
+  half-abandoned. Carts carry 2–12.
+- **Crouch toggle.** A new option in the sound/options sheet switches crouch between
+  hold-to-crouch (default) and a press-to-toggle latch; the choice persists.
+- **Stillness is safety.** The librarian now keys on motion rather than posture:
+  standing perfectly still — even uncrouched, even rotating the camera to look
+  around — reads the same as crouching. Movement is the giveaway.
+- **HUD bows out for cutscenes.** Whenever a cinematic owns the camera, the whole
+  HUD — objectives, stamina bar, menu button, key hints, crosshair — fades out over
+  ~1s and fades back in when control returns, so the scripted shots play clean.
+- **Re-lit elevator crash.** The emergency-light red no longer strobes the whole
+  screen by recoloring the bright ceiling panel. The panel stays white and simply
+  sags, stutters, and dies as the power fails; a real dim point source at the
+  emergency lamp in the back of the cab supplies the red, matching the lit-by-one-
+  lamp look of the wreck you wake in. The cab's ambient floor also drains ~50%
+  through the failure, so the spark spray reads as the brightest thing left.
+- **Debug:** typing `the end` in-game warps to THE END set up for the finale —
+  every disk pocketed, the librarian parked far off, you standing at the terminal.
+  The `H` how-to-play hotkey was removed (it lives on the pause sheet); the rest of
+  the hidden warps (`6`×3, `7`×3) are unchanged.
 
 ### v2.1.0 (2026-06-12)
 - **Real 3D books.** The library's flat-colored box "books" are replaced by a pool
