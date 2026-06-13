@@ -23,7 +23,7 @@ import { CINE, updateCinematic, startBreakerCine, startElevatorCine,
          startTheEndIntro, startTerminalCine } from "./cutscene.js";
 import { updateLibrary, LIB, grid2 } from "./library.js";
 import { enterTheEnd, debugSkipToTheEnd } from "./lifecycle.js";
-import { renderObjectives } from "./ui.js";
+import { ui, renderObjectives } from "./ui.js";
 import "./input.js";
 
 /* ---------------- main loop ---------------- */
@@ -33,6 +33,8 @@ function loop(now){
   const dt=Math.min((now-last)/1000,0.05); last=now;
   if(STATE.playing&&!STATE.paused&&!STATE.dead&&!STATE.won){
     STATE.time+=dt;
+    /* the HUD fades out (CSS, ~1s) whenever a cinematic owns the camera */
+    ui.hud.classList.toggle("cine",CINE.active);
     if(CINE.active){
       /* a cinematic owns the camera; the breaker scene keeps the entity AI
          alive (it's sprinting for the panel), the others script their cast */

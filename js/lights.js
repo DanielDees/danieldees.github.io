@@ -227,7 +227,7 @@ export function updateLights(dt,t){
   }
   /* murk floor: THE END's minimum ambient is HALF of level 0's, and it
      sinks further once the lights drop */
-  const hemiTgt = STATE.level===1? (STATE.libDim? 0.032:0.048)
-                                 : (STATE.powerOn? 0.10:0.08);
+  const hemiTgt = (STATE.level===1? (STATE.libDim? 0.032:0.048)
+                                  : (STATE.powerOn? 0.10:0.08)) * STATE.ambDim;
   hemi.intensity = lerp(hemi.intensity, hemiTgt, 0.1);
 }

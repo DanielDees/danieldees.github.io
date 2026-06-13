@@ -12,6 +12,7 @@ export const STATE={
   bottles:0, hasFuse:false, powerOn:false, objective:0,
   deaths:0, time:0,
   bob:0, moving:false,
+  ambDim:1,                      // ambient-floor multiplier (the elevator crash drains it)
   /* ---- THE END progression ---- */
   discsCarried:0, discsDelivered:0, discsFound:0, discTotal:0,
   libT0:0,                       // STATE.time at the moment the library was entered
