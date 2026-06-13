@@ -124,7 +124,8 @@ wire("btnAgain",()=>location.reload());
 /* ---- settings persistence (volumes + mouse sensitivity) ---- */
 const SETTINGS_KEY="noclip_settings_v1";
 export function saveSettings(){
-  try{ localStorage.setItem(SETTINGS_KEY, JSON.stringify({vol:AU.vol, sens:STATE.sens})); }catch(e){}
+  try{ localStorage.setItem(SETTINGS_KEY, JSON.stringify(
+    {vol:AU.vol, sens:STATE.sens, crouchToggle:STATE.crouchToggle})); }catch(e){}
 }
 export function loadSettings(){
   try{
@@ -132,6 +133,7 @@ export function loadSettings(){
     if(s){
       if(s.vol) for(const k of["master","music","sound"]) if(typeof s.vol[k]==="number") AU.vol[k]=clamp(s.vol[k],0,1);
       if(typeof s.sens==="number") STATE.sens=clamp(s.sens,0.1,4);
+      STATE.crouchToggle=!!s.crouchToggle;
     }
   }catch(e){}
 }
@@ -159,4 +161,17 @@ $("sensV").value=STATE.sens.toFixed(1)+"x";
     out.value=STATE.sens.toFixed(1)+"x";
     saveSettings();
   });
+}
+/* crouch mode: hold (default) vs toggle */
+{
+  const el=$("crouchToggle"), out=$("crouchToggleV");
+  if(el){
+    const show=()=>out.value=STATE.crouchToggle? "TOGGLE":"HOLD";
+    el.checked=STATE.crouchToggle; show();
+    el.addEventListener("change",()=>{
+      STATE.crouchToggle=el.checked;
+      STATE.crouchLatch=false;            // never carry a stale latch across modes
+      show(); saveSettings();
+    });
+  }
 }

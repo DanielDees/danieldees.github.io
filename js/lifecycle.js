@@ -60,7 +60,7 @@ export function respawn(){
     STATE.pos.copy(LIB.spawn);
     STATE.yaw=LIB.spawnYaw; STATE.pitch=0;
     STATE.y=0; STATE.vy=0; STATE.grounded=true; STATE.velX=0; STATE.velZ=0;
-    STATE.dead=false; STATE.stamina=1; STATE.crouch=false;
+    STATE.dead=false; STATE.stamina=1; STATE.crouch=false; STATE.crouchLatch=false;
     STATE.libBlackout=0; LIB.blackT=0;
     resetSpider(LIB.spawn.x,LIB.spawn.z,36);
     ui.dread.style.opacity=0;
@@ -70,7 +70,7 @@ export function respawn(){
   const s=cellToWorld(W>>1,H>>1);
   STATE.pos.set(s.x,0,s.z);
   STATE.y=0; STATE.vy=0; STATE.grounded=true; STATE.velX=0; STATE.velZ=0;
-  STATE.dead=false; STATE.stamina=1;
+  STATE.dead=false; STATE.stamina=1; STATE.crouchLatch=false;
   if(monster.active){
     const p=farOpenWorldPoint(STATE.pos.x,STATE.pos.z,44);
     monster.pos.set(p.x,0,p.z);

@@ -5,6 +5,9 @@ export const STATE={
   pos:new THREE.Vector3(0,0,0), yaw:0, pitch:0,
   y:0, vy:0, grounded:true, velX:0, velZ:0,
   crouch:false, sprinting:false, stamina:1, sens:1,
+  crouchToggle:false,            // setting: [C] toggles crouch instead of holding
+  crouchLatch:false,             // toggle-mode state: currently latched down
+
   curEyeH:1.62,
   bottles:0, hasFuse:false, powerOn:false, objective:0,
   deaths:0, time:0,

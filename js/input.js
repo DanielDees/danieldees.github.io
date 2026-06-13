@@ -15,6 +15,9 @@ addEventListener("keydown",e=>{
   if(e.code==="KeyH") toggleHow();
   if(e.code==="KeyO") toggleSound();
   if(e.code==="KeyE") tryInteract();
+  /* toggle-mode crouch: each fresh press of a crouch key flips the latch */
+  if((e.code==="KeyC"||e.code==="ControlLeft")&&!e.repeat&&STATE.crouchToggle)
+    STATE.crouchLatch=!STATE.crouchLatch;
   if(e.code==="Digit6"){
     const now=performance.now();
     dbg6 = (now-dbg6T<1500)? dbg6+1 : 1; dbg6T=now;

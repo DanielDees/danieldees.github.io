@@ -538,6 +538,105 @@ export function makeBookCoverTexture(title,author,base,motif,vol,bh,btx,bd){
     plain:[(W-plainW+4)/W,(W-4)/W],
   }};
 }
+/* ---- archive boxes: banker's boxes done to the books' standard ----
+   Per-design canvas at uniform px/m (no stretching), kraft cardboard with
+   fiber, a pasted label on the front, oval handle holes in the ends, and a
+   creased lid. Returns {tex, uv} with 2D face windows. */
+export const BOX_LABELS=[
+  ["ARCHIVE","BOX ∅∅7 — DO NOT SORT"],
+  ["RETURNS","UNSORTED · NEVER"],
+  ["LOST & FOUND","UNCLAIMED, ALL"],
+  ["CARD CATALOG","A–? (OLD SYSTEM)"],
+  ["CIRCULATION","RECORDS, 19∅∅–"],
+  ["HOURS","UNMARKED — KEEP SEALED"],
+  ["PATRON FILES","SEE FRONT DESK"],
+  ["DO NOT OPEN","(IT PREFERS THE DARK)"],
+];
+export function makeArchiveBoxTexture(label,bw,bh,bd,lidH){
+  const ppm=560;
+  const fw=Math.round(bw*ppm), fh=Math.round(bh*ppm);     // front
+  const sw=Math.round(bd*ppm);                            // end (handle)
+  const td=Math.round(bd*ppm);                            // lid top depth
+  const rh=Math.max(14,Math.round(lidH*ppm));             // lid rim
+  const gd=6, plW=34;
+  const W=Math.max(fw+gd+sw+gd+plW, fw+gd+fw), H=fh+gd+Math.max(td,rh+gd+rh);
+  const t=makeCanvas(W,H,(g,w,h)=>{
+    /* kraft base + paper fiber everywhere (regions can bleed harmlessly) */
+    g.fillStyle="#8f7146";g.fillRect(0,0,w,h);
+    for(let i=0;i<w*h/120;i++){
+      const v=Math.random()<0.5?-16:14;
+      g.fillStyle=`rgba(${143+v},${113+v},${70+v},${0.06+Math.random()*0.10})`;
+      g.fillRect(Math.random()*w,Math.random()*h,2+Math.random()*9,1);
+    }
+    const edge=(x,y,ww,hh)=>{          // darkened border = worn box edges
+      g.strokeStyle="rgba(52,38,20,0.5)";g.lineWidth=3;g.strokeRect(x+1.5,y+1.5,ww-3,hh-3);
+      g.strokeStyle="rgba(40,28,14,0.25)";g.lineWidth=7;g.strokeRect(x+3.5,y+3.5,ww-7,hh-7);
+    };
+    /* ---- front (0,0,fw,fh): pasted label ---- */
+    edge(0,0,fw,fh);
+    const lw=fw*0.62, lh=fh*0.52, lx=fw*0.19+(Math.random()-0.5)*8, ly=fh*0.2+(Math.random()-0.5)*6;
+    g.save();g.translate(lx+lw/2,ly+lh/2);g.rotate((Math.random()-0.5)*0.05);
+    g.fillStyle="rgba(0,0,0,0.25)";g.fillRect(-lw/2+3,-lh/2+3,lw,lh);     // peel shadow
+    g.fillStyle="#d9d2bc";g.fillRect(-lw/2,-lh/2,lw,lh);
+    g.strokeStyle="rgba(150,52,40,0.75)";g.lineWidth=2.5;
+    g.strokeRect(-lw/2+5,-lh/2+5,lw-10,lh-10);
+    g.fillStyle="rgba(46,40,30,0.9)";g.textAlign="center";
+    g.font=`bold ${Math.round(lh*0.24)}px Courier New`;
+    g.fillText(label[0],0,-lh*0.08);
+    g.font=`${Math.round(lh*0.15)}px Courier New`;g.fillStyle="rgba(46,40,30,0.7)";
+    g.fillText(label[1],0,lh*0.18);
+    g.strokeStyle="rgba(46,40,30,0.5)";g.lineWidth=1.5;
+    g.beginPath();g.moveTo(-lw*0.32,lh*0.3);g.lineTo(lw*0.32,lh*0.3);g.stroke();
+    g.restore();
+    /* coffee-ring stain, sometimes */
+    if(Math.random()<0.5){
+      const cx=fw*(0.15+Math.random()*0.7), cy=fh*(0.15+Math.random()*0.7);
+      g.strokeStyle="rgba(92,58,26,0.3)";g.lineWidth=3;
+      g.beginPath();g.arc(cx,cy,9+Math.random()*8,0,7);g.stroke();
+    }
+    /* ---- end with handle (fw+gd,0,sw,fh) ---- */
+    const sx=fw+gd;
+    edge(sx,0,sw,fh);
+    g.fillStyle="#241a0e";
+    g.beginPath();g.ellipse(sx+sw/2,fh*0.34,sw*0.17,fh*0.10,0,0,7);g.fill();
+    g.strokeStyle="rgba(30,22,12,0.6)";g.lineWidth=4;
+    g.beginPath();g.ellipse(sx+sw/2,fh*0.34+2,sw*0.17,fh*0.10,0,0,Math.PI);g.stroke();
+    /* ---- lid top (0,fh+gd,fw,td): creases & dust ---- */
+    const ty=fh+gd;
+    edge(0,ty,fw,td);
+    g.strokeStyle="rgba(58,42,22,0.45)";g.lineWidth=2;
+    g.beginPath();g.moveTo(fw/2,ty+3);g.lineTo(fw/2,ty+td-3);g.stroke();   // fold seam
+    for(let i=0;i<3;i++){                                                   // stress creases
+      const cy2=ty+td*(0.2+Math.random()*0.6);
+      g.strokeStyle=`rgba(58,42,22,${0.15+Math.random()*0.2})`;g.lineWidth=1.5;
+      g.beginPath();g.moveTo(fw*Math.random()*0.4,cy2);
+      g.lineTo(fw*(0.6+Math.random()*0.4),cy2+(Math.random()-0.5)*14);g.stroke();
+    }
+    const dg=g.createRadialGradient(fw/2,ty+td/2,4,fw/2,ty+td/2,fw*0.6);
+    dg.addColorStop(0,"rgba(190,176,150,0.16)");dg.addColorStop(1,"rgba(190,176,150,0)");
+    g.fillStyle=dg;g.fillRect(0,ty,fw,td);                                  // settled dust
+    /* ---- lid rim (fw+gd,fh+gd,fw,rh): corrugation hint ---- */
+    const rx=fw+gd;
+    g.fillStyle="rgba(0,0,0,0.10)";g.fillRect(rx,ty,fw,rh);
+    for(let x=rx;x<rx+fw;x+=5){
+      g.fillStyle=`rgba(58,42,22,${0.10+Math.random()*0.14})`;
+      g.fillRect(x,ty+2,2,rh-4);
+    }
+    g.fillStyle="rgba(40,28,14,0.4)";g.fillRect(rx,ty+rh-3,fw,3);
+  });
+  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping;
+  t.minFilter=THREE.LinearFilter;
+  t.generateMipmaps=false;
+  const u=(x)=>x/W, v=(y)=>1-y/H;       // canvas y → flipY v
+  return {tex:t, uv:{
+    front:[u(2),v(fh-2),u(fw-2),v(2)],
+    side:[u(fw+gd+2),v(fh-2),u(fw+gd+sw-2),v(2)],
+    top:[u(2),v(fh+gd+td-2),u(fw-2),v(fh+gd+2)],
+    rim:[u(fw+gd+2),v(fh+gd+rh-2),u(fw+gd+fw-2),v(fh+gd+2)],
+    plain:[u(W-plW+4),v(fh-6),u(W-6),v(6)],
+  }};
+}
+
 /* page-block edges: fine layered striations. The leaves laminate through
    the book's THICKNESS, which maps to u on the exposed faces — so the
    lines run vertically in the canvas. */
