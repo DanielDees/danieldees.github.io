@@ -763,6 +763,33 @@ export function sfxSpiderShriek(vol=1,pan=0){
   for(let i=0;i<10;i++)
     pannedNoise(t+0.05+i*0.045,0.02,"highpass",2600,1,vol*0.07*(1-i/10),pan,0.001);
 }
+/* silk hits the ceiling: a wet, sticky slap with a short clinging resonance */
+export function sfxWebSplat(vol=0.15,pan=0){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  pannedNoise(t,0.08,"bandpass",rand(1300,1700),1.6,vol*0.4,pan,0.004);   // tacky slap
+  const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(190,t);
+  o.frequency.exponentialRampToValueAtTime(110,t+0.15);                   // the surface giving
+  const g=C.createGain();env(g,t,0.01,vol*0.25,0.2);
+  const p=C.createStereoPanner?C.createStereoPanner():null;
+  o.connect(g);
+  if(p){p.pan.value=pan;g.connect(p);p.connect(AU.sfx);}else g.connect(AU.sfx);
+  o.start(t);o.stop(t+0.4);
+}
+/* the silk parts: a sharp pluck unwinding through a few falling pitches */
+export function sfxWebSnap(vol=0.12,pan=0){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  pannedNoise(t,0.02,"highpass",3200,1.5,vol*0.5,pan,0.001);              // the pluck
+  const p=C.createStereoPanner?C.createStereoPanner():null;
+  const out=C.createGain(); out.gain.value=1;
+  if(p){p.pan.value=pan;out.connect(p);p.connect(AU.sfx);}else out.connect(AU.sfx);
+  [[240,160],[180,110],[120,65]].forEach(([f0,f1],i)=>{
+    const o=C.createOscillator();o.type="sine";
+    o.frequency.setValueAtTime(f0,t+i*0.03);
+    o.frequency.exponentialRampToValueAtTime(f1,t+i*0.03+0.18);
+    const g=C.createGain();env(g,t+i*0.03,0.005,vol*0.08,0.25);
+    o.connect(g);g.connect(out);o.start(t+i*0.03);o.stop(t+i*0.03+0.4);
+  });
+}
 /* a floppy disk leaving its shelf: quiet — but nothing here is quiet enough */
 export function sfxDiscPickup(){
   if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;

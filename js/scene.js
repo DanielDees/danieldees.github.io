@@ -63,8 +63,11 @@ export function clearLevelScene(){
    its minimum ambient light level is roughly HALF of level 0's. */
 export function setLevelEnvironment(level){
   if(level===1){
-    scene.fog.color.setHex(0x030404); scene.background.setHex(0x030404);
-    scene.fog.near=6; scene.fog.far=62;
+    scene.background.setHex(0x030404);
+    /* linear fog, pinned at both ends: clear within 10m, ~50% at the 100m far wall.
+       three's linear fog is a smoothstep over [near,far], so 50% sits at the midpoint —
+       far=190 puts that midpoint at (10+190)/2 = 100m. */
+    scene.fog = new THREE.Fog(0x030404, 10, 190);
     hemi.color.setHex(0xe8e2d0); hemi.groundColor.setHex(0x14161c);
     hemi.intensity=0.048;
     amb.color.setHex(0x4a5060); amb.intensity=0.03;
@@ -85,7 +88,7 @@ export function makeLightRecord(glowMat,tubeMat,cx,cy,world,opts={}){
     fixY:opts.fixY, wakeAt:opts.wakeAt||0,
     flickery: opts.flickery!==undefined? opts.flickery : Math.random()<0.22,
     warm, warmth:warm?1:0, bright, dimY:warm?0:(1-bright)/dimDen,
-    phase:Math.random()*100, on:1,
+    phase:Math.random()*100, on:1, blackMul:1, blackStart:0,
     mode:"steady", timer:rand(1,12), pattern:0, rate:20,
     burstDur:0, burstT:0, descT:2, riseT:0.5, seed:Math.random()*1000, lastTick:0,
     near:0, shocked:false, shockT:0};

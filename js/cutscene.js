@@ -622,8 +622,9 @@ function updateTerminal(dt){
       }
     }
     spider.pos.set(bx,0,bz);
+    spider.surf.mode="floor"; spider.surf.phase="idle";   // the scripted run is always on the ground
     spider.faceAng=Math.atan2(D.scr.x-bx,D.scr.z-bz);
-    if(spider.mesh) spider.mesh.visible=true;
+    if(spider.mesh){ spider.mesh.visible=true; spider.mesh.quaternion.identity(); }
     D.rush={speed:bestD/(TC_WHITE-TC_RUSH-0.35)};
   });
   cue("static",TC_STATIC,()=>sfxComputerStatic(2.6,1.2));

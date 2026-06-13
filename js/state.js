@@ -52,4 +52,26 @@ export const spider={
   browseT:0, pauseT:0, scratchT:6, sniffT:0, sniffsLeft:0, searchT:0, stalkT:0,
   mildCD:0, stepAcc:0, screechCD:0, scratchCD:0, sniffCD:0,
   stuckT:0,             // anti-deadlock: seconds spent commanded-but-stationary
+  /* ---- v2.3: it climbs ----
+     a surface-locomotion layer above the floor AI: the spider can crawl the
+     perimeter walls and web up to the ceiling to reposition, then drop. */
+  headDir:new THREE.Vector3(0,0,1),    // unit travel heading (3-D, drives the body's orientation)
+  floorPaths:0,                        // consecutive floor browses without climbing (capped → forces a climb)
+  discFar:false,                       // the latest heard disc was beyond 60% of the map → take a surface transit
+  surf:{
+    mode:"floor",       // floor | wall | ceiling
+    phase:"idle",       // idle | toWall | fromWall | toCeiling | drop | dropAttack
+    t:0, dur:0, ramp:0, // transition clock + the 0→1 ramp toward 2× surface speed
+    pursue:false, glideActive:false, glides:0,   // glides: repositioning count, capped before it must drop
+    goal:null,          // Vector3 disc-transit target (surface route to a far disc), else null
+    weaveBase:null, weaveP0:0,   // wall-traverse S-weave anchored to the entry elevation (no snap)
+    pStart:0, pEnd:0, toH:0, lead:0,   // S-curve mount/dismount: perimeter endpoints, target height, along-lead
+    wall:null,          // {axis,face,N,along} when on a wall
+    targetN:new THREE.Vector3(0,1,0),  // surface outward normal the body rights itself to
+    from:new THREE.Vector3(), mid:new THREE.Vector3(), to:new THREE.Vector3(),
+    len1:0, len2:0,     // segment lengths for constant-speed wall climb/descent
+    web:null, struck:false, killed:false,
+    setup:0, fall:0, dropX:0, dropZ:0,
+    hang:false, hangN:new THREE.Vector3(1,0,0),   // head-down web hang: body dangles below the tail (which rides s.pos)
+  },
 };

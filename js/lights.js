@@ -109,13 +109,16 @@ export function updateLights(dt,t){
         if(STATE.libWakeT<L.wakeAt) v=0;
         else if(STATE.libWakeT<L.wakeAt+0.35) v=hash(Math.floor(t*24)+L.seed)>0.4? v:0.05;
       }
-      /* the answer to the first stolen disk: brightness drops to a quarter
+      /* the answer to the first stolen disk: brightness drops to ~a quarter
+         (0.275 — +10% over the old 0.25 to offset the raised floor fixtures)
          and every strip takes its assigned burn — orange at its very best,
          and a third to a half of the grid driven past orange into deep red
          (warmth >1 extrapolates the same gradient the shockwave uses) */
-      if(STATE.libDim){ v*=0.25; warmth=Math.max(warmth,L.burnW||0.95); }
-      /* the building's lights sometimes shut off temporarily, all of them */
+      if(STATE.libDim){ v*=0.275; warmth=Math.max(warmth,L.burnW||0.95); }
+      /* scripted cutscene black (all at once) */
       if(STATE.libBlackout>0) v*=1-0.97*STATE.libBlackout;
+      /* the periodic failure: each strip dips on its own schedule (set in library.js) */
+      v*=L.blackMul;
     }
     if(L.shockT>0){
       /* the wake shockwave passing through: a hard strobe on impact, then

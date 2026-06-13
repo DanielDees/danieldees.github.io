@@ -40,6 +40,7 @@ export function enterTheEnd(){
     AU.breathGain.gain.setTargetAtTime(0,t,0.3);
   }
   ui.dread.style.opacity=0; ui.staticfx.style.opacity=0;
+  ui.vignette.style.opacity=0.16;      // THE END is dark enough; the edge vignette reads as obscuring here (−80%)
   setLevelEnvironment(1);
   buildLibrary();
   spider.mesh=makeSpider(); scene.add(spider.mesh);

@@ -10,7 +10,7 @@ export const ui={
   hud:$("hud"), objList:$("objList"), stats:$("stats"),
   stamWrap:$("staminaWrap"), stam:$("stamina"), stamPct:$("stamPct"), stamName:$("stamName"),
   prompt:$("prompt"), hidden:$("hiddenTag"), toast:$("toast"),
-  dread:$("dread"), flash:$("flash"), staticfx:$("staticfx"),
+  dread:$("dread"), flash:$("flash"), staticfx:$("staticfx"), vignette:$("vignette"),
   start:$("startOverlay"), how:$("howOverlay"), pause:$("pauseOverlay"),
   sound:$("soundOverlay"), death:$("deathOverlay"), win:$("winOverlay"),
 };
