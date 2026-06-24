@@ -85,6 +85,7 @@ export function makeMonster(){
   g.userData.smokeA=mkSmoke(1.9,4.1,0.85);
   g.userData.smokeB=mkSmoke(2.5,4.6,0.55);
   g.scale.setScalar(1.12);
+  g.userData.animated=true;                  // walks/animates every frame — never freeze its matrices
   g.visible=false;
   return g;
 }

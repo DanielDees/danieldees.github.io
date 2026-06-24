@@ -16,7 +16,7 @@
 import { rand, clamp, lerp, srand } from "./utils.js";
 import { CELL } from "./map.js";
 import { STATE } from "./state.js";
-import { scene, lights, hemi, amb, makeLightRecord } from "./scene.js";
+import { scene, lights, hemi, amb, makeLightRecord, markShared, mergeStatic, freezeStaticScene } from "./scene.js";
 import { makeCanvas, texLibWall, texLibCarpet, texLibCeil, texShelfWood, texDeskWood,
          makeCrackTexture, makeEndTextTexture, makePosterTexture, makeArtTexture,
          makeBookCoverTexture, BOOK_TITLES, BOOK_BASES,
@@ -430,6 +430,21 @@ function ensureBooks(){
   }
   BOXES=[];
   for(let i=0;i<4;i++) BOXES.push(buildBoxDesign(labels[i%labels.length]));
+  markPoolShared();
+}
+/* the book/box/open-book pool is built once and cached for the lifetime of the
+   tab, then cloned per placement — so its geometries, materials and cover
+   canvases must survive every level teardown */
+function markPoolShared(){
+  for(const m of pageMats) markShared(m,m.map);
+  for(const b of BOOKS) markShared(b.geo,b.mats[0],b.mats[0].map);
+  for(const b of BOXES) markShared(b.geo,b.mat,b.mat.map);
+  OPEN_BOOK.traverse(o=>{
+    if(!o.isMesh) return;
+    markShared(o.geometry);
+    const mm=o.material;
+    if(Array.isArray(mm)) mm.forEach(x=>markShared(x,x.map)); else markShared(mm,mm.map);
+  });
 }
 const pickBook=()=>BOOKS[Math.floor(Math.random()*BOOKS.length)];
 /* archive boxes built to the books' standard: textured body + creased lid */
@@ -891,6 +906,7 @@ function makeDisc(){
     new THREE.MeshPhongMaterial({color:0x9aa0a6, specular:0x55585c, shininess:60}));
   shutter.position.set(-0.01,0,-0.09); g.add(shutter);
   g.scale.setScalar(1.35);                       // readable from a few metres out
+  g.userData.animated=true;                      // idle-spins/hovers in updateProps
   return g;
 }
 /* vintage personal computer: CRT + case + keyboard, in pristine condition.
@@ -1015,7 +1031,8 @@ function makeFixture(wx,wz,alongZ,fy=3.78){     // base layer hung +20% higher (
 export function buildLibrary(){
   ensureBooks();                       // the design pool, built on first visit
   LIB.obstacles=[]; LIB.pcAnims=[]; LIB.blackActive=false; LIB.blackElapsed=0; LIB.nextBlack=35;
-  LIB.webs=[]; LIB.webGroup=new THREE.Group(); scene.add(LIB.webGroup);
+  LIB.webs=[]; LIB.webGroup=new THREE.Group(); LIB.webGroup.userData.animated=true;   // strands spawn/reskin at runtime
+  scene.add(LIB.webGroup);
   const {cx0,cy0,spawnC,tables}=genLibrary();
   const SZ=LW*CELL;
   /* a very faint warm self-glow on the walls & ceiling: not light to see BY,
@@ -1038,14 +1055,19 @@ export function buildLibrary(){
      box, however it's sized (this is what un-distorts the walls). */
   const exC=cx0, eyC=LH-1;
   const wallGeo2=scaleBoxUV(new THREE.BoxGeometry(CELL,LIB_WALL_H,CELL),CELL,LIB_WALL_H,CELL,4);
+  const wallBoxes=[];
   for(let y=0;y<LH;y++)for(let x=0;x<LW;x++){
     if(grid2[y][x]!==1) continue;
     if(x===exC&&y===eyC) continue;
     const m=new THREE.Mesh(wallGeo2,libWallMat);
     const p=cellToWorld2(x,y);
     m.position.set(p.x,LIB_WALL_H/2,p.z);
-    scene.add(m);
+    wallBoxes.push(m);
   }
+  /* one merged mesh instead of ~80 wall draw calls (the elevator cell is
+     already excluded above, so no post-build carve is needed here) */
+  scene.add(mergeStatic(wallBoxes,libWallMat));
+  wallGeo2.dispose();                        // its shape is now baked into the merged geometry
   /* the baseboard is real geometry now (a texture band can't survive
      world-scaled tiling): dark skirting strips along the inner perimeter,
      parted at the elevator doorway */
@@ -1340,6 +1362,10 @@ export function buildLibrary(){
     scene.add(d);
     addInteractable({kind:"disc", mesh:d, label:"TAKE FLOPPY DISK", taken:false, baseY:s.y});
   }
+  /* freeze every static object's matrix (shelves, furniture, dressing,
+     fixtures, merged walls). The spider is added after this returns; the discs
+     and the elevator are tagged animated, so the sweep skips them. */
+  freezeStaticScene();
 }
 
 /* ---------------- per-frame level logic ---------------- */
@@ -1474,3 +1500,10 @@ export function startDeadPC(it){
   const screen=it.mesh.userData.screen;
   LIB.pcAnims.push({screen, phase:"boot", t:0});
 }
+
+/* ---- shared-asset registration (module-level singletons reused across every
+   library build; teardown must never dispose these) ---- */
+markShared(texLibWall,texLibCarpet,texLibCeil,texShelfWood,texDeskWood,texPages,texPagesAged,texBrushed);
+markShared(shelfMat,deskMat,darkMetalMat,beigePlastic,beigePlasticDark,plasticWrap,
+           bookendMat,accentWood,accentBrass,mannequinMat,mannequinDark,webMat);
+markShared(tubeGeo2,housingGeo2,housingMat2,cordGeo);

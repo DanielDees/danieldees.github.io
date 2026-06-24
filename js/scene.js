@@ -14,10 +14,21 @@ export const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(FOG_COLOR, 5.4, 55);
 scene.background = new THREE.Color(FOG_COLOR);
 export const camera = new THREE.PerspectiveCamera(72, innerWidth/innerHeight, 0.1, 200);
-export const renderer = new THREE.WebGLRenderer({antialias:true});
+/* graphics quality is read straight from saved settings HERE: antialias can only
+   be chosen when the GL context is created, so ui.js can't flip it live — it
+   reads back at construction and a change takes effect on the next reload. The
+   pixel ratio, by contrast, can be set live (setRenderQuality below). */
+let _lowQ=false;
+try{ const s=JSON.parse(localStorage.getItem("noclip_settings_v1")||"null");
+     if(s&&s.quality==="low") _lowQ=true; }catch(e){}
+const _maxDPR=()=>Math.min(devicePixelRatio,2);
+export const renderer = new THREE.WebGLRenderer({antialias:!_lowQ, powerPreference:"high-performance"});
 renderer.setSize(innerWidth,innerHeight);
-renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setPixelRatio(_lowQ?1:_maxDPR());
 $("game").appendChild(renderer.domElement);
+/* live quality switch — pixel ratio applies immediately (1× on low-end halves the
+   fragment load), antialias waits for a reload */
+export function setRenderQuality(low){ renderer.setPixelRatio(low?1:_maxDPR()); }
 addEventListener("resize",()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
   renderer.setSize(innerWidth,innerHeight);});
 
@@ -52,12 +63,107 @@ for(let i=0;i<LIGHT_POOL_N;i++){
    meshes (and the entities/props added later) don't get the tag, so
    clearLevelScene sweeps them all without each module keeping lists */
 for(const o of scene.children) o.userData.persist=true;
+
+/* ---------------- GPU-resource disposal ----------------
+   scene.remove() only detaches from the graph — geometry/material/texture GPU
+   buffers persist until .dispose(). Per-build assets (decal canvases, the
+   per-fixture flicker materials, wall geometry, …) are created fresh every
+   build, so without this they leak on every respawn and level change and
+   eventually exhaust VRAM. We dispose by traversal on teardown, skipping the
+   SHARED singletons (module-level materials/textures + the cached book pool),
+   which are reused across builds and must survive. Each module registers its
+   own shared assets via markShared. */
+export const SHARED=new Set();
+export function markShared(...res){ for(const r of res) if(r) SHARED.add(r); return res[0]; }
+markShared(texWall,texCarpet,texStains,texCeil,texCeilStains);   // level-0 tileable textures (mutated, reused)
+const _MAT_MAPS=["map","alphaMap","aoMap","bumpMap","displacementMap","emissiveMap",
+  "envMap","lightMap","metalnessMap","normalMap","roughnessMap","specularMap","gradientMap"];
+function disposeMaterial(m,done){
+  if(!m||SHARED.has(m)||done.has(m)) return;
+  done.add(m);
+  for(const k of _MAT_MAPS){ const t=m[k]; if(t&&!SHARED.has(t)&&!done.has(t)){ done.add(t); t.dispose(); } }
+  m.dispose();
+}
+function disposeNode(o,done){
+  const g=o.geometry;
+  if(g&&!SHARED.has(g)&&!done.has(g)){ done.add(g); g.dispose(); }
+  const m=o.material;
+  if(Array.isArray(m)) for(const mm of m) disposeMaterial(mm,done);
+  else if(m) disposeMaterial(m,done);
+}
 export function clearLevelScene(){
-  for(const o of [...scene.children])
-    if(!o.userData.persist) scene.remove(o);
+  const done=new Set();                              // dedupe assets shared across many meshes in this build
+  for(const o of [...scene.children]){
+    if(o.userData.persist) continue;
+    o.traverse(c=>{ if(c.isMesh||c.isSprite||c.isLine) disposeNode(c,done); });
+    scene.remove(o);
+  }
   lights.length=0;
   wallMeshes=new Map();
   wallDecals.length=0;
+}
+
+/* ---------------- static draw-call merging & matrix freezing ----------------
+   r128 has no auto-batching: every Mesh is a draw call, and matrixAutoUpdate
+   (default true) recomputes every static object's world matrix each frame.
+   mergeStatic collapses many identical-material static meshes into one; freeze
+   stops their per-frame matrix work. */
+function concatGeos(geos){
+  let vc=0, ic=0;
+  for(const g of geos){ vc+=g.attributes.position.count; ic+=g.index.count; }
+  const pos=new Float32Array(vc*3), nor=new Float32Array(vc*3), uv=new Float32Array(vc*2);
+  const idx=(vc>65535? new Uint32Array(ic):new Uint16Array(ic));
+  let vo=0, io=0;
+  for(const g of geos){
+    pos.set(g.attributes.position.array, vo*3);
+    nor.set(g.attributes.normal.array, vo*3);
+    uv.set(g.attributes.uv.array, vo*2);
+    const gi=g.index.array;
+    for(let i=0;i<gi.length;i++) idx[io+i]=gi[i]+vo;
+    vo+=g.attributes.position.count; io+=gi.length;
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute("position",new THREE.BufferAttribute(pos,3));
+  geo.setAttribute("normal",new THREE.BufferAttribute(nor,3));
+  geo.setAttribute("uv",new THREE.BufferAttribute(uv,2));
+  geo.setIndex(new THREE.BufferAttribute(idx,1));
+  return geo;
+}
+/* bake each mesh's world transform into a clone of its geometry, concat into
+   one geometry, return a single static Mesh (the inputs are NOT added). */
+export function mergeStatic(meshes,material){
+  const geos=[];
+  for(const m of meshes){ m.updateMatrixWorld(true); const g=m.geometry.clone(); g.applyMatrix4(m.matrixWorld); geos.push(g); }
+  const merged=concatGeos(geos);
+  for(const g of geos) g.dispose();
+  return freezeStatic(new THREE.Mesh(merged,material));
+}
+/* stop per-frame matrix recompute on a positioned static object (+ subtree) */
+export function freezeStatic(o){
+  o.updateMatrixWorld(true);
+  o.traverse(c=>{ c.matrixAutoUpdate=false; });
+  return o;
+}
+/* sweep the freshly built level: freeze every static top-level object. Skips
+   persistent rig, animated props (idle-spinning pickups), and anything a
+   cutscene drives by transform (elevators, the breaker) — all tagged
+   userData.animated. Entities are added AFTER this runs, so they're untouched. */
+export function freezeStaticScene(){
+  for(const o of scene.children){
+    if(o.userData.persist||o.userData.animated) continue;
+    freezeStatic(o);
+  }
+}
+/* level 0 only: the elevator carve (placeProps) removes one wall cell's mesh,
+   so walls are merged AFTER props — collapsing ~400 draw calls to one. */
+export function mergeWallMeshes(){
+  const arr=[]; for(const m of wallMeshes.values()) if(m.parent) arr.push(m);
+  if(!arr.length) return;
+  const srcGeo=arr[0].geometry, mat=arr[0].material;
+  const merged=mergeStatic(arr,mat);
+  for(const m of arr) scene.remove(m);
+  srcGeo.dispose();                                  // the shared box geo is now baked into `merged`
+  scene.add(merged);
 }
 /* fog & ambient floor per level. THE END sits in a cooler, deeper murk:
    its minimum ambient light level is roughly HALF of level 0's. */

@@ -2,7 +2,7 @@
 import { rand } from "./utils.js";
 import { W, H, CELL, WALL_H as WALL_H0, cellToWorld, randomOpenCell, isWall, losCells } from "./map.js";
 import { makeCanvas, texWall, scaleBoxUV } from "./textures.js";
-import { scene, wallMeshes, removeDecalsOnWall } from "./scene.js";
+import { scene, wallMeshes, removeDecalsOnWall, mergeWallMeshes, freezeStaticScene } from "./scene.js";
 
 export let interactables=[];    // {kind, mesh, label, taken}
 export let exitDoor=null;
@@ -22,6 +22,7 @@ function makeBottle(){
     new THREE.MeshLambertMaterial({color:0xc8b25a}));
   label.position.y=0.17; g.add(label);
   g.scale.setScalar(1.2);
+  g.userData.animated=true;                 // idle-spins in updateProps — keep its matrix live
   return g;
 }
 function makeFuse(){
@@ -33,6 +34,7 @@ function makeFuse(){
   prong.position.set(-0.06,0.34,0);g.add(prong);
   const prong2=prong.clone();prong2.position.x=0.06;g.add(prong2);
   g.scale.setScalar(1.2);
+  g.userData.animated=true;                 // idle-spins as a pickup / driven inside the breaker
   return g;
 }
 function makeBreaker(p,facing){
@@ -82,6 +84,7 @@ function makeBreaker(p,facing){
     new THREE.MeshLambertMaterial({color:0x202428}));
   lever.position.set(0,-0.1,0.05); door.add(lever); g.userData.lever=lever;
   g.position.copy(p); g.rotation.y=facing;
+  g.userData.animated=true;                 // the cutscene swings its door / conjures the fuse
   return g;
 }
 export const ELEV={OPEN_W:2.0, OPEN_H:2.6, DEPTH:2.6};   // cab dimensions, shared with the cutscene
@@ -245,6 +248,7 @@ export function makeElevator(p,facing,opts={}){
   btn.rotation.x=Math.PI/2; btn.position.set(OPEN_W/2+0.21,1.15,0.05); g.add(btn);
   g.userData.btnMat=btnMat; g.userData.btnLocal=btn.position.clone();
   g.position.copy(p); g.rotation.y=facing;
+  g.userData.animated=true;                 // doors slide, buttons/sign light during the ride cutscene
   return g;
 }
 export function placeProps(){
@@ -314,6 +318,11 @@ export function placeProps(){
     scene.add(exitDoor);
     interactables.push({kind:"exit",mesh:exitDoor,label:"CALL ELEVATOR",taken:false});
   }
+  /* the elevator carve is done — collapse the surviving wall boxes into one
+     mesh, then freeze every static object so it stops paying per-frame matrix
+     cost (entities are added after this returns) */
+  mergeWallMeshes();
+  freezeStaticScene();
 }
 
 /* ---------------- prop idle ---------------- */

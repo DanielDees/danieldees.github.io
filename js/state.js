@@ -7,6 +7,7 @@ export const STATE={
   crouch:false, sprinting:false, stamina:1, sens:1,
   crouchToggle:false,            // setting: [C] toggles crouch instead of holding
   crouchLatch:false,             // toggle-mode state: currently latched down
+  quality:"high",                // graphics setting: "high" | "low" (low caps pixelRatio & drops antialias)
 
   curEyeH:1.62,
   bottles:0, hasFuse:false, powerOn:false, objective:0,

@@ -79,7 +79,7 @@ export function makeSpider(){
                  front:i===0, fold:0});
     }
   }
-  g.userData={legs, eyeMat, abd, head, BODY_Y, scratchAnim:0, sniffAnim:0, abdTilt:0};
+  g.userData={legs, eyeMat, abd, head, BODY_Y, scratchAnim:0, sniffAnim:0, abdTilt:0, animated:true};
   g.visible=false;
   return g;
 }

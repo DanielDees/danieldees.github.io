@@ -2,7 +2,7 @@
 import { $, clamp } from "./utils.js";
 import { STATE } from "./state.js";
 import { AU, applyVolumes, audioInit } from "./audio.js";
-import { renderer } from "./scene.js";
+import { renderer, setRenderQuality } from "./scene.js";
 import { startGame, respawn } from "./lifecycle.js";
 
 /* ---------------- DOM refs ---------------- */
@@ -125,7 +125,7 @@ wire("btnAgain",()=>location.reload());
 const SETTINGS_KEY="noclip_settings_v1";
 export function saveSettings(){
   try{ localStorage.setItem(SETTINGS_KEY, JSON.stringify(
-    {vol:AU.vol, sens:STATE.sens, crouchToggle:STATE.crouchToggle})); }catch(e){}
+    {vol:AU.vol, sens:STATE.sens, crouchToggle:STATE.crouchToggle, quality:STATE.quality})); }catch(e){}
 }
 export function loadSettings(){
   try{
@@ -134,6 +134,7 @@ export function loadSettings(){
       if(s.vol) for(const k of["master","music","sound"]) if(typeof s.vol[k]==="number") AU.vol[k]=clamp(s.vol[k],0,1);
       if(typeof s.sens==="number") STATE.sens=clamp(s.sens,0.1,4);
       STATE.crouchToggle=!!s.crouchToggle;
+      if(s.quality==="low"||s.quality==="high") STATE.quality=s.quality;
     }
   }catch(e){}
 }
@@ -172,6 +173,19 @@ $("sensV").value=STATE.sens.toFixed(1)+"x";
       STATE.crouchToggle=el.checked;
       STATE.crouchLatch=false;            // never carry a stale latch across modes
       show(); saveSettings();
+    });
+  }
+}
+/* graphics quality: HIGH (default) vs LOW — caps the pixel ratio live; the
+   antialias change is read at renderer construction, so it lands next reload */
+{
+  const el=$("qualityLow"), out=$("qualityV");
+  if(el){
+    const show=()=>out.value=STATE.quality==="low"? "LOW":"HIGH";
+    el.checked=STATE.quality==="low"; show();
+    el.addEventListener("change",()=>{
+      STATE.quality=el.checked? "low":"high";
+      show(); setRenderQuality(el.checked); saveSettings();
     });
   }
 }
