@@ -1,6 +1,6 @@
 /* ---------------- props ---------------- */
 import { rand } from "./utils.js";
-import { W, H, CELL, WALL_H as WALL_H0, cellToWorld, randomOpenCell, isWall } from "./map.js";
+import { W, H, CELL, WALL_H as WALL_H0, cellToWorld, randomOpenCell, isWall, losCells } from "./map.js";
 import { makeCanvas, texWall, scaleBoxUV } from "./textures.js";
 import { scene, wallMeshes, removeDecalsOnWall } from "./scene.js";
 
@@ -249,9 +249,24 @@ export function makeElevator(p,facing,opts={}){
 }
 export function placeProps(){
   const used=new Set(), spawn={cx:W>>1,cy:H>>1};
+  const spawnW=cellToWorld(spawn.cx,spawn.cy);
   const pick=(minD)=>{let c;do{c=randomOpenCell(minD);}while(used.has(c.cy*W+c.cx));used.add(c.cy*W+c.cx);return c;};
+  /* almond water must NOT be visible from the fall-in point — a bottle sitting
+     down a straight sightline from spawn is a free pickup that trivialises the
+     opening. Reject any cell with line of sight to spawn; fall back to a plain
+     pick if the map is too open to find a hidden spot. */
+  const pickHidden=(minD)=>{
+    for(let t=0;t<300;t++){
+      const c=randomOpenCell(minD);
+      if(used.has(c.cy*W+c.cx)) continue;
+      const p=cellToWorld(c.cx,c.cy);
+      if(losCells(spawnW.x,spawnW.z,p.x,p.z)) continue;
+      used.add(c.cy*W+c.cx); return c;
+    }
+    return pick(minD);
+  };
   for(let i=0;i<3;i++){
-    const c=pick(6+i*2), p=cellToWorld(c.cx,c.cy), b=makeBottle();
+    const c=pickHidden(6+i*2), p=cellToWorld(c.cx,c.cy), b=makeBottle();
     b.position.set(p.x+rand(-1,1),0,p.z+rand(-1,1));
     scene.add(b);
     interactables.push({kind:"bottle",mesh:b,label:"TAKE ALMOND WATER",taken:false});

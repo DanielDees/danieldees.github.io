@@ -173,7 +173,7 @@ function setPath2(wx,wz){
 function spiderCanSee(){
   if(underTable(STATE.pos.x,STATE.pos.z)) return false;
   const d=spider.pos.distanceTo(STATE.pos);
-  const range=(STATE.crouch||!STATE.moving)? 4.2 : 10.4*(STATE.sprinting?1.15:1.10);   // still/crouched; moving = walk ×1.10 / run ×1.15
+  const range=(STATE.crouch||!STATE.moving)? 4.2 : 11.44*(STATE.sprinting?1.15:1.10);   // still/crouched (unchanged); moving = walk ×1.10 / run ×1.15, +10% floor sight
   if(d>range) return false;
   return losCells2(spider.pos.x,spider.pos.z,STATE.pos.x,STATE.pos.z);
 }
@@ -691,7 +691,8 @@ export function updateSpider(dt){
   if(STATE.moving&&!STATE.crouch){
     const moveGain = STATE.sprinting ? 1.15 : 1.10;   // running heard a touch farther than walking
     const wallGain = s.surf.mode==="wall" ? 1.4 : 1;
-    const strongR = 13.6*moveGain*wallGain, mildR = 20.4*moveGain*wallGain;
+    const floorGain = s.surf.mode==="floor" ? 1.10 : 1;   // +10% floor detection (wall/ceiling keep their own gain)
+    const strongR = 13.6*moveGain*wallGain*floorGain, mildR = 20.4*moveGain*wallGain*floorGain;
     if(d<strongR){
       s.lastKnown=STATE.pos.clone();
       if(s.surf.mode!=="floor") s.surf.goal=null;   // a near player overrides a disc errand while elevated

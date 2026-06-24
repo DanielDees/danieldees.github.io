@@ -1282,7 +1282,7 @@ export function buildLibrary(){
   for(const L of lights)
     L.wakeAt=0.4+Math.hypot(L.world.x-LIB.spawn.x,L.world.z-LIB.spawn.z)*0.055+Math.random()*0.3;
   /* ---- the floppy disks ---- */
-  STATE.discTotal=18+Math.floor(srand()*6);                 // 18–23
+  STATE.discTotal=15+Math.floor(srand()*6);                 // 15–20 (−3 min/max for a shorter hunt)
   const sites=[];
   for(const run of LIB.runs){
     const [dx,dy]=run.axis===0? [0,1] : [1,0];
@@ -1402,9 +1402,9 @@ export function updateLibrary(dt){
     STATE.libWakeT+=dt;
     if(STATE.libWakeT>14) STATE.libWakeT=-1;      // every fixture is long awake
   }
-  /* 95 seconds after the first disk leaves its shelf, the building answers:
+  /* 125 seconds after the first disk leaves its shelf, the building answers:
      every light drops to a quarter of its brightness and goes sodium-warm */
-  if(!STATE.libDim && STATE.libFirstPickup>=0 && STATE.time-STATE.libFirstPickup>=95){
+  if(!STATE.libDim && STATE.libFirstPickup>=0 && STATE.time-STATE.libFirstPickup>=125){
     STATE.libDim=true;
     /* deal each strip its burn: most settle at orange (warmth ≈1 is the
        brightest hue the grid will reach again), ~40% burn past it into
