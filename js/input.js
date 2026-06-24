@@ -12,11 +12,17 @@ let typed="", typedT=0; // typing "the end" warps to the terminal for cutscene t
 addEventListener("keydown",e=>{
   KEYS[e.code]=true;
   if(e.code==="Space") e.preventDefault();
+  /* swallow CTRL while in game: it is no longer a crouch key, and letting
+     browser chords through (Ctrl+W closes the tab, Ctrl+N/T spawn windows…)
+     was killing runs mid-play. preventDefault on the modifier and on any
+     ctrl-combo keeps those shortcuts from firing while you're focused. */
+  if(STATE.playing && !STATE.dead && !STATE.won &&
+     (e.code==="ControlLeft"||e.code==="ControlRight"||e.ctrlKey)) e.preventDefault();
   if(!STATE.playing||STATE.dead||STATE.won) return;
   if(e.code==="KeyO") toggleSound();
   if(e.code==="KeyE") tryInteract();
-  /* toggle-mode crouch: each fresh press of a crouch key flips the latch */
-  if((e.code==="KeyC"||e.code==="ControlLeft")&&!e.repeat&&STATE.crouchToggle)
+  /* toggle-mode crouch: each fresh press of [C] flips the latch */
+  if(e.code==="KeyC"&&!e.repeat&&STATE.crouchToggle)
     STATE.crouchLatch=!STATE.crouchLatch;
   if(e.code==="Digit6"){
     const now=performance.now();
@@ -40,6 +46,13 @@ addEventListener("keydown",e=>{
   }
 });
 addEventListener("keyup",e=>KEYS[e.code]=false);
+/* stuck-input guard: when the window loses focus (alt-tab, a browser chord,
+   the OS stealing focus) the browser never fires the matching keyup, so a
+   held movement key stays latched true and the player drifts forever. Wipe
+   every raw key whenever focus or visibility is lost. */
+const clearKeys=()=>{ for(const k in KEYS) KEYS[k]=false; };
+addEventListener("blur",clearKeys);
+document.addEventListener("visibilitychange",()=>{ if(document.hidden) clearKeys(); });
 document.addEventListener("mousemove",e=>{
   if(document.pointerLockElement!==renderer.domElement) return;
   STATE.yaw -= e.movementX*0.0022*STATE.sens;
@@ -47,6 +60,7 @@ document.addEventListener("mousemove",e=>{
 });
 document.addEventListener("pointerlockchange",()=>{
   const locked = document.pointerLockElement===renderer.domElement;
+  if(!locked) clearKeys();      // releasing the mouse can also eat a keyup
   if(!locked && STATE.playing && !STATE.dead && !STATE.won &&
      ui.how.classList.contains("hide") && ui.pause.classList.contains("hide") &&
      ui.sound.classList.contains("hide")){

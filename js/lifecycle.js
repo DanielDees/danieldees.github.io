@@ -68,18 +68,28 @@ export function respawn(){
     ui.staticfx.style.opacity=0;
     return;
   }
+  /* death restarts level 0 from scratch: the backrooms reshuffle, every
+     objective resets, and the entity goes back to sleep. Progress is no
+     longer carried across a death down here — you start the floor over. */
+  clearLevelScene();
+  clearInteractables();
+  clearMonsterFx();
+  monster.active=false; monster.mesh=null; monster.shock=null; monster.shockTimer=0;
+  monster.escalation=0; monster.state="wander"; monster.path=[]; monster.lastSeen=null;
+  monster.curSpeed=0; monster.rush=false; monster.held=false; monster.holdAt30=false;
+  monster.wakeT=0; monster.knockMove=null;
+  STATE.bottles=0; STATE.hasFuse=false; STATE.powerOn=false; STATE.objective=0;
+  STATE.time=0; STATE.ambDim=1; STATE.shakeAmp=0;
+  buildLevel(); placeProps();
+  monster.mesh=makeMonster(); scene.add(monster.mesh);
   const s=cellToWorld(W>>1,H>>1);
   STATE.pos.set(s.x,0,s.z);
   STATE.y=0; STATE.vy=0; STATE.grounded=true; STATE.velX=0; STATE.velZ=0;
-  STATE.dead=false; STATE.stamina=1; STATE.crouchLatch=false;
-  if(monster.active){
-    const p=farOpenWorldPoint(STATE.pos.x,STATE.pos.z,44);
-    monster.pos.set(p.x,0,p.z);
-    monster.state="wander"; monster.path=[]; monster.lastSeen=null; monster.curSpeed=0;
-    monster.rush=false; monster.held=false; monster.holdAt30=false;
-  }
+  STATE.dead=false; STATE.stamina=1; STATE.crouch=false; STATE.crouchLatch=false;
+  STATE.yaw=0; STATE.pitch=0;
   ui.dread.style.opacity=0;
   ui.staticfx.style.opacity=0;
+  renderObjectives();
 }
 /* debug warp (triple-tap [6] in game): every objective cleared, the player
    standing at the elevator with the call button live — [E] starts the ride */
@@ -186,7 +196,7 @@ export function die(){
   const body=$("deathBody");
   if(body) body.textContent = STATE.level===1
     ? "You wake on the floor of the wrecked cab. Your pockets are, somehow, still full — and the terminal keeps what it was fed. The librarian has gone back to its shelves."
-    : "You wake at the place you first fell through. Your pockets are, somehow, still full. Your progress is kept. It has already forgotten you — for now.";
+    : "You wake at the place you first fell through — but the backrooms have already rearranged themselves, and whatever you'd gathered is gone. Start the floor again. Quieter, this time.";
   setPaused(true,true);            // keep audio so the death sound plays out
   if(document.pointerLockElement) document.exitPointerLock();
   ui.death.classList.remove("hide");

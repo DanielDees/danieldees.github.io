@@ -236,7 +236,12 @@ export function monsterRushTo(x,z){
 }
 export function monsterCanSee(){
   const d=monster.pos.distanceTo(STATE.pos);
-  let range = STATE.crouch? 11 : 19;          // +20% sight
+  const chasing = monster.state==="chase";
+  /* crouching cuts detection range 60% (19 → 7.6) — but only while it hasn't
+     committed to you yet. Once it's chasing, dropping low no longer shrinks
+     the range, so you can't crouch-juke an active pursuer; you still have to
+     break line of sight and hold still (the d>7 rule below). */
+  let range = (STATE.crouch && !chasing)? 19*0.4 : 19;
   if(STATE.sprinting&&STATE.moving) range=27.3;   // max chase reach +5%
   range *= sightMult();                            // grows 5% per objective cleared
   if(d>range) return false;
@@ -318,7 +323,7 @@ function startAlert(){
   sfxAlert(panTo(monster.pos.x,monster.pos.z));
 }
 const hash=n=>{const s=Math.sin(n)*43758.5453;return s-Math.floor(s);};
-const SPEED_TARGETS={wander:2.0, investigate:3.4, alert:0, chase:6.4, hunt:3.4};
+const SPEED_TARGETS={wander:2.0, investigate:3.4, alert:0, chase:7.04, hunt:3.4};  // chase +10% (was 6.4)
 export function updateMonster(dt){
   updatePoofs(dt);
   /* delayed first wake: the almond-water grab lights a short fuse */
@@ -456,7 +461,7 @@ export function updateMonster(dt){
   const movedSpeed=Math.hypot(m.pos.x-prevX,m.pos.z-prevZ)/Math.max(dt,1e-5);
 
   /* ---- animation: walk cycle scales with actual velocity, idle breathes ---- */
-  const u=m.mesh.userData, sp01=clamp(movedSpeed/6.4,0,1);
+  const u=m.mesh.userData, sp01=clamp(movedSpeed/SPEED_TARGETS.chase,0,1);
   m.anim += dt*(1.5+movedSpeed*1.6);
   const swingAmp=clamp(movedSpeed/2.5,0,1)*0.7;
   const sw=Math.sin(m.anim)*swingAmp;
@@ -499,7 +504,7 @@ export function updateMonster(dt){
   const turnRate = m.state==="alert"? 0.16 : 0.1;   // deliberate, unsettling turn
   m.mesh.rotation.y = angLerp(m.mesh.rotation.y, m.faceAng, 1-Math.pow(1-turnRate,dt*60));
 
-  if(d<1.25) die();
+  if(d<1.5625) die();   // kill reach +25% (was 1.25) — it can actually land the grab now
 
   /* ---- wall knocking: when it lingers, it walks up close to the nearest
      wall and raps on it ---- */
