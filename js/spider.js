@@ -746,9 +746,15 @@ export function updateSpider(dt){
       if(s.lastKnown&&s.repath<=0){ setPath2(s.lastKnown.x,s.lastKnown.z); s.repath=s.seekRun?0.35:0.8; }
       /* arrival: the heard spot is often INSIDE a shelf or under a table —
          unreachable cells end the path one cell short, so an exhausted path
-         within a stride of the spot counts as arriving */
+         within a stride of the spot counts as arriving.
+         A spot ON a table needs its own radius: pushFromTables holds the
+         body at exactly 2.0m (CELL/2) from the cell centre, so the 2.0m
+         close-approach can NEVER fire there — without this, arrival hangs
+         entirely on the path running dry, and a spider pinned at the
+         keep-out re-pathing the same unreachable spot seeks forever */
       const dLK=s.lastKnown? s.pos.distanceTo(s.lastKnown) : 1e9;
-      if(dLK<2.0||(s.path.length===0&&dLK<CELL*1.5)){
+      const lkOnTable=s.lastKnown && cellAt(s.lastKnown.x,s.lastKnown.z)===4;
+      if(dLK<2.0||(lkOnTable&&dLK<3.2)||(s.path.length===0&&dLK<CELL*1.5)){
         if(hiding&&d<5.5){ startStalk(s); break; }
         if(s.lastKnown){ s.faceAng=Math.atan2(s.lastKnown.x-s.pos.x,s.lastKnown.z-s.pos.z); }
         s.state="investigate"; s.searchT=rand(1.82,3.22); s.path=[];   // −30%: it lingers less over a scent
@@ -847,10 +853,21 @@ export function updateSpider(dt){
 
   /* anti-deadlock watchdog: commanded to move but going nowhere for over a
      second (push-outs, any future geometry trap) → drop the path and let
-     the state machine pick a fresh one. Chase already repaths on its own. */
+     the state machine pick a fresh one. Chase already repaths on its own.
+     A pinned SEEK escalates: seek would just re-path the same unreachable
+     spot 3×/s forever (the table-edge softlock), so if it's already within
+     a stride and a half of the spot, that IS arrival — inspect from here,
+     which also ends the episode and resets the stacked speed. */
   if(s.path.length&&s.curSpeed>0.5&&movedSpeed<0.3){
     s.stuckT+=dt;
-    if(s.stuckT>1.2){ s.stuckT=0; s.path=[]; s.repath=0; }
+    if(s.stuckT>1.2){
+      s.stuckT=0; s.path=[]; s.repath=0;
+      if(s.state==="seek"&&s.lastKnown&&s.pos.distanceTo(s.lastKnown)<CELL*1.5){
+        s.faceAng=Math.atan2(s.lastKnown.x-s.pos.x,s.lastKnown.z-s.pos.z);
+        s.state="investigate"; s.searchT=rand(1.82,3.22);
+        if(s.sniffCD<=0){ s.sniffsLeft=2+Math.floor(Math.random()*3); s.sniffT=rand(0.4,0.9); }
+      }
+    }
   } else s.stuckT=0;
 
   /* ---- the catch: it cannot reach under a table; anywhere else it can ---- */

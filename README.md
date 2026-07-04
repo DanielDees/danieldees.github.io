@@ -74,6 +74,14 @@ track by ear.
   the render resolution to 1× and turns off antialiasing — a large gain on integrated
   GPUs, fill-rate-limited laptops, and high-DPI screens. The setting persists. (The
   antialiasing change applies on the next reload.)
+- **Table-disc softlock fixed.** A disk sitting on a table could pin the librarian
+  against the table edge forever: its "reached the sound" check needed it within
+  2.0m of the heard spot, but the personal-space rule around tables holds its body
+  at *exactly* 2.0m — geometrically unreachable, so it could re-path the same
+  unreachable spot indefinitely and only a louder noise (the player moving) would
+  break it out. Sounds on a table now count as reached from just outside that
+  keep-out, and the anti-stuck watchdog escalates a pinned search into a proper
+  investigate — the episode always ends and its stacked speed always resets.
 - **Codebase health pass.** A cleanup sweep ahead of the next feature push, with no
   gameplay changes (seeded generation verified byte-identical before and after):
   - Three real bugs fixed: the circulation-desk lamp now actually goes dark during
