@@ -4,6 +4,7 @@ import { W, H, CELL, WALL_H, grid, genMap, cellToWorld, isWall } from "./map.js"
 import { makeCanvas, texWall, texCarpet, texStains, texCeil, texCeilStains,
          makeMoldTextures, makeDripTextures, sliceTexture } from "./textures.js";
 import { $ } from "./utils.js";
+import { readSettings } from "./settings.js";
 
 export const FOG_COLOR = 0x050402;       // ~98% black, a whisper of yellow: full darkness, never backlit
 export const scene = new THREE.Scene();
@@ -14,10 +15,20 @@ export const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(FOG_COLOR, 5.4, 55);
 scene.background = new THREE.Color(FOG_COLOR);
 export const camera = new THREE.PerspectiveCamera(72, innerWidth/innerHeight, 0.1, 200);
-export const renderer = new THREE.WebGLRenderer({antialias:true});
+/* graphics quality is read straight from saved settings HERE: antialias can only
+   be chosen when the GL context is created, so ui.js can't flip it live — it
+   reads back at construction and a change takes effect on the next reload. The
+   pixel ratio, by contrast, can be set live (setRenderQuality below). */
+const _sv=readSettings();
+const _lowQ = !!(_sv && _sv.quality==="low");
+const _maxDPR=()=>Math.min(devicePixelRatio,2);
+export const renderer = new THREE.WebGLRenderer({antialias:!_lowQ, powerPreference:"high-performance"});
 renderer.setSize(innerWidth,innerHeight);
-renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setPixelRatio(_lowQ?1:_maxDPR());
 $("game").appendChild(renderer.domElement);
+/* live quality switch — pixel ratio applies immediately (1× on low-end halves the
+   fragment load), antialias waits for a reload */
+export function setRenderQuality(low){ renderer.setPixelRatio(low?1:_maxDPR()); }
 addEventListener("resize",()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
   renderer.setSize(innerWidth,innerHeight);});
 
@@ -52,12 +63,107 @@ for(let i=0;i<LIGHT_POOL_N;i++){
    meshes (and the entities/props added later) don't get the tag, so
    clearLevelScene sweeps them all without each module keeping lists */
 for(const o of scene.children) o.userData.persist=true;
+
+/* ---------------- GPU-resource disposal ----------------
+   scene.remove() only detaches from the graph — geometry/material/texture GPU
+   buffers persist until .dispose(). Per-build assets (decal canvases, the
+   per-fixture flicker materials, wall geometry, …) are created fresh every
+   build, so without this they leak on every respawn and level change and
+   eventually exhaust VRAM. We dispose by traversal on teardown, skipping the
+   SHARED singletons (module-level materials/textures + the cached book pool),
+   which are reused across builds and must survive. Each module registers its
+   own shared assets via markShared. */
+export const SHARED=new Set();
+export function markShared(...res){ for(const r of res) if(r) SHARED.add(r); return res[0]; }
+markShared(texWall,texCarpet,texStains,texCeil,texCeilStains);   // level-0 tileable textures (mutated, reused)
+const _MAT_MAPS=["map","alphaMap","aoMap","bumpMap","displacementMap","emissiveMap",
+  "envMap","lightMap","metalnessMap","normalMap","roughnessMap","specularMap","gradientMap"];
+function disposeMaterial(m,done){
+  if(!m||SHARED.has(m)||done.has(m)) return;
+  done.add(m);
+  for(const k of _MAT_MAPS){ const t=m[k]; if(t&&!SHARED.has(t)&&!done.has(t)){ done.add(t); t.dispose(); } }
+  m.dispose();
+}
+function disposeNode(o,done){
+  const g=o.geometry;
+  if(g&&!SHARED.has(g)&&!done.has(g)){ done.add(g); g.dispose(); }
+  const m=o.material;
+  if(Array.isArray(m)) for(const mm of m) disposeMaterial(mm,done);
+  else if(m) disposeMaterial(m,done);
+}
 export function clearLevelScene(){
-  for(const o of [...scene.children])
-    if(!o.userData.persist) scene.remove(o);
+  const done=new Set();                              // dedupe assets shared across many meshes in this build
+  for(const o of [...scene.children]){
+    if(o.userData.persist) continue;
+    o.traverse(c=>{ if(c.isMesh||c.isSprite||c.isLine) disposeNode(c,done); });
+    scene.remove(o);
+  }
   lights.length=0;
   wallMeshes=new Map();
   wallDecals.length=0;
+}
+
+/* ---------------- static draw-call merging & matrix freezing ----------------
+   r128 has no auto-batching: every Mesh is a draw call, and matrixAutoUpdate
+   (default true) recomputes every static object's world matrix each frame.
+   mergeStatic collapses many identical-material static meshes into one; freeze
+   stops their per-frame matrix work. */
+function concatGeos(geos){
+  let vc=0, ic=0;
+  for(const g of geos){ vc+=g.attributes.position.count; ic+=g.index.count; }
+  const pos=new Float32Array(vc*3), nor=new Float32Array(vc*3), uv=new Float32Array(vc*2);
+  const idx=(vc>65535? new Uint32Array(ic):new Uint16Array(ic));
+  let vo=0, io=0;
+  for(const g of geos){
+    pos.set(g.attributes.position.array, vo*3);
+    nor.set(g.attributes.normal.array, vo*3);
+    uv.set(g.attributes.uv.array, vo*2);
+    const gi=g.index.array;
+    for(let i=0;i<gi.length;i++) idx[io+i]=gi[i]+vo;
+    vo+=g.attributes.position.count; io+=gi.length;
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute("position",new THREE.BufferAttribute(pos,3));
+  geo.setAttribute("normal",new THREE.BufferAttribute(nor,3));
+  geo.setAttribute("uv",new THREE.BufferAttribute(uv,2));
+  geo.setIndex(new THREE.BufferAttribute(idx,1));
+  return geo;
+}
+/* bake each mesh's world transform into a clone of its geometry, concat into
+   one geometry, return a single static Mesh (the inputs are NOT added). */
+export function mergeStatic(meshes,material){
+  const geos=[];
+  for(const m of meshes){ m.updateMatrixWorld(true); const g=m.geometry.clone(); g.applyMatrix4(m.matrixWorld); geos.push(g); }
+  const merged=concatGeos(geos);
+  for(const g of geos) g.dispose();
+  return freezeStatic(new THREE.Mesh(merged,material));
+}
+/* stop per-frame matrix recompute on a positioned static object (+ subtree) */
+export function freezeStatic(o){
+  o.updateMatrixWorld(true);
+  o.traverse(c=>{ c.matrixAutoUpdate=false; });
+  return o;
+}
+/* sweep the freshly built level: freeze every static top-level object. Skips
+   persistent rig, animated props (idle-spinning pickups), and anything a
+   cutscene drives by transform (elevators, the breaker) — all tagged
+   userData.animated. Entities are added AFTER this runs, so they're untouched. */
+export function freezeStaticScene(){
+  for(const o of scene.children){
+    if(o.userData.persist||o.userData.animated) continue;
+    freezeStatic(o);
+  }
+}
+/* level 0 only: the elevator carve (placeProps) removes one wall cell's mesh,
+   so walls are merged AFTER props — collapsing ~400 draw calls to one. */
+export function mergeWallMeshes(){
+  const arr=[]; for(const m of wallMeshes.values()) if(m.parent) arr.push(m);
+  if(!arr.length) return;
+  const srcGeo=arr[0].geometry, mat=arr[0].material;
+  const merged=mergeStatic(arr,mat);
+  for(const m of arr) scene.remove(m);
+  srcGeo.dispose();                                  // the shared box geo is now baked into `merged`
+  scene.add(merged);
 }
 /* fog & ambient floor per level. THE END sits in a cooler, deeper murk:
    its minimum ambient light level is roughly HALF of level 0's. */
@@ -102,9 +208,113 @@ export let wallMeshes=new Map(); // cell key (cy*W+cx) → wall box mesh; props.
    leaving them floating in the doorway */
 export let wallDecals=[];
 export function removeDecalsOnWall(key){
-  for(const m of wallDecals)
-    if(m.userData.wallKeys && m.userData.wallKeys.includes(key)) scene.remove(m);
+  /* the decals carved out here leave the scene mid-build, so clearLevelScene
+     never sees them — dispose their (per-decal) texture/material/geometry now
+     and drop them from the registry instead of leaving dead entries */
+  for(let i=wallDecals.length-1;i>=0;i--){
+    const m=wallDecals[i];
+    if(!m.userData.wallKeys || !m.userData.wallKeys.includes(key)) continue;
+    scene.remove(m);
+    m.geometry.dispose();
+    if(m.material.map) m.material.map.dispose();
+    m.material.dispose();
+    wallDecals.splice(i,1);
+  }
 }
+/* ---------------- the level-0 troffer fixture ----------------
+   A shallow housing with an OPEN bottom face — tubes and diffuse backplate
+   sit recessed inside it, and the grille is inset flush with the bottom rim,
+   exactly like a real troffer. The record driving it (makeLightRecord) is the
+   shared one; only the shell differs from the library's hanging strip.
+   Assets live at module level and are markShared'd: buildLevel runs on every
+   respawn, and regenerating identical canvases/geometry each time was pure
+   churn (the library's makeFixture already worked this way). */
+/* single full-cover grate texture (no tiling) so it can close with a rail on
+   ALL four edges — a repeating tile always ends on a gap at the far side,
+   leaving the grate visually open on two sides */
+const grateTex = makeCanvas(256,128,(g,w,h)=>{
+  g.clearRect(0,0,w,h);
+  g.fillStyle="rgba(22,19,11,0.96)";
+  /* exact division: rails on both edges with N uniform cells between,
+     so the pattern closes flush on every side — fixed-step spacing left
+     a partial sliver cell against the far rails */
+  const NX=32, NY=8;
+  for(let i=0;i<=NX;i++) g.fillRect(i*(w-2)/NX,0,2,h);   // grille vanes
+  for(let j=0;j<=NY;j++) g.fillRect(0,j*(h-2)/NY,w,2);   // cross ribs
+});
+/* end-of-life tubes: a gentle hue drift — yellower at the ends, a touch
+   more orange at the center where the phosphor has worn the most.
+   CylinderGeometry's v axis runs end-to-end, so a vertical gradient maps
+   along the tube. */
+const warmTubeTex = makeCanvas(4,64,(g,w,h)=>{
+  const gr=g.createLinearGradient(0,0,0,h);
+  gr.addColorStop(0,  "#ffdf94");
+  gr.addColorStop(0.5,"#ff9742");
+  gr.addColorStop(1,  "#ffdf94");
+  g.fillStyle=gr; g.fillRect(0,0,w,h);
+});
+const HOUSE_D=0.096;                               // 20% shallower than before
+const housingGeo=new THREE.BoxGeometry(CELL*0.66,HOUSE_D,CELL*0.34);
+/* galvanized-steel fixture frame — clearly a piece of metal hardware,
+   not a patch of ceiling; faint emissive keeps it readable right next
+   to its own glowing tubes */
+const housingSide=new THREE.MeshPhongMaterial({color:0xb4b2aa,emissive:0x0d0d0b,
+  specular:0x6a6960,shininess:55});
+/* bottom face: metallic trim flange with the centre punched out via
+   alphaTest so the grate & glow show through — keeps the fixture visible
+   from directly underneath without transparency-sorting issues */
+const rimTex=makeCanvas(256,128,(g,w,h)=>{
+  g.clearRect(0,0,w,h);
+  g.fillStyle="#a8a69d";
+  g.fillRect(0,0,w,8);g.fillRect(0,h-8,w,8);g.fillRect(0,0,8,h);g.fillRect(w-8,0,8,h);
+  g.fillStyle="rgba(30,28,22,0.85)";                 // shadowed inner lip
+  g.fillRect(8,8,w-16,2);g.fillRect(8,h-10,w-16,2);g.fillRect(8,8,2,h-16);g.fillRect(w-10,8,2,h-16);
+});
+const housingRim=new THREE.MeshPhongMaterial({map:rimTex,alphaTest:0.5,
+  specular:0x55534a,shininess:45});
+// box face order: +x,-x,+y,-y,+z,-z — bottom (-y) carries the trim flange
+const housingMats=[housingSide,housingSide,housingSide,housingRim,housingSide,housingSide];
+const tubeGeo=new THREE.CylinderGeometry(0.042,0.042,CELL*0.55,8);
+tubeGeo.rotateZ(Math.PI/2);                        // lie along x
+/* backplate fills the housing opening edge-to-edge: the box's top face is
+   back-face culled from below, so any gap around the backplate would show
+   straight through to the ceiling plane — ceiling texture inside the
+   fixture. Full coverage seals the interior. */
+const glowGeo=new THREE.PlaneGeometry(CELL*0.66,CELL*0.34);
+/* the grate must line up with the rim flange's inner opening
+   (0.61875 × 0.2975 of CELL — the rim border is 8px of its 256×128
+   texture). Sized a hair larger so the grate's outer rails tuck just
+   under the rim: the first visible cell inside the rim is then always
+   a full one. A larger grate hides its rails deeper under the rim and
+   exposes a glowing sliver of part-cell instead. */
+const grateGeo=new THREE.PlaneGeometry(CELL*0.625,CELL*0.305);
+const grateMat=new THREE.MeshBasicMaterial({map:grateTex,transparent:true});
+markShared(grateTex,warmTubeTex,rimTex,housingGeo,tubeGeo,glowGeo,grateGeo,
+           housingSide,housingRim,grateMat);
+/* the TUBES are the light source — the housing interior only catches spill,
+   so every backplate sits darker than its tubes: a faint glow on dying
+   fixtures, a brighter (but still secondary) wash on healthy ones.
+   glowMat = backplate, tubeMat = tubes; both stay per-fixture (lights.js
+   drives their colors every frame), created fresh here and disposed with
+   the level. */
+function makeTroffer(warm){
+  const glowMat=new THREE.MeshBasicMaterial({color: warm?0x4d3419:0xb8b2a2});
+  const tubeMat=warm? new THREE.MeshBasicMaterial({map:warmTubeTex})
+                    : new THREE.MeshBasicMaterial({color:0xfff6cf});
+  const fix=new THREE.Group();
+  const housing=new THREE.Mesh(housingGeo,housingMats);
+  housing.position.y=WALL_H-HOUSE_D/2; fix.add(housing);
+  const backplate=new THREE.Mesh(glowGeo,glowMat);
+  backplate.rotation.x=Math.PI/2; backplate.position.y=WALL_H-0.014; fix.add(backplate);
+  for(const tz of[-0.32,0.32]){
+    const tube=new THREE.Mesh(tubeGeo,tubeMat);
+    tube.position.set(0,WALL_H-0.05,tz); fix.add(tube);   // recessed inside the housing
+  }
+  const grate=new THREE.Mesh(grateGeo,grateMat);
+  grate.rotation.x=Math.PI/2; grate.position.y=WALL_H-HOUSE_D+0.004; fix.add(grate); // flush with the rim
+  return {fix, glowMat, tubeMat};
+}
+
 export function buildLevel(){
   genMap();
   wallMeshes=new Map();
@@ -305,70 +515,8 @@ export function buildLevel(){
     dQuota--;
   }
 
-  /* fluorescent fixtures: a shallow housing with an OPEN bottom face —
-     tubes and diffuse backplate sit recessed inside it, and the grille is
-     inset flush with the bottom rim, exactly like a real troffer */
-  /* single full-cover texture (no tiling) so the grate can close with a
-     rail on ALL four edges — a repeating tile always ends on a gap at the
-     far side, leaving the grate visually open on two sides */
-  const grateTex = makeCanvas(256,128,(g,w,h)=>{
-    g.clearRect(0,0,w,h);
-    g.fillStyle="rgba(22,19,11,0.96)";
-    /* exact division: rails on both edges with N uniform cells between,
-       so the pattern closes flush on every side — fixed-step spacing left
-       a partial sliver cell against the far rails */
-    const NX=32, NY=8;
-    for(let i=0;i<=NX;i++) g.fillRect(i*(w-2)/NX,0,2,h);   // grille vanes
-    for(let j=0;j<=NY;j++) g.fillRect(0,j*(h-2)/NY,w,2);   // cross ribs
-  });
-  /* end-of-life tubes: a gentle hue drift — yellower at the ends, a touch
-     more orange at the center where the phosphor has worn the most.
-     CylinderGeometry's v axis runs end-to-end, so a vertical gradient maps
-     along the tube. */
-  const warmTubeTex = makeCanvas(4,64,(g,w,h)=>{
-    const gr=g.createLinearGradient(0,0,0,h);
-    gr.addColorStop(0,  "#ffdf94");
-    gr.addColorStop(0.5,"#ff9742");
-    gr.addColorStop(1,  "#ffdf94");
-    g.fillStyle=gr; g.fillRect(0,0,w,h);
-  });
-  const HOUSE_D=0.096;                               // 20% shallower than before
-  const housingGeo=new THREE.BoxGeometry(CELL*0.66,HOUSE_D,CELL*0.34);
-  /* galvanized-steel fixture frame — clearly a piece of metal hardware,
-     not a patch of ceiling; faint emissive keeps it readable right next
-     to its own glowing tubes */
-  const housingSide=new THREE.MeshPhongMaterial({color:0xb4b2aa,emissive:0x0d0d0b,
-    specular:0x6a6960,shininess:55});
-  /* bottom face: metallic trim flange with the centre punched out via
-     alphaTest so the grate & glow show through — keeps the fixture visible
-     from directly underneath without transparency-sorting issues */
-  const rimTex=makeCanvas(256,128,(g,w,h)=>{
-    g.clearRect(0,0,w,h);
-    g.fillStyle="#a8a69d";
-    g.fillRect(0,0,w,8);g.fillRect(0,h-8,w,8);g.fillRect(0,0,8,h);g.fillRect(w-8,0,8,h);
-    g.fillStyle="rgba(30,28,22,0.85)";                 // shadowed inner lip
-    g.fillRect(8,8,w-16,2);g.fillRect(8,h-10,w-16,2);g.fillRect(8,8,2,h-16);g.fillRect(w-10,8,2,h-16);
-  });
-  const housingRim=new THREE.MeshPhongMaterial({map:rimTex,alphaTest:0.5,
-    specular:0x55534a,shininess:45});
-  // box face order: +x,-x,+y,-y,+z,-z — bottom (-y) carries the trim flange
-  const housingMats=[housingSide,housingSide,housingSide,housingRim,housingSide,housingSide];
-  const tubeGeo=new THREE.CylinderGeometry(0.042,0.042,CELL*0.55,8);
-  tubeGeo.rotateZ(Math.PI/2);                        // lie along x
-  /* backplate fills the housing opening edge-to-edge: the box's top face is
-     back-face culled from below, so any gap around the backplate would show
-     straight through to the ceiling plane — ceiling texture inside the
-     fixture. Full coverage seals the interior. */
-  const glowGeo=new THREE.PlaneGeometry(CELL*0.66,CELL*0.34);
-  /* the grate must line up with the rim flange's inner opening
-     (0.61875 × 0.2975 of CELL — the rim border is 8px of its 256×128
-     texture). Sized a hair larger so the grate's outer rails tuck just
-     under the rim: the first visible cell inside the rim is then always
-     a full one. A larger grate hides its rails deeper under the rim and
-     exposes a glowing sliver of part-cell instead. */
-  const grateGeo=new THREE.PlaneGeometry(CELL*0.625,CELL*0.305);
-  const grateMat=new THREE.MeshBasicMaterial({map:grateTex,transparent:true});
-  /* ~30% of fixture slots stay dark. A truly independent per-slot roll
+  /* fluorescent troffers (built by makeTroffer above).
+     ~30% of fixture slots stay dark. A truly independent per-slot roll
      produces runs of adjacent misses, which read as whole missing ROWS at
      this 8m slot spacing — so a slot may only go dark if its left and up
      neighbors spawned, and the base rate is raised to keep net density
@@ -382,33 +530,14 @@ export function buildLevel(){
     }
     /* ~10% of fixtures are end-of-life: warm orange, half brightness,
        slower dim-down cycles instead of random flicker bursts */
-    {
-      const warm=Math.random()<0.10;
-      /* the TUBES are the light source — the housing interior only catches
-         spill, so every backplate sits darker than its tubes: a faint glow
-         on dying fixtures, a brighter (but still secondary) wash on healthy
-         ones. glowMat = backplate, tubeMat = tubes. */
-      const glowMat=new THREE.MeshBasicMaterial({color: warm?0x4d3419:0xb8b2a2});
-      const tubeMat=warm? new THREE.MeshBasicMaterial({map:warmTubeTex})
-                        : new THREE.MeshBasicMaterial({color:0xfff6cf});
-      const p=cellToWorld(x,y);
-      const fix=new THREE.Group();
-      const housing=new THREE.Mesh(housingGeo,housingMats);
-      housing.position.y=WALL_H-HOUSE_D/2; fix.add(housing);
-      const backplate=new THREE.Mesh(glowGeo,glowMat);
-      backplate.rotation.x=Math.PI/2; backplate.position.y=WALL_H-0.014; fix.add(backplate);
-      for(const tz of[-0.32,0.32]){
-        const tube=new THREE.Mesh(tubeGeo,tubeMat);
-        tube.position.set(0,WALL_H-0.05,tz); fix.add(tube);   // recessed inside the housing
-      }
-      const grate=new THREE.Mesh(grateGeo,grateMat);
-      grate.rotation.x=Math.PI/2; grate.position.y=WALL_H-HOUSE_D+0.004; fix.add(grate); // flush with the rim
-      fix.position.set(p.x,0,p.z);
-      scene.add(fix);
-      /* healthy panels idle at 85–100% of max; dimY (0 at full, 1 at the
-         floor) faintly yellows the dimmer ones — same idea as the dying
-         tubes' orange gradient, far subtler */
-      lights.push(makeLightRecord(glowMat,tubeMat,x,y,p,{warm}));
-    }
+    const warm=Math.random()<0.10;
+    const p=cellToWorld(x,y);
+    const f=makeTroffer(warm);
+    f.fix.position.set(p.x,0,p.z);
+    scene.add(f.fix);
+    /* healthy panels idle at 85–100% of max; dimY (0 at full, 1 at the
+       floor) faintly yellows the dimmer ones — same idea as the dying
+       tubes' orange gradient, far subtler */
+    lights.push(makeLightRecord(f.glowMat,f.tubeMat,x,y,p,{warm}));
   }
 }

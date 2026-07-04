@@ -2,7 +2,7 @@
 import { $ } from "./utils.js";
 import { STATE, monster, spider } from "./state.js";
 import { W, H, cellToWorld, farOpenWorldPoint } from "./map.js";
-import { scene, buildLevel, clearLevelScene, setLevelEnvironment } from "./scene.js";
+import { scene, lights, buildLevel, clearLevelScene, setLevelEnvironment } from "./scene.js";
 import { placeProps, interactables, exitDoor, clearInteractables } from "./props.js";
 import { makeMonster, wakeMonster, escalateMonster, clearMonsterFx } from "./monster.js";
 import { buildLibrary, LIB } from "./library.js";
@@ -62,7 +62,11 @@ export function respawn(){
     STATE.yaw=LIB.spawnYaw; STATE.pitch=0;
     STATE.y=0; STATE.vy=0; STATE.grounded=true; STATE.velX=0; STATE.velZ=0;
     STATE.dead=false; STATE.stamina=1; STATE.crouch=false; STATE.crouchLatch=false;
-    STATE.libBlackout=0; LIB.blackT=0;
+    STATE.libBlackout=0;
+    /* end any in-flight periodic blackout: the level isn't rebuilt here, so
+       each strip's blackMul would otherwise stay stuck where death left it */
+    LIB.blackActive=false; LIB.blackElapsed=0; LIB.nextBlack=35;
+    for(const L of lights) L.blackMul=1;
     resetSpider(LIB.spawn.x,LIB.spawn.z,36);
     ui.dread.style.opacity=0;
     ui.staticfx.style.opacity=0;

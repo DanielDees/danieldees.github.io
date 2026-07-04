@@ -1,6 +1,6 @@
 # NOCLIP — Escape the Backrooms
 
-**Version: v2.3.0**
+**Version: v2.5.0**
 
 A browser-based survival horror game, playable at
 [danieldees.github.io](https://danieldees.github.io). Vanilla JS ES modules built
@@ -50,6 +50,79 @@ Headphones recommended — audio is positional, and both monsters are far easier
 track by ear.
 
 ## Changelog
+
+### v2.5.0 (2026-06-24)
+- **Runs on far weaker hardware.** A performance and memory pass targeting the
+  lowest-end machines — integrated graphics, and even no discrete GPU — with **no
+  change to how either level looks or plays**. The headline fixes are structural:
+  they lower the minimum spec rather than chasing raw FPS on strong cards.
+- **The memory leak is gone.** Level teardown now properly **disposes** its GPU
+  resources. Previously every death-and-respawn (Level 0) and the descent into THE
+  END leaked the *entire* previous level — hundreds of textures and geometries that
+  were never freed — so on a low-VRAM device a handful of deaths could exhaust memory
+  and crash the tab. Memory is now **flat across any number of respawns and
+  transitions** instead of climbing without bound.
+- **Far fewer draw calls.** Every wall in a level is merged into a single mesh
+  (Level 0: ~170 wall blocks → **1**; the library: ~95 → **1**), and every static
+  object stops recomputing its transform every frame. Together these cut the per-frame
+  CPU cost the most on weak CPUs and integrated drivers, where each draw call is
+  expensive.
+- **A smoother frame loop.** The per-frame lighting update no longer allocates throwaway
+  arrays and objects every tick — a source of garbage-collection stutter on slow
+  hardware — and reuses its scratch buffers instead.
+- **New LOW graphics option.** The Options sheet gains a **GRAPHICS** toggle: LOW caps
+  the render resolution to 1× and turns off antialiasing — a large gain on integrated
+  GPUs, fill-rate-limited laptops, and high-DPI screens. The setting persists. (The
+  antialiasing change applies on the next reload.)
+- **Table-disc softlock fixed.** A disk sitting on a table could pin the librarian
+  against the table edge forever: its "reached the sound" check needed it within
+  2.0m of the heard spot, but the personal-space rule around tables holds its body
+  at *exactly* 2.0m — geometrically unreachable, so it could re-path the same
+  unreachable spot indefinitely and only a louder noise (the player moving) would
+  break it out. Sounds on a table now count as reached from just outside that
+  keep-out, and the anti-stuck watchdog escalates a pinned search into a proper
+  investigate — the episode always ends and its stacked speed always resets.
+- **Codebase health pass.** A cleanup sweep ahead of the next feature push, with no
+  gameplay changes (seeded generation verified byte-identical before and after):
+  - Three real bugs fixed: the circulation-desk lamp now actually goes dark during
+    the ending blackout (its handle was never wired through, so "every light lets
+    go" spared exactly one); dying mid-blackout no longer leaves the library's
+    strips stuck dim after respawn; and the elevator carve now disposes the wall
+    decals it removes instead of leaking them every rebuild.
+  - Recurring waste removed: the Level-0 troffer fixture is now a proper builder
+    (`makeTroffer`) with module-level shared assets instead of regenerating its
+    textures and geometry on every respawn; the entity's smoke texture is cached
+    instead of being rasterized fresh on every space-fold; and the HUD only writes
+    to the DOM when a value actually changes instead of every frame.
+  - Consistency: one shared `hash` helper (was four copies), one settings
+    key/reader module (was two independent `localStorage` parses), one
+    shelf-board elevation table (was three hardcoded copies that had already
+    drifted a few millimetres), and fail-soft guards on the options sliders.
+  - Robustness: the prop-placement loops got bounded retries and grid-sweep
+    failsafes, so a pathological map generation degrades gracefully instead of
+    crashing or hanging the level build.
+- Still zero-dependency vanilla JS; both levels verified to render identically before
+  and after.
+
+### v2.4.0 (2026-06-24)
+- **Input hardening.** Crouch is now `[C]` only — `CTRL` is no longer a crouch key and
+  is swallowed in-game, so browser chords (Ctrl+W to close the tab, etc.) can't kill a
+  run. Every held key is cleared on focus, tab-visibility, and pointer-lock loss, so a
+  dropped keyup can no longer strand you drifting with nothing pressed. The cutscene
+  camera no longer whips a full ~360° toward its mark (a shortest-arc `angLerp` fix).
+  The "Sound" menu is renamed **Options** — it also holds mouse sensitivity and the
+  crouch mode.
+- **A harsher entity (Level 0).** Chase speed is up 10% and kill reach up 25%, so
+  corners buy you less. Crouching still cuts its detection range hard (−60%), but only
+  before it has committed to the chase. Death now **restarts the floor** — the maze
+  reshuffles, objectives and timer reset, and the entity goes back to sleep; progress
+  is no longer carried across a death down here. Almond water no longer spawns in
+  direct line of sight of the fall-in point.
+- **A tighter library (THE END).** The spider's floor detection (sight + hearing) is up
+  10% — except while you are stationary *and* crouched, which is untouched; its
+  wall/ceiling senses are unchanged. The disk hunt is shorter (**15–20** disks, down
+  from 18–23), and the burnout blackout is pushed back another 30s (to 125s after the
+  first pickup) to give the search room to breathe.
 
 ### v2.3.0 (2026-06-13)
 - **The librarian climbs.** The spider gains a third dimension. When it loses your

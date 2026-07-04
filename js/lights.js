@@ -2,13 +2,12 @@
 /* Flicker is event-driven: panels sit steady for long stretches, then
    misbehave in a short burst with a randomly chosen pattern. The entity's
    proximity slashes calm time and lets even healthy panels act up. */
-import { clamp, lerp, rand } from "./utils.js";
+import { clamp, lerp, rand, hash } from "./utils.js";
 import { STATE, monster, spider } from "./state.js";
 import { lights, lightPool, hemi, LIGHT_BIND_RADIUS, LIGHT_FADE_START } from "./scene.js";
 import { AU, panTo, sfxFlickTick } from "./audio.js";
 import { WALL_H } from "./map.js";
 
-const hash=n=>{const s=Math.sin(n)*43758.5453;return s-Math.floor(s);};
 const FLICKER_PATTERNS=5; // 0 strobe · 1 stutter · 2 brown-out sag · 3 blink-off · 4 dying sputter
 function panelValue(L,t){
   if(L.mode==="steady") return 0.92+Math.sin(t*1.7+L.phase)*0.06;
@@ -41,6 +40,10 @@ function panelValue(L,t){
     default:return hash(Math.floor(t*30)+L.seed)<(0.15+p*0.6)? 0.08:1;      // sputters out, worse and worse
   }
 }
+/* reused every frame so the pool binding allocates nothing in steady state:
+   _cand holds {d2,L} candidate fixtures, _jobs holds the resolved pool slots.
+   Both grow once to their working size and are then refilled in place. */
+const _cand=[], _jobs=[];
 export function updateLights(dt,t){
   const px=STATE.pos.x, pz=STATE.pos.z;
   /* spawn shockwave: a slow ring expands from the wake point and slams
@@ -167,13 +170,17 @@ export function updateLights(dt,t){
   /* bind the point-light pool to the nearest panels. Each fixture's
      intensity fades smoothly across the outer band of the bind radius,
      so lights ease in/out with distance rather than popping on. */
-  const cand=[];
   const R2=LIGHT_BIND_RADIUS*LIGHT_BIND_RADIUS;
+  let candN=0;
   for(const L of lights){
     const d2=(L.world.x-px)**2+(L.world.z-pz)**2;
-    if(d2<R2) cand.push([d2,L]);
+    if(d2<R2){
+      const h=_cand[candN] || (_cand[candN]={d2:0,L:null});
+      h.d2=d2; h.L=L; candN++;
+    }
   }
-  cand.sort((a,b)=>a[0]-b[0]);
+  _cand.length=candN;                          // trim to the live candidate count, then sort in place
+  _cand.sort((a,b)=>a.d2-b.d2);
   /* THE END's strips hang low over the stacks and run a poorer current */
   const base = STATE.level===1? 1.39 : STATE.powerOn? 1.43 : 1.19;
   const band = LIGHT_BIND_RADIUS-LIGHT_FADE_START;
@@ -182,25 +189,26 @@ export function updateLights(dt,t){
      power; far ones collapse to a single centered light so the pool still
      stretches across the bind radius. */
   const TUBE_SPLIT_D=10;
-  const jobs=[];
-  for(const [d2,L] of cand){
-    if(jobs.length>=lightPool.length) break;
-    const dist=Math.sqrt(d2);
+  const setJob=(n,x,z,y,I,L)=>{ const j=_jobs[n]||(_jobs[n]={}); j.x=x; j.z=z; j.y=y; j.I=I; j.L=L; };
+  let jobsN=0;
+  for(let ci=0; ci<candN; ci++){
+    if(jobsN>=lightPool.length) break;
+    const L=_cand[ci].L, dist=Math.sqrt(_cand[ci].d2);
     let fade=clamp((LIGHT_BIND_RADIUS-dist)/band,0,1);
     fade=fade*fade*(3-2*fade); // smoothstep
     /* dying tubes cast half the light; the entity's aura physically dims
        fixtures around it so floor & walls darken with it in true 3D */
     const I=base*L.on*fade*(L.warm? 0.5:L.bright)*(1-(L.near||0)*0.35);
     const fy=L.fixY||WALL_H-0.5;
-    if(!L.fixY && dist<TUBE_SPLIT_D && jobs.length+2<=lightPool.length){
-      jobs.push({x:L.world.x, z:L.world.z-0.32, y:fy, I:I*0.55, L:L});
-      jobs.push({x:L.world.x, z:L.world.z+0.32, y:fy, I:I*0.55, L:L});
-    } else jobs.push({x:L.world.x, z:L.world.z, y:fy, I:I, L:L});
+    if(!L.fixY && dist<TUBE_SPLIT_D && jobsN+2<=lightPool.length){
+      setJob(jobsN++, L.world.x, L.world.z-0.32, fy, I*0.55, L);
+      setJob(jobsN++, L.world.x, L.world.z+0.32, fy, I*0.55, L);
+    } else setJob(jobsN++, L.world.x, L.world.z, fy, I, L);
   }
   for(let i=0;i<lightPool.length;i++){
     const pl=lightPool[i];
-    if(i<jobs.length){
-      const j=jobs[i];
+    if(i<jobsN){
+      const j=_jobs[i];
       pl.position.x=j.x; pl.position.z=j.z; pl.position.y=j.y;
       pl.intensity=j.I;
       /* warmth >1 (shockwave) extrapolates the gradient into red — clamp so
@@ -218,8 +226,8 @@ export function updateLights(dt,t){
     const tN=AU.ctx.currentTime;
     for(let i=0;i<AU.humVoices.length;i++){
       const hv=AU.humVoices[i];
-      if(i<cand.length){
-        const L=cand[i][1], dist=Math.sqrt(cand[i][0]);
+      if(i<candN){
+        const L=_cand[i].L, dist=Math.sqrt(_cand[i].d2);
         /* falloff radius trimmed 10% (16 → 14.4): the steeper roll-off makes
            walking past a fixture read more clearly as approach/retreat */
         const att=Math.pow(clamp(1-dist/14.4,0,1),1.6);

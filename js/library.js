@@ -13,10 +13,10 @@
    their cell across the run, tables are a smaller square island, walls and
    the desk fill their cells. The spider treats every nonzero cell as solid
    — it cannot crawl under the tables. */
-import { rand, clamp, lerp, srand } from "./utils.js";
+import { rand, clamp, lerp, srand, hash } from "./utils.js";
 import { CELL } from "./map.js";
 import { STATE } from "./state.js";
-import { scene, lights, hemi, amb, makeLightRecord } from "./scene.js";
+import { scene, lights, hemi, amb, makeLightRecord, markShared, mergeStatic, freezeStaticScene } from "./scene.js";
 import { makeCanvas, texLibWall, texLibCarpet, texLibCeil, texShelfWood, texDeskWood,
          makeCrackTexture, makeEndTextTexture, makePosterTexture, makeArtTexture,
          makeBookCoverTexture, BOOK_TITLES, BOOK_BASES,
@@ -32,7 +32,6 @@ export const cellToWorld2=(cx,cy)=>({x:(cx-LW/2+0.5)*CELL, z:(cy-LH/2+0.5)*CELL}
 export const worldToCell2=(x,z)=>({cx:Math.floor(x/CELL+LW/2), cy:Math.floor(z/CELL+LH/2)});
 const inB=(cx,cy)=>cx>0&&cy>0&&cx<LW-1&&cy<LH-1;
 const K=(cx,cy)=>cy*LW+cx;
-const hashLib=n=>{const s=Math.sin(n)*43758.5453; return s-Math.floor(s);};   // deterministic 0..1 noise (blackout flicker)
 
 /* shared level handles: the cutscenes and the spider read these */
 export const LIB={
@@ -48,6 +47,12 @@ export const LIB={
 /* the stacks' shared dimensions: collision, the ladders and the disc sites
    all derive from these so a resize can never strand them again */
 export const SHELF_H=1.84, SHELF_D=1.02;         // depth −15% per feedback
+/* board centres, bottom → top; a board is 0.055 thick, so its top surface
+   sits at BOARD_TOP(lv). The boards themselves, the books/accents standing
+   on them AND the disc spawn sites all derive from this one table — these
+   used to be three hardcoded copies that had already drifted a few mm. */
+const BOARD_Y=[0.10,0.53,0.96,1.39,1.82];
+const BOARD_TOP=lv=>BOARD_Y[lv]+0.0275;
 const LADDER_H=2.0, LADDER_LEAN=0.28;
 /* base setback from a shelf-run cell centre that rests the rails exactly on
    the stack's top edge (minus a hair so they visibly press into the wood) */
@@ -430,6 +435,21 @@ function ensureBooks(){
   }
   BOXES=[];
   for(let i=0;i<4;i++) BOXES.push(buildBoxDesign(labels[i%labels.length]));
+  markPoolShared();
+}
+/* the book/box/open-book pool is built once and cached for the lifetime of the
+   tab, then cloned per placement — so its geometries, materials and cover
+   canvases must survive every level teardown */
+function markPoolShared(){
+  for(const m of pageMats) markShared(m,m.map);
+  for(const b of BOOKS) markShared(b.geo,b.mats[0],b.mats[0].map);
+  for(const b of BOXES) markShared(b.geo,b.mat,b.mat.map);
+  OPEN_BOOK.traverse(o=>{
+    if(!o.isMesh) return;
+    markShared(o.geometry);
+    const mm=o.material;
+    if(Array.isArray(mm)) mm.forEach(x=>markShared(x,x.map)); else markShared(mm,mm.map);
+  });
 }
 const pickBook=()=>BOOKS[Math.floor(Math.random()*BOOKS.length)];
 /* archive boxes built to the books' standard: textured body + creased lid */
@@ -545,7 +565,7 @@ function makeShelfRun(run){
   const g=new THREE.Group();
   const len=run.cells.length*CELL, H=SHELF_H, D=SHELF_D;
   const boardGeo=new THREE.BoxGeometry(len,0.055,D);
-  for(const by of[0.10,0.53,0.96,1.39,1.82]){
+  for(const by of BOARD_Y){
     const b=new THREE.Mesh(boardGeo,shelfMat); b.position.y=by; g.add(b);
   }
   const upGeo=new THREE.BoxGeometry(0.09,H,D);
@@ -564,7 +584,6 @@ function makeShelfRun(run){
      in run.occ so the floppy disks can later pick spots the books left
      open. */
   run.occ={};
-  const Y=[0.10,0.53,0.96,1.39];
   const occAt=(s,lv)=>run.occ[s+"|"+lv]||(run.occ[s+"|"+lv]=[]);
   const claim=(occ,x0,x1)=>{
     if(x0<-len/2+0.10||x1>len/2-0.10) return false;
@@ -574,7 +593,7 @@ function makeShelfRun(run){
   for(let lv=0;lv<4;lv++){
   let budget=Math.floor(Math.pow(Math.random(),1.55)*21);   // 0–20 per board, avg ≈8
   let tries=50;
-  const yTop=Y[lv]+0.0275;
+  const yTop=BOARD_TOP(lv);
   while(budget>0&&tries-->0){
     const s=Math.random()<0.5?1:-1;
     const occ=occAt(s,lv), z=s*0.20;
@@ -657,7 +676,7 @@ function makeShelfRun(run){
   const nAcc=Math.random()<0.7? 1+Math.floor(Math.random()*2):0;
   for(let i=0;i<nAcc;i++){
     const s=Math.random()<0.5?1:-1, lv=1+Math.floor(Math.random()*3);
-    const occ=occAt(s,lv), yTop=Y[lv]+0.0275;
+    const occ=occAt(s,lv), yTop=BOARD_TOP(lv);
     const x=rand(-len/2+0.35,len/2-0.35);
     if(!claim(occ,x-0.18,x+0.18)) continue;
     placeAccent(g,x,yTop,s*0.20+rand(-0.03,0.03));
@@ -891,6 +910,7 @@ function makeDisc(){
     new THREE.MeshPhongMaterial({color:0x9aa0a6, specular:0x55585c, shininess:60}));
   shutter.position.set(-0.01,0,-0.09); g.add(shutter);
   g.scale.setScalar(1.35);                       // readable from a few metres out
+  g.userData.animated=true;                      // idle-spins/hovers in updateProps
   return g;
 }
 /* vintage personal computer: CRT + case + keyboard, in pristine condition.
@@ -980,7 +1000,10 @@ function makeDesk(cx0,cy0){
   /* scattered returns: a tray and a stack of slips */
   const tray=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.07,0.34),beigePlasticDark);
   tray.position.set(-1.4,1.23,0.2); g.add(tray);
-  return {group:g, pc};
+  /* lamp + bulb ride out with the handle: the terminal cutscene kills them
+     at the blackout beat (they were unreachable locals before — the one
+     dependable light in the building used to survive "every light lets go") */
+  return {group:g, pc, lamp, bulbMat:bulb.material};
 }
 /* a hanging twin-tube strip light, chained down from the high dark */
 const tubeGeo2=new THREE.CylinderGeometry(0.038,0.038,2.0,8); tubeGeo2.rotateZ(Math.PI/2);
@@ -1015,7 +1038,8 @@ function makeFixture(wx,wz,alongZ,fy=3.78){     // base layer hung +20% higher (
 export function buildLibrary(){
   ensureBooks();                       // the design pool, built on first visit
   LIB.obstacles=[]; LIB.pcAnims=[]; LIB.blackActive=false; LIB.blackElapsed=0; LIB.nextBlack=35;
-  LIB.webs=[]; LIB.webGroup=new THREE.Group(); scene.add(LIB.webGroup);
+  LIB.webs=[]; LIB.webGroup=new THREE.Group(); LIB.webGroup.userData.animated=true;   // strands spawn/reskin at runtime
+  scene.add(LIB.webGroup);
   const {cx0,cy0,spawnC,tables}=genLibrary();
   const SZ=LW*CELL;
   /* a very faint warm self-glow on the walls & ceiling: not light to see BY,
@@ -1038,14 +1062,19 @@ export function buildLibrary(){
      box, however it's sized (this is what un-distorts the walls). */
   const exC=cx0, eyC=LH-1;
   const wallGeo2=scaleBoxUV(new THREE.BoxGeometry(CELL,LIB_WALL_H,CELL),CELL,LIB_WALL_H,CELL,4);
+  const wallBoxes=[];
   for(let y=0;y<LH;y++)for(let x=0;x<LW;x++){
     if(grid2[y][x]!==1) continue;
     if(x===exC&&y===eyC) continue;
     const m=new THREE.Mesh(wallGeo2,libWallMat);
     const p=cellToWorld2(x,y);
     m.position.set(p.x,LIB_WALL_H/2,p.z);
-    scene.add(m);
+    wallBoxes.push(m);
   }
+  /* one merged mesh instead of ~80 wall draw calls (the elevator cell is
+     already excluded above, so no post-build carve is needed here) */
+  scene.add(mergeStatic(wallBoxes,libWallMat));
+  wallGeo2.dispose();                        // its shape is now baked into the merged geometry
   /* the baseboard is real geometry now (a texture band can't survive
      world-scaled tiling): dark skirting strips along the inner perimeter,
      parted at the elevator doorway */
@@ -1119,7 +1148,8 @@ export function buildLibrary(){
     const d=makeDesk(cx0,cy0);
     scene.add(d.group);
     LIB.deskPos=new THREE.Vector3().copy(d.group.position);
-    LIB.term={group:d.group, pc:d.pc, screen:d.pc.userData.screen};
+    LIB.term={group:d.group, pc:d.pc, screen:d.pc.userData.screen,
+              lamp:d.lamp, bulbMat:d.bulbMat};
     addInteractable({kind:"terminal", mesh:d.group,
       label:()=> STATE.discsCarried>0
         ? `FEED THE TERMINAL (${STATE.discsCarried} DISK${STATE.discsCarried>1?"S":""})`
@@ -1304,7 +1334,7 @@ export function buildLibrary(){
         const p=cellToWorld2(c.x,c.y);
         sites.push({cx:c.x, cy:c.y,
           x:p.x+dx*s*(SHELF_D/2-0.18), z:p.z+dy*s*(SHELF_D/2-0.18),
-          y:[0,0.56,0.99,1.42][lv]+0.02, kind:"shelf"});
+          y:BOARD_TOP(lv)+0.02, kind:"shelf"});
       }
     });
   }
@@ -1340,6 +1370,10 @@ export function buildLibrary(){
     scene.add(d);
     addInteractable({kind:"disc", mesh:d, label:"TAKE FLOPPY DISK", taken:false, baseY:s.y});
   }
+  /* freeze every static object's matrix (shelves, furniture, dressing,
+     fixtures, merged walls). The spider is added after this returns; the discs
+     and the elevator are tagged animated, so the sweep skips them. */
+  freezeStaticScene();
 }
 
 /* ---------------- per-frame level logic ---------------- */
@@ -1430,7 +1464,7 @@ export function updateLibrary(dt){
     for(const L of lights){
       const e=LIB.blackElapsed-(L.blackStart||0);
       if(e<=0) L.blackMul=1;                                                  // not its turn yet
-      else if(e<1) L.blackMul=(hashLib(Math.floor(tN*22)+(L.seed||0))<e*0.85)? 0.04:1;  // 1s dying flicker
+      else if(e<1) L.blackMul=(hash(Math.floor(tN*22)+(L.seed||0))<e*0.85)? 0.04:1;  // 1s dying flicker
       else if(e<1+LIB.blackDur) L.blackMul=0.03;                             // out cold
       else L.blackMul=1;                                                      // flicked back on
     }
@@ -1474,3 +1508,10 @@ export function startDeadPC(it){
   const screen=it.mesh.userData.screen;
   LIB.pcAnims.push({screen, phase:"boot", t:0});
 }
+
+/* ---- shared-asset registration (module-level singletons reused across every
+   library build; teardown must never dispose these) ---- */
+markShared(texLibWall,texLibCarpet,texLibCeil,texShelfWood,texDeskWood,texPages,texPagesAged,texBrushed);
+markShared(shelfMat,deskMat,darkMetalMat,beigePlastic,beigePlasticDark,plasticWrap,
+           bookendMat,accentWood,accentBrass,mannequinMat,mannequinDark,webMat);
+markShared(tubeGeo2,housingGeo2,housingMat2,cordGeo);

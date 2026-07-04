@@ -2,7 +2,8 @@
 import { $, clamp } from "./utils.js";
 import { STATE } from "./state.js";
 import { AU, applyVolumes, audioInit } from "./audio.js";
-import { renderer } from "./scene.js";
+import { renderer, setRenderQuality } from "./scene.js";
+import { SETTINGS_KEY, readSettings } from "./settings.js";
 import { startGame, respawn } from "./lifecycle.js";
 
 /* ---------------- DOM refs ---------------- */
@@ -121,33 +122,29 @@ wire("btnRespawn",()=>{
 });
 wire("btnAgain",()=>location.reload());
 
-/* ---- settings persistence (volumes + mouse sensitivity) ---- */
-const SETTINGS_KEY="noclip_settings_v1";
+/* ---- settings persistence (volumes + mouse sensitivity) ----
+   the key and the reader live in settings.js (scene.js needs the saved
+   quality at renderer construction, long before this module runs) */
 export function saveSettings(){
   try{ localStorage.setItem(SETTINGS_KEY, JSON.stringify(
-    {vol:AU.vol, sens:STATE.sens, crouchToggle:STATE.crouchToggle})); }catch(e){}
+    {vol:AU.vol, sens:STATE.sens, crouchToggle:STATE.crouchToggle, quality:STATE.quality})); }catch(e){}
 }
 export function loadSettings(){
-  try{
-    const s=JSON.parse(localStorage.getItem(SETTINGS_KEY)||"null");
-    if(s){
-      if(s.vol) for(const k of["master","music","sound"]) if(typeof s.vol[k]==="number") AU.vol[k]=clamp(s.vol[k],0,1);
-      if(typeof s.sens==="number") STATE.sens=clamp(s.sens,0.1,4);
-      STATE.crouchToggle=!!s.crouchToggle;
-    }
-  }catch(e){}
+  const s=readSettings();
+  if(!s) return;
+  if(s.vol) for(const k of["master","music","sound"]) if(typeof s.vol[k]==="number") AU.vol[k]=clamp(s.vol[k],0,1);
+  if(typeof s.sens==="number") STATE.sens=clamp(s.sens,0.1,4);
+  STATE.crouchToggle=!!s.crouchToggle;
+  if(s.quality==="low"||s.quality==="high") STATE.quality=s.quality;
 }
 loadSettings();
-/* sync slider UI to loaded values */
-[["volMaster","master"],["volMusic","music"],["volSound","sound"]].forEach(([id,key])=>{
-  $(id).value=Math.round(AU.vol[key]*100); $(id+"V").value=Math.round(AU.vol[key]*100);
-});
-$("sensSlider").value=Math.round(STATE.sens*100);
-$("sensV").value=STATE.sens.toFixed(1)+"x";
 
-/* mixer wiring */
+/* mixer wiring — fail-soft like the buttons above: a missing slider warns
+   instead of bricking the module graph on a partial deploy */
 [["volMaster","master"],["volMusic","music"],["volSound","sound"]].forEach(([id,key])=>{
   const el=$(id), out=$(id+"V");
+  if(!el||!out){ console.warn(`[ui] missing #${id}`); return; }
+  el.value=Math.round(AU.vol[key]*100); out.value=Math.round(AU.vol[key]*100);
   el.addEventListener("input",()=>{
     AU.vol[key]=el.value/100; out.value=el.value;
     applyVolumes(); saveSettings();
@@ -156,11 +153,15 @@ $("sensV").value=STATE.sens.toFixed(1)+"x";
 /* mouse sensitivity: 0.1x – 4x */
 {
   const el=$("sensSlider"), out=$("sensV");
-  el.addEventListener("input",()=>{
-    STATE.sens=el.value/100;
+  if(el&&out){
+    el.value=Math.round(STATE.sens*100);
     out.value=STATE.sens.toFixed(1)+"x";
-    saveSettings();
-  });
+    el.addEventListener("input",()=>{
+      STATE.sens=el.value/100;
+      out.value=STATE.sens.toFixed(1)+"x";
+      saveSettings();
+    });
+  } else console.warn("[ui] missing #sensSlider");
 }
 /* crouch mode: hold (default) vs toggle */
 {
@@ -172,6 +173,19 @@ $("sensV").value=STATE.sens.toFixed(1)+"x";
       STATE.crouchToggle=el.checked;
       STATE.crouchLatch=false;            // never carry a stale latch across modes
       show(); saveSettings();
+    });
+  }
+}
+/* graphics quality: HIGH (default) vs LOW — caps the pixel ratio live; the
+   antialias change is read at renderer construction, so it lands next reload */
+{
+  const el=$("qualityLow"), out=$("qualityV");
+  if(el){
+    const show=()=>out.value=STATE.quality==="low"? "LOW":"HIGH";
+    el.checked=STATE.quality==="low"; show();
+    el.addEventListener("change",()=>{
+      STATE.quality=el.checked? "low":"high";
+      show(); setRenderQuality(el.checked); saveSettings();
     });
   }
 }

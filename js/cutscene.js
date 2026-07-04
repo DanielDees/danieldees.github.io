@@ -4,7 +4,7 @@
    the entity on a fixed timeline. The breaker scene keeps the entity AI
    running (it rushes the panel, freezing at a 30m ring); the elevator
    scene scripts the entity entirely. */
-import { clamp, lerp, angLerp } from "./utils.js";
+import { clamp, lerp, angLerp, hash } from "./utils.js";
 import { STATE, monster, spider } from "./state.js";
 import { worldToCell, isWall, losCells } from "./map.js";
 import { camera, playerLight, amb } from "./scene.js";
@@ -26,7 +26,6 @@ let D=null;                                   // per-cutscene working data
 
 const ease=t=>{t=clamp(t,0,1);return t*t*(3-2*t);};
 const seg=(t,a,b)=>ease((t-a)/(b-a));
-const hash=n=>{const s=Math.sin(n)*43758.5453;return s-Math.floor(s);};
 const lookAngles=(ex,ey,ez,tx,ty,tz)=>{
   const dx=tx-ex, dy=ty-ey, dz=tz-ez;
   return {yaw:Math.atan2(-dx,-dz), pitch:Math.atan2(dy,Math.hypot(dx,dz))};

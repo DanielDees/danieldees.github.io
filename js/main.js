@@ -22,7 +22,7 @@ import { updateFocus } from "./interact.js";
 import { CINE, updateCinematic, startBreakerCine, startElevatorCine,
          startTheEndIntro, startTerminalCine } from "./cutscene.js";
 import { updateLibrary, LIB, grid2 } from "./library.js";
-import { enterTheEnd, debugSkipToTheEnd, debugWarpToTerminal } from "./lifecycle.js";
+import { enterTheEnd, debugSkipToTheEnd, debugWarpToTerminal, respawn } from "./lifecycle.js";
 import { ui, renderObjectives } from "./ui.js";
 import "./input.js";
 
@@ -56,9 +56,9 @@ function loop(now){
 requestAnimationFrame(loop);
 
 /* console/debug handle (also used by automated smoke tests) */
-window.NOCLIP_DEBUG={STATE, monster, spider, CINE, scene, camera,
+window.NOCLIP_DEBUG={STATE, monster, spider, CINE, scene, camera, renderer,
   startBreakerCine, startElevatorCine, startTheEndIntro, startTerminalCine,
-  enterTheEnd, debugSkipToTheEnd, debugWarpToTerminal,
+  enterTheEnd, debugSkipToTheEnd, debugWarpToTerminal, respawn,
   debugSpiderToWall, debugSpiderToCeiling, spiderHearDisc, debugSpiderDiscTransit,
   get interactables(){ return interactables; },
   get exitDoor(){ return exitDoor; },
