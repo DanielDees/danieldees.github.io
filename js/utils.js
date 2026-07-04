@@ -8,5 +8,8 @@ export const lerp = (a,b,t)=>a+(b-a)*t;
    their mark). Adding 2π before the mod forces a non-negative remainder. */
 export const angLerp=(a,b,t)=>{const TAU=Math.PI*2;const d=(((b-a)%TAU+TAU+Math.PI)%TAU)-Math.PI;return a+d*t;};
 export const rand = (a,b)=>a+Math.random()*(b-a);
+/* deterministic 0..1 noise from a numeric key (sin-fract). One definition —
+   the flicker patterns, cutscene jitter and blackout stagger all share it. */
+export const hash = n=>{const s=Math.sin(n)*43758.5453;return s-Math.floor(s);};
 let RNGseed = 1337;
 export function srand(){ RNGseed = (RNGseed*1103515245+12345)&0x7fffffff; return RNGseed/0x7fffffff; }

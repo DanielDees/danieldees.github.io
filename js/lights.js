@@ -2,13 +2,12 @@
 /* Flicker is event-driven: panels sit steady for long stretches, then
    misbehave in a short burst with a randomly chosen pattern. The entity's
    proximity slashes calm time and lets even healthy panels act up. */
-import { clamp, lerp, rand } from "./utils.js";
+import { clamp, lerp, rand, hash } from "./utils.js";
 import { STATE, monster, spider } from "./state.js";
 import { lights, lightPool, hemi, LIGHT_BIND_RADIUS, LIGHT_FADE_START } from "./scene.js";
 import { AU, panTo, sfxFlickTick } from "./audio.js";
 import { WALL_H } from "./map.js";
 
-const hash=n=>{const s=Math.sin(n)*43758.5453;return s-Math.floor(s);};
 const FLICKER_PATTERNS=5; // 0 strobe · 1 stutter · 2 brown-out sag · 3 blink-off · 4 dying sputter
 function panelValue(L,t){
   if(L.mode==="steady") return 0.92+Math.sin(t*1.7+L.phase)*0.06;

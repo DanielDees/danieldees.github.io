@@ -13,7 +13,7 @@
    their cell across the run, tables are a smaller square island, walls and
    the desk fill their cells. The spider treats every nonzero cell as solid
    — it cannot crawl under the tables. */
-import { rand, clamp, lerp, srand } from "./utils.js";
+import { rand, clamp, lerp, srand, hash } from "./utils.js";
 import { CELL } from "./map.js";
 import { STATE } from "./state.js";
 import { scene, lights, hemi, amb, makeLightRecord, markShared, mergeStatic, freezeStaticScene } from "./scene.js";
@@ -32,7 +32,6 @@ export const cellToWorld2=(cx,cy)=>({x:(cx-LW/2+0.5)*CELL, z:(cy-LH/2+0.5)*CELL}
 export const worldToCell2=(x,z)=>({cx:Math.floor(x/CELL+LW/2), cy:Math.floor(z/CELL+LH/2)});
 const inB=(cx,cy)=>cx>0&&cy>0&&cx<LW-1&&cy<LH-1;
 const K=(cx,cy)=>cy*LW+cx;
-const hashLib=n=>{const s=Math.sin(n)*43758.5453; return s-Math.floor(s);};   // deterministic 0..1 noise (blackout flicker)
 
 /* shared level handles: the cutscenes and the spider read these */
 export const LIB={
@@ -48,6 +47,12 @@ export const LIB={
 /* the stacks' shared dimensions: collision, the ladders and the disc sites
    all derive from these so a resize can never strand them again */
 export const SHELF_H=1.84, SHELF_D=1.02;         // depth −15% per feedback
+/* board centres, bottom → top; a board is 0.055 thick, so its top surface
+   sits at BOARD_TOP(lv). The boards themselves, the books/accents standing
+   on them AND the disc spawn sites all derive from this one table — these
+   used to be three hardcoded copies that had already drifted a few mm. */
+const BOARD_Y=[0.10,0.53,0.96,1.39,1.82];
+const BOARD_TOP=lv=>BOARD_Y[lv]+0.0275;
 const LADDER_H=2.0, LADDER_LEAN=0.28;
 /* base setback from a shelf-run cell centre that rests the rails exactly on
    the stack's top edge (minus a hair so they visibly press into the wood) */
@@ -560,7 +565,7 @@ function makeShelfRun(run){
   const g=new THREE.Group();
   const len=run.cells.length*CELL, H=SHELF_H, D=SHELF_D;
   const boardGeo=new THREE.BoxGeometry(len,0.055,D);
-  for(const by of[0.10,0.53,0.96,1.39,1.82]){
+  for(const by of BOARD_Y){
     const b=new THREE.Mesh(boardGeo,shelfMat); b.position.y=by; g.add(b);
   }
   const upGeo=new THREE.BoxGeometry(0.09,H,D);
@@ -579,7 +584,6 @@ function makeShelfRun(run){
      in run.occ so the floppy disks can later pick spots the books left
      open. */
   run.occ={};
-  const Y=[0.10,0.53,0.96,1.39];
   const occAt=(s,lv)=>run.occ[s+"|"+lv]||(run.occ[s+"|"+lv]=[]);
   const claim=(occ,x0,x1)=>{
     if(x0<-len/2+0.10||x1>len/2-0.10) return false;
@@ -589,7 +593,7 @@ function makeShelfRun(run){
   for(let lv=0;lv<4;lv++){
   let budget=Math.floor(Math.pow(Math.random(),1.55)*21);   // 0–20 per board, avg ≈8
   let tries=50;
-  const yTop=Y[lv]+0.0275;
+  const yTop=BOARD_TOP(lv);
   while(budget>0&&tries-->0){
     const s=Math.random()<0.5?1:-1;
     const occ=occAt(s,lv), z=s*0.20;
@@ -672,7 +676,7 @@ function makeShelfRun(run){
   const nAcc=Math.random()<0.7? 1+Math.floor(Math.random()*2):0;
   for(let i=0;i<nAcc;i++){
     const s=Math.random()<0.5?1:-1, lv=1+Math.floor(Math.random()*3);
-    const occ=occAt(s,lv), yTop=Y[lv]+0.0275;
+    const occ=occAt(s,lv), yTop=BOARD_TOP(lv);
     const x=rand(-len/2+0.35,len/2-0.35);
     if(!claim(occ,x-0.18,x+0.18)) continue;
     placeAccent(g,x,yTop,s*0.20+rand(-0.03,0.03));
@@ -996,7 +1000,10 @@ function makeDesk(cx0,cy0){
   /* scattered returns: a tray and a stack of slips */
   const tray=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.07,0.34),beigePlasticDark);
   tray.position.set(-1.4,1.23,0.2); g.add(tray);
-  return {group:g, pc};
+  /* lamp + bulb ride out with the handle: the terminal cutscene kills them
+     at the blackout beat (they were unreachable locals before — the one
+     dependable light in the building used to survive "every light lets go") */
+  return {group:g, pc, lamp, bulbMat:bulb.material};
 }
 /* a hanging twin-tube strip light, chained down from the high dark */
 const tubeGeo2=new THREE.CylinderGeometry(0.038,0.038,2.0,8); tubeGeo2.rotateZ(Math.PI/2);
@@ -1141,7 +1148,8 @@ export function buildLibrary(){
     const d=makeDesk(cx0,cy0);
     scene.add(d.group);
     LIB.deskPos=new THREE.Vector3().copy(d.group.position);
-    LIB.term={group:d.group, pc:d.pc, screen:d.pc.userData.screen};
+    LIB.term={group:d.group, pc:d.pc, screen:d.pc.userData.screen,
+              lamp:d.lamp, bulbMat:d.bulbMat};
     addInteractable({kind:"terminal", mesh:d.group,
       label:()=> STATE.discsCarried>0
         ? `FEED THE TERMINAL (${STATE.discsCarried} DISK${STATE.discsCarried>1?"S":""})`
@@ -1326,7 +1334,7 @@ export function buildLibrary(){
         const p=cellToWorld2(c.x,c.y);
         sites.push({cx:c.x, cy:c.y,
           x:p.x+dx*s*(SHELF_D/2-0.18), z:p.z+dy*s*(SHELF_D/2-0.18),
-          y:[0,0.56,0.99,1.42][lv]+0.02, kind:"shelf"});
+          y:BOARD_TOP(lv)+0.02, kind:"shelf"});
       }
     });
   }
@@ -1456,7 +1464,7 @@ export function updateLibrary(dt){
     for(const L of lights){
       const e=LIB.blackElapsed-(L.blackStart||0);
       if(e<=0) L.blackMul=1;                                                  // not its turn yet
-      else if(e<1) L.blackMul=(hashLib(Math.floor(tN*22)+(L.seed||0))<e*0.85)? 0.04:1;  // 1s dying flicker
+      else if(e<1) L.blackMul=(hash(Math.floor(tN*22)+(L.seed||0))<e*0.85)? 0.04:1;  // 1s dying flicker
       else if(e<1+LIB.blackDur) L.blackMul=0.03;                             // out cold
       else L.blackMul=1;                                                      // flicked back on
     }

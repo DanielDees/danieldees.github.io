@@ -74,6 +74,25 @@ track by ear.
   the render resolution to 1× and turns off antialiasing — a large gain on integrated
   GPUs, fill-rate-limited laptops, and high-DPI screens. The setting persists. (The
   antialiasing change applies on the next reload.)
+- **Codebase health pass.** A cleanup sweep ahead of the next feature push, with no
+  gameplay changes (seeded generation verified byte-identical before and after):
+  - Three real bugs fixed: the circulation-desk lamp now actually goes dark during
+    the ending blackout (its handle was never wired through, so "every light lets
+    go" spared exactly one); dying mid-blackout no longer leaves the library's
+    strips stuck dim after respawn; and the elevator carve now disposes the wall
+    decals it removes instead of leaking them every rebuild.
+  - Recurring waste removed: the Level-0 troffer fixture is now a proper builder
+    (`makeTroffer`) with module-level shared assets instead of regenerating its
+    textures and geometry on every respawn; the entity's smoke texture is cached
+    instead of being rasterized fresh on every space-fold; and the HUD only writes
+    to the DOM when a value actually changes instead of every frame.
+  - Consistency: one shared `hash` helper (was four copies), one settings
+    key/reader module (was two independent `localStorage` parses), one
+    shelf-board elevation table (was three hardcoded copies that had already
+    drifted a few millimetres), and fail-soft guards on the options sliders.
+  - Robustness: the prop-placement loops got bounded retries and grid-sweep
+    failsafes, so a pathological map generation degrades gracefully instead of
+    crashing or hanging the level build.
 - Still zero-dependency vanilla JS; both levels verified to render identically before
   and after.
 

@@ -1,7 +1,7 @@
 /* ---------------- the entity ---------------- */
-import { clamp, lerp, angLerp, rand } from "./utils.js";
+import { clamp, lerp, angLerp, rand, hash } from "./utils.js";
 import { STATE, monster } from "./state.js";
-import { scene } from "./scene.js";
+import { scene, markShared } from "./scene.js";
 import { W, H, CELL, cellToWorld, worldToCell, isWall, losCells, bfsPath, randomOpenCell, farOpenWorldPoint } from "./map.js";
 import { AU, panTo, sfxAlert, sfxStinger, sfxGroan, sfxHeartbeat, sfxKnock, sfxShockwave,
          sfxTeleport } from "./audio.js";
@@ -9,18 +9,25 @@ import { makeCanvas } from "./textures.js";
 import { ui } from "./ui.js";
 import { die } from "./lifecycle.js";
 
-const smokeTex=()=>makeCanvas(128,128,(c,w,h)=>{
-  c.clearRect(0,0,w,h);
-  for(let i=0;i<60;i++){
-    const a=Math.random()*Math.PI*2, rr=Math.pow(Math.random(),0.7)*w*0.36;
-    const x=w/2+Math.cos(a)*rr, y=h/2+Math.sin(a)*rr;
-    const r=8+Math.random()*18;
-    const al=(0.16+0.42*(1-rr/(w*0.4)))*(0.7+Math.random()*0.5);
-    const gr=c.createRadialGradient(x,y,0.4,x,y,r);
-    gr.addColorStop(0,`rgba(4,3,5,${al})`);gr.addColorStop(1,"rgba(4,3,5,0)");
-    c.fillStyle=gr;c.beginPath();c.arc(x,y,r,0,7);c.fill();
-  }
-});
+/* one cached puff texture for every steam sprite and fold-poof: rasterizing
+   a fresh canvas per sprite (4 per space-fold, every ~7–13s) was a recurring
+   allocation + GPU upload for visually identical smoke */
+let _smokeTex=null;
+function smokeTex(){
+  if(!_smokeTex) _smokeTex=markShared(makeCanvas(128,128,(c,w,h)=>{
+    c.clearRect(0,0,w,h);
+    for(let i=0;i<60;i++){
+      const a=Math.random()*Math.PI*2, rr=Math.pow(Math.random(),0.7)*w*0.36;
+      const x=w/2+Math.cos(a)*rr, y=h/2+Math.sin(a)*rr;
+      const r=8+Math.random()*18;
+      const al=(0.16+0.42*(1-rr/(w*0.4)))*(0.7+Math.random()*0.5);
+      const gr=c.createRadialGradient(x,y,0.4,x,y,r);
+      gr.addColorStop(0,`rgba(4,3,5,${al})`);gr.addColorStop(1,"rgba(4,3,5,0)");
+      c.fillStyle=gr;c.beginPath();c.arc(x,y,r,0,7);c.fill();
+    }
+  }));
+  return _smokeTex;
+}
 
 export function makeMonster(){
   /* near-black body: a faint warm specular sheen (not diffuse colour) is
@@ -160,8 +167,9 @@ function updatePoofs(dt){
     const p=poofs[i]; p.t+=dt;
     if(p.t>=1){
       scene.remove(p.g);
-      p.g.traverse(o=>{ if(o.material){ if(o.material.map) o.material.map.dispose();
-        o.material.dispose(); } if(o.geometry) o.geometry.dispose(); });
+      /* materials & geometry are per-poof; the smoke map is the shared one */
+      p.g.traverse(o=>{ if(o.material) o.material.dispose();
+        if(o.geometry) o.geometry.dispose(); });
       poofs.splice(i,1); continue;
     }
     for(const sp of p.sprites){
@@ -323,8 +331,11 @@ function startAlert(){
   monster.path=[];
   sfxAlert(panTo(monster.pos.x,monster.pos.z));
 }
-const hash=n=>{const s=Math.sin(n)*43758.5453;return s-Math.floor(s);};
 const SPEED_TARGETS={wander:2.0, investigate:3.4, alert:0, chase:7.04, hunt:3.4};  // chase +10% (was 6.4)
+/* write-on-change for the per-frame fear overlays: identical opacity writes
+   still dirty style; quantizing to 0.01 also skips imperceptible deltas.
+   Read-compare (not a cache) — cutscenes/lifecycle write these directly too. */
+const setFx=(el,v)=>{ const s=String(Math.round(v*100)/100); if(el.style.opacity!==s) el.style.opacity=s; };
 export function updateMonster(dt){
   updatePoofs(dt);
   /* delayed first wake: the almond-water grab lights a short fuse */
@@ -559,10 +570,10 @@ export function updateMonster(dt){
     if(d<48) sfxGroan(clamp(1-d/48,0.04,1)*(m.state==="chase"?0.54:0.36),   // +20% louder
                       panTo(m.pos.x,m.pos.z));
   }
-  ui.dread.style.opacity = m.state==="chase"? (0.35+prox*0.6) : prox*0.55;
+  setFx(ui.dread, m.state==="chase"? (0.35+prox*0.6) : prox*0.55);
   /* analogue static climbs as it closes in — strongest when it could touch you */
-  ui.staticfx.style.opacity = prox<=0? 0
-    : Math.pow(prox,1.6)*0.4 + (d<2.6? (1-d/2.6)*0.26 : 0);
+  setFx(ui.staticfx, prox<=0? 0
+    : Math.pow(prox,1.6)*0.4 + (d<2.6? (1-d/2.6)*0.26 : 0));
   AU.heartTimer-=dt;
   if(prox>0.25 && AU.heartTimer<=0){ sfxHeartbeat(); AU.heartTimer = lerp(1.4,0.45,prox); }
 }

@@ -9,10 +9,11 @@
      wall/ceiling transit instead of a floor seek.
    · Every further pickup BEFORE it starts moving: −1s off the countdown,
      +0.25× speed. Every pickup before it REACHES the latest pickup spot:
-     +0.25× speed (it re-routes to the newest one). Speed base = your walk
-     (4.6 m/s), capped at 2×.
-   · Moving while not crouched alerts it strongly within 17m, mildly
-     within 25.5m. Crouched movement is silent.
+     +0.25× speed (it re-routes to the newest one). Run base = RUN_BASE
+     (7.28 m/s, 1.4× its browse pace), multiplier capped at 2×.
+   · Moving while not crouched alerts it strongly within ~16.5m walking /
+     ~17m sprinting, mildly out to ~25m (base radii 13.6/20.4 × movement &
+     surface gains below). Crouched movement is silent.
    · It cannot reach or crawl under the tables. */
 import { clamp, lerp, rand } from "./utils.js";
 import { CELL } from "./map.js";

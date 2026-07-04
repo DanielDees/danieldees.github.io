@@ -254,7 +254,14 @@ export function makeElevator(p,facing,opts={}){
 export function placeProps(){
   const used=new Set(), spawn={cx:W>>1,cy:H>>1};
   const spawnW=cellToWorld(spawn.cx,spawn.cy);
-  const pick=(minD)=>{let c;do{c=randomOpenCell(minD);}while(used.has(c.cy*W+c.cx));used.add(c.cy*W+c.cx);return c;};
+  const DIRS=[[1,0,-Math.PI/2],[-1,0,Math.PI/2],[0,1,Math.PI],[0,-1,0]];   // [dx,dy,facing]
+  /* bounded retry: on a pathological map, accept a reused cell over a hang */
+  const pick=(minD)=>{
+    let c=randomOpenCell(minD);
+    for(let t=0;t<300&&used.has(c.cy*W+c.cx);t++) c=randomOpenCell(minD);
+    used.add(c.cy*W+c.cx);
+    return c;
+  };
   /* almond water must NOT be visible from the fall-in point — a bottle sitting
      down a straight sightline from spawn is a free pickup that trivialises the
      opening. Reject any cell with line of sight to spawn; fall back to a plain
@@ -285,9 +292,16 @@ export function placeProps(){
     let c,dir;
     outer: for(let t=0;t<600;t++){
       c=randomOpenCell(9);
-      for(const[dx,dy,fy]of[[1,0,-Math.PI/2],[-1,0,Math.PI/2],[0,1,Math.PI],[0,-1,0]]){
+      for(const[dx,dy,fy]of DIRS){
         if(isWall(c.cx+dx,c.cy+dy)&&!used.has(c.cy*W+c.cx)){dir={dx,dy,fy};used.add(c.cy*W+c.cx);break outer;}
       }
+    }
+    /* failsafe: sweep the grid instead of crashing on `c.cx` if 600 random
+       tries never landed on an unused open cell beside a wall */
+    if(!dir) sweep: for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
+      if(isWall(x,y)||used.has(y*W+x)) continue;
+      for(const[dx,dy,fy]of DIRS)
+        if(isWall(x+dx,y+dy)){c={cx:x,cy:y};dir={dx,dy,fy};used.add(y*W+x);break sweep;}
     }
     const p=cellToWorld(c.cx,c.cy);
     const bp=new THREE.Vector3(p.x+dir.dx*(CELL/2-0.15),1.4,p.z+dir.dy*(CELL/2-0.15));
@@ -301,9 +315,16 @@ export function placeProps(){
       const c=randomOpenCell(0);
       const d=Math.hypot(c.cx-spawn.cx,c.cy-spawn.cy);
       if(d<bestD) continue;
-      for(const[dx,dy,fy]of[[1,0,-Math.PI/2],[-1,0,Math.PI/2],[0,1,Math.PI],[0,-1,0]]){
+      for(const[dx,dy,fy]of DIRS){
         if(isWall(c.cx+dx,c.cy+dy)){best={c,dx,dy,fy};bestD=d;break;}
       }
+    }
+    /* failsafe: same grid sweep as the breaker — any wall-adjacent open cell
+       beats a crash on `best.c` */
+    if(!best) sweep: for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
+      if(isWall(x,y)) continue;
+      for(const[dx,dy,fy]of DIRS)
+        if(isWall(x+dx,y+dy)){best={c:{cx:x,cy:y},dx,dy,fy};break sweep;}
     }
     const p=cellToWorld(best.c.cx,best.c.cy);
     /* the elevator replaces the wall box behind the doorway with its own

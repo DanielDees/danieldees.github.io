@@ -85,9 +85,14 @@ export function updatePlayer(dt){
   } else {
     STATE.stamina=Math.min(1,STATE.stamina+dt*0.16);
   }
-  ui.stam.style.width=(STATE.stamina*100)+"%";
-  ui.stamPct.textContent=Math.round(STATE.stamina*100)+"%";
-  ui.stamName.textContent= adren? "ADRENALINE":"STAMINA";
+  /* write-on-change: this runs every frame, and identical style/text writes
+     still dirty the DOM. 1% width granularity is invisible on the bar.
+     (classList.toggle with a force arg is already a no-op when unchanged.) */
+  const pct=Math.round(STATE.stamina*100)+"%";
+  if(ui.stam.style.width!==pct) ui.stam.style.width=pct;
+  if(ui.stamPct.textContent!==pct) ui.stamPct.textContent=pct;
+  const stamName= adren? "ADRENALINE":"STAMINA";
+  if(ui.stamName.textContent!==stamName) ui.stamName.textContent=stamName;
   ui.stamWrap.classList.toggle("adren", adren);
   ui.stamWrap.classList.toggle("show", adren || STATE.stamina<0.999);
   ui.stamWrap.classList.toggle("low", !adren && STATE.stamina<0.25);
