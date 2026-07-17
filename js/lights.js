@@ -146,12 +146,15 @@ export function updateLights(dt,t){
     }
     if(L.cold){
       /* fungus: a cold blue-green ramp, no warmth pipeline, no ballast tick —
-         living light misbehaves silently */
+         living light misbehaves silently. The glow is EMISSIVE (the brackets
+         are Phong, so they keep their shading), and the additive halo + vein
+         decals breathe with the same value. */
       if(Math.abs(v-L.on)>0.03){
         L.on=v;
         const vb=v*L.bright;
-        L.glowMat.color.setRGB(vb*0.30, vb*0.92, vb*1.0);
-        L.tubeMat.color.setRGB(vb*0.16, vb*0.50, vb*0.56);
+        L.glowMat.emissive.setRGB(vb*0.28, vb*0.85, vb*0.95);
+        if(L.haloMat) L.haloMat.opacity=0.20*Math.min(1,vb);
+        if(L.veinMat) L.veinMat.opacity=0.85*Math.min(1,vb*1.3);
       }
     } else
     if(Math.abs(v-L.on)>0.04 || Math.abs(warmth-L.warmth)>0.02){

@@ -18,7 +18,7 @@ import { CELL } from "./map.js";
 import { STATE } from "./state.js";
 import { scene, camera, renderer, lights, makeLightRecord, markShared,
          mergeStatic, freezeStaticScene } from "./scene.js";
-import { texCaveRock, texCaveFloor, makeWebTexture, makeFungusTexture, scaleBoxUV } from "./textures.js";
+import { makeCanvas, texCaveRock, texCaveFloor, makeWebTexture, makeFungusTexture, scaleBoxUV } from "./textures.js";
 import { addInteractable } from "./props.js";
 import { die } from "./lifecycle.js";
 import { renderObjectives, toast } from "./ui.js";
@@ -387,12 +387,45 @@ function genCave(){
 }
 
 /* ---------------- materials (module singletons) ---------------- */
-const rockMat=new THREE.MeshPhongMaterial({map:texCaveRock, specular:0x141210, shininess:8, emissive:0x010101});
-const floorMat=new THREE.MeshPhongMaterial({map:texCaveFloor, specular:0x000000, shininess:2});
+/* the rock's own canvas doubles as its bump map: under the lantern's
+   spotlight the strata seams and mottling become real surface relief */
+const rockMat=new THREE.MeshPhongMaterial({map:texCaveRock, bumpMap:texCaveRock, bumpScale:0.055,
+  specular:0x1a1a16, shininess:10, emissive:0x010101});
+const floorMat=new THREE.MeshPhongMaterial({map:texCaveFloor, bumpMap:texCaveFloor, bumpScale:0.035,
+  specular:0x0a0a08, shininess:4});
+/* dripstone grows wet and glossy — it catches the beam like candle wax */
+const wetMat=new THREE.MeshPhongMaterial({map:texCaveRock, bumpMap:texCaveRock, bumpScale:0.03,
+  color:0xb6babc, specular:0x4a565e, shininess:72, emissive:0x020303});
 const pitMat=new THREE.MeshPhongMaterial({color:0x070605, specular:0x000000, shininess:1});
+/* a soft radial glow, shared by every halo in the level */
+const HALO_TEX=makeCanvas(64,64,(g,w,h)=>{
+  const gr=g.createRadialGradient(w/2,h/2,2,w/2,h/2,w/2);
+  gr.addColorStop(0,"rgba(255,255,255,0.9)");
+  gr.addColorStop(0.45,"rgba(255,255,255,0.28)");
+  gr.addColorStop(1,"rgba(255,255,255,0)");
+  g.fillStyle=gr; g.fillRect(0,0,w,h);
+});
+/* the stream's skin: caustic streaks that drift in updateCave */
+const texWater=makeCanvas(128,128,(g,w,h)=>{
+  g.fillStyle="#0a181e"; g.fillRect(0,0,w,h);
+  for(let i=0;i<10;i++){
+    g.strokeStyle=`rgba(${60+Math.random()*40|0},${130+Math.random()*50|0},${150+Math.random()*50|0},${0.10+Math.random()*0.14})`;
+    g.lineWidth=1+Math.random()*1.6;
+    g.beginPath();
+    const y0=Math.random()*h;
+    for(let x=0;x<=w;x+=6) g.lineTo(x, y0+Math.sin(x*0.08+i*3)*6+Math.sin(x*0.021+i)*9);
+    g.stroke();
+  }
+  for(let i=0;i<26;i++){
+    g.fillStyle=`rgba(150,220,235,${0.05+Math.random()*0.10})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1.5+Math.random()*2.5,1);
+  }
+});
+texWater.wrapS=texWater.wrapT=THREE.RepeatWrapping;
+markShared(HALO_TEX,texWater,wetMat);
 const silkFloorMat=new THREE.MeshPhongMaterial({color:0xb8bcc0, specular:0x222222, shininess:8,
   transparent:true, opacity:0.34, depthWrite:false});
-const cocoonMat=new THREE.MeshPhongMaterial({color:0x9aa0a2, specular:0x2a2c2c, shininess:12});
+const cocoonMat=new THREE.MeshPhongMaterial({color:0x7e8486, specular:0x2a2c2c, shininess:12});
 const eggMat=()=>new THREE.MeshPhongMaterial({color:0x93aeb9, specular:0x2c3c44, shininess:30,
   emissive:0x123540});
 const boneMat=new THREE.MeshPhongMaterial({color:0xb8b0a0, specular:0x2c2a24, shininess:16});
@@ -417,6 +450,18 @@ class QuadAcc{
     this.idx.push(this.vc,this.vc+1,this.vc+2, this.vc,this.vc+2,this.vc+3);
     this.vc+=4;
   }
+  /* one triangle with its own computed face normal — the vault's facets */
+  tri(p1,p2,p3,uvs){
+    const ux=p2[0]-p1[0],uy=p2[1]-p1[1],uz=p2[2]-p1[2];
+    const vx=p3[0]-p1[0],vy=p3[1]-p1[1],vz=p3[2]-p1[2];
+    let nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
+    const l=Math.hypot(nx,ny,nz)||1; nx/=l; ny/=l; nz/=l;
+    for(const p of[p1,p2,p3]) this.pos.push(p[0],p[1],p[2]);
+    for(let i=0;i<3;i++) this.nor.push(nx,ny,nz);
+    for(const u of uvs) this.uv.push(u[0],u[1]);
+    this.idx.push(this.vc,this.vc+1,this.vc+2);
+    this.vc+=3;
+  }
   mesh(mat){
     const g=new THREE.BufferGeometry();
     g.setAttribute("position",new THREE.Float32BufferAttribute(this.pos,3));
@@ -428,19 +473,6 @@ class QuadAcc{
 }
 
 /* ---------------- prop builders ---------------- */
-function makeStalagmite(h){
-  const g=new THREE.Group();
-  const n=1+Math.floor(Math.random()*2);
-  for(let i=0;i<n;i++){
-    const hh=h*(i===0?1:rand(0.4,0.7));
-    const cone=new THREE.Mesh(new THREE.ConeGeometry(hh*rand(0.16,0.24),hh,7),rockMat);
-    cone.position.set(i===0?0:rand(-0.5,0.5), hh/2, i===0?0:rand(-0.5,0.5));
-    cone.rotation.y=Math.random()*Math.PI*2;
-    cone.rotation.z=(Math.random()-0.5)*0.06;
-    g.add(cone);
-  }
-  return g;
-}
 function makeCocoon(){
   const m=new THREE.Mesh(new THREE.SphereGeometry(rand(0.28,0.44),8,7),cocoonMat);
   m.scale.set(1,rand(1.6,2.3),1);
@@ -516,6 +548,13 @@ function makeClutch(){
     guy.rotation.z=Math.cos(a)*0.85; guy.rotation.x=-Math.sin(a)*0.85;
     g.add(guy);
   }
+  /* nest-glow: an additive pool of egg-light on the ground under it */
+  const haloMat=new THREE.MeshBasicMaterial({map:HALO_TEX, color:0x3f93ac,
+    transparent:true, opacity:0.2, blending:THREE.AdditiveBlending, depthWrite:false});
+  const halo=new THREE.Mesh(new THREE.PlaneGeometry(4.8,4.8),haloMat);
+  halo.rotation.x=-Math.PI/2; halo.position.y=0.07;
+  g.add(halo);
+  g.userData.haloMat=haloMat;
   g.userData.eggMats=mats;
   return g;
 }
@@ -529,6 +568,29 @@ export function buildCave(){
   /* ---- floor & ceiling & the pit ---- */
   const fAcc=new QuadAcc(), cAcc=new QuadAcc(), pAcc=new QuadAcc(), wAcc=new QuadAcc();
   const E=CELL/2, UVm=4;
+  /* ---- the vault: corner-shared ceiling heights, so the rock flows ----
+     Each grid corner takes the MIN of its adjacent open cells' ceilings
+     (chambers slope naturally down into their tunnel mouths, tunnels pinch
+     into the squeezes), clamped so a standing head never pokes through
+     near a squeeze mouth, plus per-corner jitter so it never planes off.
+     Shared corners make the surface continuous — no more panel skirts. */
+  const cH=[];
+  for(let cy=0;cy<=CH;cy++){
+    cH[cy]=[];
+    for(let cx=0;cx<=CW;cx++){
+      let mn=1e9, mx=0;
+      for(const[ox,oy]of[[-1,-1],[0,-1],[-1,0],[0,0]]){
+        const x=cx+ox, y=cy+oy;
+        if(x<0||y<0||x>=CW||y>=CH||grid3[y][x]===1) continue;
+        mn=Math.min(mn,ceilH[y][x]); mx=Math.max(mx,ceilH[y][x]);
+      }
+      if(mn===1e9){ cH[cy][cx]=0; continue; }
+      let h=mn;
+      if(mn<1.9&&mx>2.2) h=1.9;                  // squeeze mouths dip INSIDE the squeeze
+      h+=(hash(cx*13.37+cy*7.77)-0.5)*0.45;
+      cH[cy][cx]=Math.max(h,1.15);
+    }
+  }
   for(let y=0;y<CH;y++)for(let x=0;x<CW;x++){
     const t=grid3[y][x];
     if(t===1) continue;
@@ -561,23 +623,16 @@ export function buildCave(){
         }
       }
     }
-    /* ceiling quad (down-facing) */
-    const h=ceilH[y][x];
-    cAcc.quad([p.x-E,h,p.z-E],[p.x+E,h,p.z-E],[p.x+E,h,p.z+E],[p.x-E,h,p.z+E],
-      [0,-1,0],[[u0,v0],[u1,v0],[u1,v1],[u0,v1]]);
-    /* skirts where neighbouring ceilings differ */
-    for(const[dx,dy]of[[1,0],[0,1]]){
-      const nx=x+dx, ny=y+dy;
-      if(codeAt(nx,ny)===1) continue;
-      const h2=ceilH[ny][nx];
-      if(Math.abs(h2-h)<0.05) continue;
-      const lo=Math.min(h,h2), hi=Math.max(h,h2);
-      const sx=p.x+dx*E, sz=p.z+dy*E;
-      const ax=dy!==0? p.x-E : sx, az=dx!==0? p.z-E : sz;
-      const bx=dy!==0? p.x+E : sx, bz=dx!==0? p.z+E : sz;
-      const nrm=h2>h? [dx,0,dy]:[-dx,0,-dy];
-      wAcc.quad([ax,lo,az],[bx,lo,bz],[bx,hi,bz],[ax,hi,az],
-        nrm,[[0,lo/UVm],[1,lo/UVm],[1,hi/UVm],[0,hi/UVm]]);
+    /* the vault over this cell: two faceted triangles on the shared
+       corner heights. (The fissure pocket's cell stays open — its bore
+       runs up through where a ceiling would be.) */
+    if(!(CAVE.fissurePocket&&x===CAVE.fissurePocket.cx&&y===CAVE.fissurePocket.cy)){
+      const h00=cH[y][x],   h10=cH[y][x+1],
+            h01=cH[y+1][x], h11=cH[y+1][x+1];
+      cAcc.tri([p.x-E,h00,p.z-E],[p.x+E,h10,p.z-E],[p.x+E,h11,p.z+E],
+        [[u0,v0],[u1,v0],[u1,v1]]);
+      cAcc.tri([p.x-E,h00,p.z-E],[p.x+E,h11,p.z+E],[p.x-E,h01,p.z+E],
+        [[u0,v0],[u1,v1],[u0,v1]]);
     }
   }
   const floor=fAcc.mesh(floorMat); scene.add(floor);
@@ -616,11 +671,30 @@ export function buildCave(){
       wq.quad([p.x-E,-0.06,p.z+E],[p.x+E,-0.06,p.z+E],[p.x+E,-0.06,p.z-E],[p.x-E,-0.06,p.z-E],
         [0,1,0],[[0,1],[1,1],[1,0],[0,0]]);
     }
-    const waterMat=new THREE.MeshPhongMaterial({color:0x0c1d24, specular:0x5a828e,
-      shininess:120, transparent:true, opacity:0.82, emissive:0x03151c});
+    /* the skin drifts: caustic streaks on a map whose offset updateCave
+       slides every frame — the stream visibly moves */
+    const waterMat=new THREE.MeshPhongMaterial({map:texWater, color:0x4e666e,
+      specular:0x4a6a76, shininess:110, transparent:true, opacity:0.82,
+      emissive:0x040f14});
     CAVE.waterMat=waterMat;
     const water=wq.mesh(waterMat);
+    water.userData.animated=true;                        // its matrix never moves, but keep it out of habit
     scene.add(water);
+  }
+  /* ---- the chasm breathes a cold haze with no bottom in it ---- */
+  {
+    for(const[hy,op,col]of[[-2.5,0.10,0x143843],[-6,0.24,0x11333f],[-10,0.45,0x0d2b36]]){
+      const acc=new QuadAcc();
+      for(let y=0;y<CH;y++)for(let x=0;x<CW;x++){
+        if(grid3[y][x]!==5&&grid3[y][x]!==6) continue;
+        const p=cellToWorld3(x,y);
+        acc.quad([p.x-E,hy,p.z+E],[p.x+E,hy,p.z+E],[p.x+E,hy,p.z-E],[p.x-E,hy,p.z-E],
+          [0,1,0],[[0,1],[1,1],[1,0],[0,0]]);
+      }
+      if(!acc.vc) continue;
+      scene.add(acc.mesh(new THREE.MeshBasicMaterial({color:col, transparent:true,
+        opacity:op, depthWrite:false, side:THREE.DoubleSide})));
+    }
   }
   /* ---- silk floor sheets around the nests ---- */
   {
@@ -634,32 +708,71 @@ export function buildCave(){
     }
     scene.add(sq.mesh(silkFloorMat));
   }
-  /* ---- stalagmites & stalactites (chambers only) ---- */
+  /* ---- dripstone: wet, glossy, grown in matching pairs — merged into a
+     single mesh each way (floor spires / ceiling hangers) ---- */
   const clearOf=(x,z,r)=>CAVE.obstacles.every(o=>Math.hypot(x-o.x,z-o.z)>=o.r+r+0.3)
     && Math.hypot(x-CAVE.spawn.x,z-CAVE.spawn.z)>2.2;
+  const stalUp=[], stalDown=[];
+  const coneG=(r,h)=>new THREE.ConeGeometry(r,h,7);
   for(const c of CAVE.chambers){
-    const n=Math.round(c.r*2.2);
-    for(let t=0,placed=0;t<40&&placed<n;t++){
+    const n=Math.round(c.r*2.4);
+    for(let t=0,placed=0;t<44&&placed<n;t++){
       const a=srand()*Math.PI*2, rr=c.r*Math.sqrt(srand())*0.9;
       const x=Math.round(c.cx+Math.cos(a)*rr), y=Math.round(c.cy+Math.sin(a)*rr);
       if(!inB(x,y)||grid3[y][x]!==0) continue;
       const p=cellToWorld3(x,y);
       const px=p.x+rand(-1.2,1.2), pz=p.z+rand(-1.2,1.2);
       if(!clearOf(px,pz,0.5)) continue;
-      const h=rand(0.8,Math.min(2.6,ceilH[y][x]*0.42));
-      const sm=makeStalagmite(h);
-      sm.position.set(px,0,pz);
-      scene.add(sm); placed++;
-      CAVE.obstacles.push({x:px,z:pz,r:0.42});
-      if(Math.random()<0.7){
-        const st=new THREE.Mesh(new THREE.ConeGeometry(rand(0.14,0.3),rand(0.9,2.2),6),rockMat);
-        st.position.set(px+rand(-1.5,1.5), ceilH[y][x], pz+rand(-1.5,1.5));
+      const vault=Math.min(cH[y][x],cH[y][x+1],cH[y+1][x],cH[y+1][x+1]);
+      const h=rand(0.9,Math.min(2.8,vault*0.5));
+      /* a melted-candle stack: broad base mound, main spire, a lean child */
+      const base=new THREE.Mesh(new THREE.SphereGeometry(h*0.34,8,6));
+      base.scale.y=0.32; base.position.set(px,h*0.05,pz);
+      stalUp.push(base);
+      const spire=new THREE.Mesh(coneG(h*rand(0.16,0.22),h));
+      spire.position.set(px,h/2,pz);
+      spire.rotation.y=Math.random()*7; spire.rotation.z=(Math.random()-0.5)*0.05;
+      stalUp.push(spire);
+      if(Math.random()<0.6){
+        const h2=h*rand(0.35,0.6);
+        const kid=new THREE.Mesh(coneG(h2*0.2,h2));
+        kid.position.set(px+rand(-0.55,0.55),h2/2,pz+rand(-0.55,0.55));
+        kid.rotation.z=(Math.random()-0.5)*0.1;
+        stalUp.push(kid);
+      }
+      placed++;
+      CAVE.obstacles.push({x:px,z:pz,r:0.45});
+      /* its answer overhead — often directly above (they grow toward each other) */
+      if(Math.random()<0.75){
+        const above=Math.random()<0.5;
+        const sx2=above? px+rand(-0.3,0.3) : px+rand(-1.6,1.6);
+        const sz2=above? pz+rand(-0.3,0.3) : pz+rand(-1.6,1.6);
+        const hh=rand(0.7,Math.min(2.4,vault*0.45));
+        const st=new THREE.Mesh(coneG(hh*rand(0.13,0.2),hh));
+        st.position.set(sx2, vault-hh/2+0.18, sz2);
         st.rotation.x=Math.PI; st.rotation.y=Math.random()*7;
-        st.position.y-=st.geometry.parameters.height/2-0.05;
-        scene.add(st);
+        stalDown.push(st);
       }
     }
   }
+  /* soda-straw stalactites along the tunnels, wherever water found a seam */
+  for(let y=1;y<CH-1;y++)for(let x=1;x<CW-1;x++){
+    if(grid3[y][x]!==0&&grid3[y][x]!==3) continue;
+    if(srand()>0.14) continue;
+    const p=cellToWorld3(x,y);
+    const vault=Math.min(cH[y][x],cH[y][x+1],cH[y+1][x],cH[y+1][x+1]);
+    if(vault<2.2) continue;
+    const n=1+Math.floor(srand()*3);
+    for(let i=0;i<n;i++){
+      const hh=rand(0.25,0.8);
+      const st=new THREE.Mesh(coneG(rand(0.03,0.07),hh));
+      st.position.set(p.x+rand(-1.5,1.5), vault-hh/2+0.12, p.z+rand(-1.5,1.5));
+      st.rotation.x=Math.PI;
+      stalDown.push(st);
+    }
+  }
+  if(stalUp.length){ scene.add(mergeStatic(stalUp,wetMat)); for(const m of stalUp) m.geometry.dispose(); }
+  if(stalDown.length){ scene.add(mergeStatic(stalDown,wetMat)); for(const m of stalDown) m.geometry.dispose(); }
   /* ---- the webs: thicker the closer you get to a nest ---- */
   {
     const webMeshes=[[],[],[],[]];
@@ -694,17 +807,25 @@ export function buildCave(){
       scene.add(mergeStatic(webMeshes[i],webMats[i]));
     for(const arr of webMeshes) for(const m of arr) m.geometry.dispose();
   }
-  /* cocoon bundles near the nests — almost all of them perfectly still */
-  for(const b of broods){
-    const n=2+Math.floor(srand()*2);
-    for(let i=0;i<n;i++){
-      const p=cellToWorld3(b.cx,b.cy);
-      const px=p.x+rand(-5,5), pz=p.z+rand(-5,5);
-      if(cellAt3(px,pz)===1||!clearOf(px,pz,0.4)) continue;
-      const co=makeCocoon();
-      if(Math.random()<0.5){ co.position.set(px,rand(0.4,1.6),pz); }
-      else { co.position.set(px,0.45,pz); CAVE.obstacles.push({x:px,z:pz,r:0.38}); }
-      scene.add(co);
+  /* cocoon bundles near the nests — almost all of them perfectly still.
+     One merged mesh: they share a material and never move. */
+  {
+    const cocoons=[];
+    for(const b of broods){
+      const n=2+Math.floor(srand()*2);
+      for(let i=0;i<n;i++){
+        const p=cellToWorld3(b.cx,b.cy);
+        const px=p.x+rand(-5,5), pz=p.z+rand(-5,5);
+        if(cellAt3(px,pz)===1||!clearOf(px,pz,0.4)) continue;
+        const co=makeCocoon();
+        if(Math.random()<0.5){ co.position.set(px,rand(0.4,1.6),pz); }
+        else { co.position.set(px,0.45,pz); CAVE.obstacles.push({x:px,z:pz,r:0.38}); }
+        cocoons.push(co);
+      }
+    }
+    if(cocoons.length){
+      scene.add(mergeStatic(cocoons,cocoonMat));
+      for(const m of cocoons) m.geometry.dispose();
     }
   }
   /* ---- fungus: the level's light grid (cold records; silent; no buzz) ---- */
@@ -737,41 +858,58 @@ export function buildCave(){
       const [dx,dy]=faces[Math.floor(srand()*faces.length)];
       const p=cellToWorld3(x,y);
       const g=new THREE.Group();
-      const glowMat=new THREE.MeshBasicMaterial({color:0x0a1c20});
-      const nodeMat=new THREE.MeshBasicMaterial({color:0x0a181c});
-      const hh=rand(0.5,Math.min(2.6,ceilH[y][x]-0.5));
+      /* Phong, not Basic: the glow is EMISSIVE (lights.js cold branch drives
+         it), so the brackets keep shading and rim — dimensional, not flat */
+      const glowMat=new THREE.MeshPhongMaterial({color:0x0e2226, emissive:0x081418,
+        specular:0x16383e, shininess:38});
+      const hh=rand(0.6,Math.min(2.6,ceilH[y][x]-0.6));
       const bx=p.x+dx*(E-0.10), bz=p.z+dy*(E-0.10);
-      /* the caps merge per fixture (one draw per material, not one per cap) */
-      const glowCaps=[], nodeCaps=[];
-      for(let i=0;i<5+Math.floor(srand()*4);i++){
-        const cap=new THREE.Mesh(new THREE.SphereGeometry(rand(0.05,0.14),7,6));
-        cap.scale.z=0.55;
-        cap.position.set(bx-dx*rand(0,0.08)+ (dy!==0?rand(-0.5,0.5):0),
-                         hh+rand(-0.45,0.45),
-                         bz-dy*rand(0,0.08)+ (dx!==0?rand(-0.5,0.5):0));
-        cap.rotation.y = dx? (dx>0?-Math.PI/2:Math.PI/2) : (dy>0?Math.PI:0);
-        (i<2||srand()<0.5? glowCaps : nodeCaps).push(cap);
+      const faceRot = dx? (dx>0?-Math.PI/2:Math.PI/2) : (dy>0?Math.PI:0);
+      /* shelf-fungus: bracket runs climbing the rock, caps shrinking as they
+         go — merged to a single draw per fixture */
+      const caps=[];
+      const runs=1+(srand()<0.6?1:0);
+      for(let rI=0;rI<runs;rI++){
+        const off=(srand()-0.5)*1.7;                      // slide along the wall
+        const cx2=bx+(dy!==0?off:0), cz2=bz+(dx!==0?off:0);
+        const y0=Math.max(0.35,hh+rand(-0.6,0.2));
+        const nCaps=3+Math.floor(srand()*3);
+        for(let i=0;i<nCaps;i++){
+          const r=rand(0.11,0.22)*(1-0.4*i/nCaps);
+          const cap=new THREE.Mesh(new THREE.SphereGeometry(r,8,6));
+          cap.scale.set(1.35,0.42,0.65);                  // wide, shallow bracket
+          cap.rotation.y=faceRot;
+          cap.position.set(cx2+(dy!==0?rand(-0.1,0.1):0)-dx*rand(0,0.05),
+                           y0+i*rand(0.15,0.26),
+                           cz2+(dx!==0?rand(-0.1,0.1):0)-dy*rand(0,0.05));
+          caps.push(cap);
+        }
       }
-      for(const[arr,mat]of[[glowCaps,glowMat],[nodeCaps,nodeMat]]){
-        if(!arr.length) continue;
-        g.add(mergeStatic(arr,mat));
-        for(const c of arr) c.geometry.dispose();
-      }
-      /* a vein decal wandering out of the cluster */
+      g.add(mergeStatic(caps,glowMat));
+      for(const c of caps) c.geometry.dispose();
+      /* the halo: additive light pooled on the rock behind the shelves */
+      const haloMat=new THREE.MeshBasicMaterial({map:HALO_TEX, color:0x58c8e6,
+        transparent:true, opacity:0.25, blending:THREE.AdditiveBlending, depthWrite:false});
+      const halo=new THREE.Mesh(new THREE.PlaneGeometry(rand(1.3,2.1),rand(1.3,2.1)),haloMat);
+      halo.position.set(bx+dx*0.06, hh, bz+dy*0.06);
+      halo.rotation.y=faceRot;
+      g.add(halo);
+      /* a vein decal wandering out of the cluster — additive, alive */
       const vt=fungusTexes[Math.floor(Math.random()*3)];
       const vm=new THREE.Mesh(new THREE.PlaneGeometry(rand(1.4,2.6),rand(0.7,1.3)),
         new THREE.MeshBasicMaterial({map:vt, transparent:true, depthWrite:false,
-          opacity:0.9}));
-      vm.position.set(bx+dx*0.02, hh, bz+dy*0.02);
-      vm.rotation.y = dx? (dx>0?-Math.PI/2:Math.PI/2) : (dy>0?Math.PI:0);
+          opacity:0.8, blending:THREE.AdditiveBlending}));
+      vm.position.set(bx+dx*0.03, hh, bz+dy*0.03);
+      vm.rotation.y=faceRot;
       vm.material.color.setHex(0x9adfef);
       g.userData.veinMat=vm.material;
       g.add(vm);
       scene.add(g);
-      const rec=makeLightRecord(glowMat,nodeMat,x,y,{x:bx,y:0,z:bz},
+      const rec=makeLightRecord(glowMat,glowMat,x,y,{x:bx,y:0,z:bz},
         {warm:false, bright:bright, dimDen:0.5, flickery:Math.random()<0.35, fixY:hh});
       rec.cold=true; rec.buzz=false; rec.mul2=1;
       rec.veinMat=vm.material;
+      rec.haloMat=haloMat;
       let region=-1, best=1e9;
       broods.forEach((b,i)=>{ const d=Math.hypot(x-b.cx,y-b.cy); if(d<best){best=d;region=i;} });
       rec.region = best<9? region : -1;
@@ -1055,22 +1193,23 @@ export function updateCave(dt){
   }
   /* the frenzy clock */
   if(STATE.frenzyT>0) STATE.frenzyT=Math.max(0,STATE.frenzyT-dt);
-  /* fungus regions dim after their clutch burns */
+  /* fungus regions dim after their clutch burns (mul2 feeds lights.js's v,
+     which owns the halo/vein opacity — one pipeline, no fighting) */
   for(const L of lights){
     if(L.region===undefined||L.region<0) continue;
     const tgt=CAVE.regionDim[L.region];
-    if(Math.abs((L.mul2||1)-tgt)>0.002){
+    if(Math.abs((L.mul2||1)-tgt)>0.002)
       L.mul2=lerp(L.mul2||1, tgt, Math.min(1,dt*0.35));
-      if(L.veinMat) L.veinMat.opacity=0.9*L.mul2;
-    }
   }
   /* egg glow: unburned clutches breathe; burned ones ember out */
   CAVE.broods.forEach((b,i)=>{
     if(!b.clutch) return;
     const mats=b.clutch.userData.eggMats;
+    const hm=b.clutch.userData.haloMat;
     if(!b.burned){
       const k=0.7+0.3*Math.sin(tN*0.9+i*1.7);
       for(const m of mats) m.emissive.setRGB(0.07*k,0.21*k,0.25*k);
+      if(hm) hm.opacity=0.14+0.08*k;
     } else {
       b.burnT=(b.burnT||0)+dt;
       const k=clamp(1-b.burnT/6,0,1);
@@ -1081,6 +1220,12 @@ export function updateCave(dt){
           m.emissive.setRGB(0.35*e,0.10*e,0.02*e);
           m.color.setRGB(0.18,0.14,0.11);
         }
+      }
+      /* the pool of light under it turns fire-orange, then embers down */
+      if(hm){
+        hm.color.setRGB(1,0.45+0.2*k,0.18+0.4*k);
+        const life=clamp(1-b.burnT/80,0.05,1);
+        hm.opacity=(0.22+0.10*hash(Math.floor(tN*13)+i*7))*life;
       }
     }
   });
@@ -1106,8 +1251,14 @@ export function updateCave(dt){
     for(const rec of fis.lights) rec.l.intensity=rec.I*k*(0.92+0.08*Math.sin(tN*0.6));
     for(const hz of fis.hazes) hz.mat.opacity=hz.baseOp*k*(1+0.08*Math.sin(tN*0.5));
   }
-  /* water: a slow living sheen */
-  if(CAVE.waterMat) CAVE.waterMat.opacity=0.80+0.05*Math.sin(tN*0.7);
+  /* water: a slow living sheen, and the caustic skin drifts downstream */
+  if(CAVE.waterMat){
+    CAVE.waterMat.opacity=0.80+0.05*Math.sin(tN*0.7);
+    if(CAVE.waterMat.map){
+      CAVE.waterMat.map.offset.x=(tN*0.022)%1;
+      CAVE.waterMat.map.offset.y=(tN*0.013)%1;
+    }
+  }
   /* the stream's voice, by distance */
   if(AU.cave&&AU.cave.streamGain&&AU.ctx){
     let best=1e9;

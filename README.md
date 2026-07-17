@@ -96,6 +96,13 @@ track by ear.
 - **Cave audio.** Drip percussion with double echoes, a stream bed that masks your
   noise, crank ratchet, striker ticks, clutch fire crackle, rockfalls, hatchling
   hisses/screeches, and the fissure's updraft wind — all synthesized, as ever.
+- **The look.** Bump-mapped strata rock; a corner-shared faceted vault instead of a
+  flat ceiling (chambers slope into their tunnel mouths, tunnels pinch into the
+  squeezes); wet glossy dripstone grown in floor/ceiling pairs plus soda-straw
+  stalactites, merged to single draws; shelf-bracket fungus with emissive shading,
+  additive glow halos and living veins; a drifting caustic skin on the stream;
+  layered cold haze in the chasm; nest-glow pooled under the clutches that turns
+  fire-orange as they burn.
 - New intro and ending cinematics; new death/win copy; level-2 objectives HUD +
   lantern charge bar; the descent from THE END now hands off seamlessly mid-black.
 - Cheat: triple-[9] drops you into THE NEST with the lantern (again from inside: burns
