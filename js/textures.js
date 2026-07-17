@@ -1068,6 +1068,49 @@ export const texCaveFloor = makeCanvas(512,512,(g,w,h)=>{
     g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*3,1+Math.random()*2.5);
   }
 });
+/* wet dripstone: pale calcite laid down in growth bands, drip streaks
+   running the length of the formation. Doubles as its own bump map, so
+   the streaks become real ridges under the lantern's raking beam. */
+export const texDripstone = makeCanvas(128,256,(g,w,h)=>{
+  const grd=g.createLinearGradient(0,0,0,h);
+  grd.addColorStop(0,"#82888a"); grd.addColorStop(0.5,"#909692"); grd.addColorStop(1,"#7e8482");
+  g.fillStyle=grd; g.fillRect(0,0,w,h);
+  for(let i=0;i<10;i++){                 // damp staining: broad soft blotches
+    const x=Math.random()*w, y=Math.random()*h, r=18+Math.random()*44;
+    const gr=g.createRadialGradient(x,y,2,x,y,r);
+    const dark=Math.random()<0.6;
+    gr.addColorStop(0,dark?`rgba(48,54,52,${0.14+Math.random()*0.14})`
+                          :`rgba(198,202,190,${0.10+Math.random()*0.10})`);
+    gr.addColorStop(1,"rgba(0,0,0,0)");
+    g.fillStyle=gr; g.fillRect(x-r,y-r,r*2,r*2);
+  }
+  for(let i=0;i<26;i++){                 // growth bands: rings of drier/wetter seasons
+    const y=Math.random()*h, th=1+Math.random()*4;
+    g.fillStyle=Math.random()<0.5?`rgba(54,58,54,${0.10+Math.random()*0.14})`
+                                 :`rgba(200,196,180,${0.08+Math.random()*0.11})`;
+    g.fillRect(0,y,w,th);
+  }
+  for(let i=0;i<34;i++){                 // drip streaks: full-height runnels, slightly wandering
+    const x0=Math.random()*w, ww=1+Math.random()*3;
+    g.strokeStyle=Math.random()<0.45?`rgba(212,218,212,${0.14+Math.random()*0.16})`
+                                    :`rgba(38,43,41,${0.15+Math.random()*0.18})`;
+    g.lineWidth=ww;
+    for(const off of [0,-w,w]){          // drawn thrice so the wrap seam stays seamless
+      g.beginPath(); g.moveTo(x0+off,0);
+      for(let y=0;y<=h;y+=12) g.lineTo(x0+off+Math.sin(y*0.05+i)*2.5,y);
+      g.stroke();
+    }
+  }
+  for(let i=0;i<900;i++){                // crystalline mottle
+    const v=Math.random();
+    g.fillStyle=`rgba(${v<0.5?96:186},${v<0.5?101:190},${v<0.5?97:182},${0.07+Math.random()*0.10})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*2.5,1+Math.random()*2);
+  }
+  for(let i=0;i<60;i++){                 // wet sparkle pinpoints
+    g.fillStyle=`rgba(226,234,232,${0.18+Math.random()*0.28})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1,1);
+  }
+});
 /* a silk sheet: layered strand fans on transparency, for wall/corner webs */
 export function makeWebTexture(){
   const t=makeCanvas(128,128,(g,w,h)=>{

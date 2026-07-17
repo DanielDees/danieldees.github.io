@@ -98,8 +98,14 @@ track by ear.
   hisses/screeches, and the fissure's updraft wind — all synthesized, as ever.
 - **The look.** Bump-mapped strata rock; a corner-shared faceted vault instead of a
   flat ceiling (chambers slope into their tunnel mouths, tunnels pinch into the
-  squeezes); wet glossy dripstone grown in floor/ceiling pairs plus soda-straw
-  stalactites, merged to single draws; a real fungus ecosystem — lathe-built
+  squeezes); real dripstone grown from lathe profiles with drip-ring bulges,
+  per-vertex noise and a pale streaked calcite skin (nothing is a cone), in
+  location-bred varieties — knobby spire stacks on flowstone mounds answered by
+  hanging spires, full floor-to-vault columns waisted where the pair met,
+  drapery curtains folded off the chamber walls, flowstone cascades spilling
+  down the stream banks, snapped stumps and toppled spires in the scree, and
+  soda straws clustered around ceiling seeps — merged to three draws total;
+  a real fungus ecosystem — lathe-built
   mushrooms skinned by a procedural atlas (glowing gill undersides, banded conk
   tops, pore-speckled bulbs) in location-driven varieties: shelf conks climbing
   the chamber walls, toadstool families on the floors, green coral fingers on

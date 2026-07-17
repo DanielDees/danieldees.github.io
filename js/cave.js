@@ -18,8 +18,8 @@ import { CELL } from "./map.js";
 import { STATE } from "./state.js";
 import { scene, camera, renderer, lights, makeLightRecord, markShared,
          mergeStatic, freezeStaticScene } from "./scene.js";
-import { makeCanvas, texCaveRock, texCaveFloor, makeWebTexture, makeFungusTexture,
-         makeFungusSkin, scaleBoxUV } from "./textures.js";
+import { makeCanvas, texCaveRock, texCaveFloor, texDripstone, makeWebTexture,
+         makeFungusTexture, makeFungusSkin, scaleBoxUV } from "./textures.js";
 import { addInteractable } from "./props.js";
 import { die } from "./lifecycle.js";
 import { renderObjectives, toast } from "./ui.js";
@@ -394,9 +394,13 @@ const rockMat=new THREE.MeshPhongMaterial({map:texCaveRock, bumpMap:texCaveRock,
   specular:0x1a1a16, shininess:10, emissive:0x010101});
 const floorMat=new THREE.MeshPhongMaterial({map:texCaveFloor, bumpMap:texCaveFloor, bumpScale:0.035,
   specular:0x0a0a08, shininess:4});
-/* dripstone grows wet and glossy — it catches the beam like candle wax */
-const wetMat=new THREE.MeshPhongMaterial({map:texCaveRock, bumpMap:texCaveRock, bumpScale:0.03,
-  color:0xb6babc, specular:0x4a565e, shininess:72, emissive:0x020303});
+/* dripstone grows wet and glossy — pale calcite, not the parent rock; the
+   streaked skin is its own bump map so runnels read as ridges in the beam */
+const wetMat=new THREE.MeshPhongMaterial({map:texDripstone, bumpMap:texDripstone, bumpScale:0.08,
+  color:0x878f93, specular:0x3e4a52, shininess:46, emissive:0x020303});
+/* flowstone curtains hang free of the wall — both faces show */
+const curtainMat=new THREE.MeshPhongMaterial({map:texDripstone, bumpMap:texDripstone, bumpScale:0.085,
+  color:0x767d7f, specular:0x2e383e, shininess:30, emissive:0x020303, side:THREE.DoubleSide});
 const pitMat=new THREE.MeshPhongMaterial({color:0x070605, specular:0x000000, shininess:1});
 /* a soft radial glow, shared by every halo in the level */
 const HALO_TEX=makeCanvas(64,64,(g,w,h)=>{
@@ -423,7 +427,7 @@ const texWater=makeCanvas(128,128,(g,w,h)=>{
   }
 });
 texWater.wrapS=texWater.wrapT=THREE.RepeatWrapping;
-markShared(HALO_TEX,texWater,wetMat);
+markShared(HALO_TEX,texWater,wetMat,curtainMat,texDripstone);
 const silkFloorMat=new THREE.MeshPhongMaterial({color:0xb8bcc0, specular:0x222222, shininess:8,
   transparent:true, opacity:0.34, depthWrite:false});
 const cocoonMat=new THREE.MeshPhongMaterial({color:0x7e8486, specular:0x2a2c2c, shininess:12});
@@ -499,6 +503,86 @@ function puffGeo(r){
   const g=new THREE.SphereGeometry(r,8,7);
   const uv=g.attributes.uv;
   for(let i=0;i<uv.count;i++) uv.setY(i, fv(F_BULB, uv.getY(i)*0.85+0.05));
+  return g;
+}
+
+/* ---------------- dripstone geometry: grown, not turned ----------------
+   Every formation starts as a lathe profile with drip-ring bulges (annual
+   flowstone swells), then gets pushed out of rotational symmetry by
+   per-vertex radial noise and a slow lean — so nothing reads as a cone.
+   All builders grow from y=0 upward; hangers are placed rotated π. */
+function dripNoise(g,seed,leanAmt){
+  const pos=g.attributes.position;
+  const la=Math.random()*7, lx=Math.cos(la)*leanAmt, lz=Math.sin(la)*leanAmt;
+  for(let i=0;i<pos.count;i++){
+    const x=pos.getX(i), y=pos.getY(i), z=pos.getZ(i);
+    const a=Math.atan2(z,x);
+    const n=1+0.13*Math.sin(a*3+y*2.2+seed)+0.08*Math.sin(a*5-y*3.1+seed*1.7)
+             +0.05*Math.sin(a*8+y*7+seed*2.6);
+    pos.setX(i, x*n+lx*y); pos.setZ(i, z*n+lz*y);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+/* a spire: blunt drip-ringed taper — the standard stalagmite/stalactite.
+   Per-point radius jitter stacks the profile into uneven lumps, the way
+   dripstone actually accretes — without it the lathe reads as a vase. */
+function spireGeo(r,h,lean){
+  const N=13, seed=Math.random()*10, pts=[];
+  const rings=2+Math.floor(Math.random()*3), ph=Math.random()*7;
+  for(let i=0;i<=N;i++){
+    const t=i/N;
+    let rad=r*(0.30+0.70*Math.pow(1-t,1.4));
+    rad*=1+0.15*Math.sin(t*Math.PI*2*rings+ph)*Math.sin(t*Math.PI);
+    if(i>0&&i<N) rad*=rand(0.86,1.16);
+    pts.push(new THREE.Vector2(Math.max(rad,0.013), t*h));
+  }
+  return dripNoise(new THREE.LatheGeometry(pts,9),seed,lean===undefined?0.10:lean);
+}
+/* a full column: stalagmite and stalactite met in the middle — waisted */
+function columnGeo(r,h){
+  const N=16, seed=Math.random()*10, pts=[];
+  const waist=rand(0.4,0.6);
+  for(let i=0;i<=N;i++){
+    const t=i/N;
+    const d=Math.abs(t-waist)/Math.max(waist,1-waist);
+    let rad=r*(0.42+0.58*Math.pow(d,1.25));
+    rad*=1+0.10*Math.sin(t*Math.PI*9+seed)*Math.sin(t*Math.PI);
+    if(i>0&&i<N) rad*=rand(0.90,1.10);
+    pts.push(new THREE.Vector2(Math.max(rad,0.05), t*h));
+  }
+  return dripNoise(new THREE.LatheGeometry(pts,10),seed,0.02);
+}
+/* a snapped-off stump: broad, barely tapered, sheared ragged at the top */
+function stumpGeo(r,h){
+  const N=8, seed=Math.random()*10, pts=[];
+  for(let i=0;i<=N;i++){
+    const t=i/N;
+    let rad=r*(0.85+0.15*(1-t))*(1+0.12*Math.sin(t*9+seed));
+    if(t>0.86) rad*=Math.max(0.12,(1-t)/0.14*0.85);
+    pts.push(new THREE.Vector2(Math.max(rad,0.02), t*h));
+  }
+  return dripNoise(new THREE.LatheGeometry(pts,8),seed,0.05);
+}
+/* a flowstone mound: noisy squashed dome (spire bases, stream cascades) */
+function moundGeo(r,squash){
+  const g=new THREE.SphereGeometry(r,9,5,0,Math.PI*2,0,Math.PI/2);
+  g.scale(1,squash,1);
+  return dripNoise(g,Math.random()*10,0);
+}
+/* a drapery curtain: wave-folded sheet, folds deepening to a scalloped hem.
+   Built in the XY plane, top edge at y=+hgt/2, hanging root pinned there. */
+function curtainGeo(wdt,hgt){
+  const g=new THREE.PlaneGeometry(wdt,hgt,12,7);
+  const pos=g.attributes.position, seed=Math.random()*10;
+  for(let i=0;i<pos.count;i++){
+    const x=pos.getX(i), y=pos.getY(i);
+    const t=y/hgt+0.5;                    // 1 = root at the ceiling, 0 = free hem
+    const fold=Math.sin(x*4.6+seed)*0.14+Math.sin(x*9.3+seed*2.1)*0.06;
+    pos.setZ(i,(fold+0.03*Math.sin(y*5+seed))*(1.25-t));
+    if(t<0.18) pos.setY(i, y+(0.5+0.5*Math.sin(x*5.2+seed*3))*hgt*0.16);
+  }
+  g.computeVertexNormals();
   return g;
 }
 
@@ -771,11 +855,11 @@ export function buildCave(){
     scene.add(sq.mesh(silkFloorMat));
   }
   /* ---- dripstone: wet, glossy, grown in matching pairs — merged into a
-     single mesh each way (floor spires / ceiling hangers) ---- */
+     single mesh each way (floor spires / ceiling hangers), plus one merged
+     sheet of drapery curtains (their own DoubleSide material) ---- */
   const clearOf=(x,z,r)=>CAVE.obstacles.every(o=>Math.hypot(x-o.x,z-o.z)>=o.r+r+0.3)
     && Math.hypot(x-CAVE.spawn.x,z-CAVE.spawn.z)>2.2;
-  const stalUp=[], stalDown=[];
-  const coneG=(r,h)=>new THREE.ConeGeometry(r,h,7);
+  const stalUp=[], stalDown=[], curtains=[];
   for(const c of CAVE.chambers){
     const n=Math.round(c.r*2.4);
     for(let t=0,placed=0;t<44&&placed<n;t++){
@@ -786,20 +870,29 @@ export function buildCave(){
       const px=p.x+rand(-1.2,1.2), pz=p.z+rand(-1.2,1.2);
       if(!clearOf(px,pz,0.5)) continue;
       const vault=Math.min(cH[y][x],cH[y][x+1],cH[y+1][x],cH[y+1][x+1]);
+      /* some pairs have had the ages they needed to meet: a full column,
+         girth scaled to the height it had to bridge */
+      if(srand()<0.16){
+        const col=new THREE.Mesh(columnGeo(vault*rand(0.07,0.11),vault+0.2));
+        col.position.set(px,-0.05,pz); col.rotation.y=Math.random()*7;
+        stalUp.push(col);
+        placed++;
+        CAVE.obstacles.push({x:px,z:pz,r:0.55});
+        continue;
+      }
       const h=rand(0.9,Math.min(2.8,vault*0.5));
-      /* a melted-candle stack: broad base mound, main spire, a lean child */
-      const base=new THREE.Mesh(new THREE.SphereGeometry(h*0.34,8,6));
-      base.scale.y=0.32; base.position.set(px,h*0.05,pz);
+      /* a flowstone stack: noisy mound base, drip-ringed spire, a lean child */
+      const base=new THREE.Mesh(moundGeo(h*0.36,0.34));
+      base.position.set(px,-0.02,pz); base.rotation.y=Math.random()*7;
       stalUp.push(base);
-      const spire=new THREE.Mesh(coneG(h*rand(0.16,0.22),h));
-      spire.position.set(px,h/2,pz);
-      spire.rotation.y=Math.random()*7; spire.rotation.z=(Math.random()-0.5)*0.05;
+      const spire=new THREE.Mesh(spireGeo(h*rand(0.17,0.24),h));
+      spire.position.set(px,0,pz); spire.rotation.y=Math.random()*7;
       stalUp.push(spire);
       if(Math.random()<0.6){
         const h2=h*rand(0.35,0.6);
-        const kid=new THREE.Mesh(coneG(h2*0.2,h2));
-        kid.position.set(px+rand(-0.55,0.55),h2/2,pz+rand(-0.55,0.55));
-        kid.rotation.z=(Math.random()-0.5)*0.1;
+        const kid=new THREE.Mesh(spireGeo(h2*rand(0.2,0.26),h2,0.16));
+        kid.position.set(px+rand(-0.55,0.55),0,pz+rand(-0.55,0.55));
+        kid.rotation.y=Math.random()*7;
         stalUp.push(kid);
       }
       placed++;
@@ -810,31 +903,95 @@ export function buildCave(){
         const sx2=above? px+rand(-0.3,0.3) : px+rand(-1.6,1.6);
         const sz2=above? pz+rand(-0.3,0.3) : pz+rand(-1.6,1.6);
         const hh=rand(0.7,Math.min(2.4,vault*0.45));
-        const st=new THREE.Mesh(coneG(hh*rand(0.13,0.2),hh));
-        st.position.set(sx2, vault-hh/2+0.18, sz2);
+        const st=new THREE.Mesh(spireGeo(hh*rand(0.14,0.2),hh,0.06));
+        st.position.set(sx2, vault+0.18, sz2);
         st.rotation.x=Math.PI; st.rotation.y=Math.random()*7;
         stalDown.push(st);
       }
     }
   }
-  /* soda-straw stalactites along the tunnels, wherever water found a seam */
+  /* ---- tunnel country: soda straws, wall curtains, stream-bank
+     cascades, and the scree's broken dead ---- */
   for(let y=1;y<CH-1;y++)for(let x=1;x<CW-1;x++){
-    if(grid3[y][x]!==0&&grid3[y][x]!==3) continue;
-    if(srand()>0.14) continue;
+    const code=grid3[y][x];
+    if(code!==0&&code!==3&&code!==4) continue;
     const p=cellToWorld3(x,y);
     const vault=Math.min(cH[y][x],cH[y][x+1],cH[y+1][x],cH[y+1][x+1]);
-    if(vault<2.2) continue;
-    const n=1+Math.floor(srand()*3);
-    for(let i=0;i<n;i++){
-      const hh=rand(0.25,0.8);
-      const st=new THREE.Mesh(coneG(rand(0.03,0.07),hh));
-      st.position.set(p.x+rand(-1.5,1.5), vault-hh/2+0.12, p.z+rand(-1.5,1.5));
-      st.rotation.x=Math.PI;
-      stalDown.push(st);
+    /* soda straws cluster around a shared seep point in the ceiling */
+    if((code===0||code===3)&&srand()<0.14&&vault>=2.2){
+      const cx0=p.x+rand(-1.3,1.3), cz0=p.z+rand(-1.3,1.3);
+      const n=2+Math.floor(srand()*4);
+      for(let i=0;i<n;i++){
+        const hh=rand(0.25,0.85);
+        const st=new THREE.Mesh(new THREE.ConeGeometry(rand(0.03,0.07),hh,5));
+        st.position.set(cx0+rand(-0.5,0.5), vault-hh/2+0.12, cz0+rand(-0.5,0.5));
+        st.rotation.x=Math.PI; st.rotation.z=(Math.random()-0.5)*0.06;
+        stalDown.push(st);
+      }
+      /* a patient seep gets an answering nub on the floor below */
+      if(code===0&&Math.random()<0.4&&clearOf(cx0,cz0,0.2)){
+        const nub=new THREE.Mesh(spireGeo(rand(0.06,0.11),rand(0.12,0.3),0.05));
+        nub.position.set(cx0,0,cz0);
+        stalUp.push(nub);
+      }
+    }
+    /* drapery curtains where a wall meets a high vault — hung from the
+       ceiling line at THAT wall face (its two edge corners), not the
+       cell's lowest corner, so no bare wall shows above the root */
+    if(code===0&&vault>=2.7&&srand()<0.06){
+      for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){
+        if(codeAt(x+dx,y+dy)!==1) continue;
+        const eV = dx>0? Math.min(cH[y][x+1],cH[y+1][x+1])
+                 : dx<0? Math.min(cH[y][x],cH[y+1][x])
+                 : dy>0? Math.min(cH[y+1][x],cH[y+1][x+1])
+                 :       Math.min(cH[y][x],cH[y][x+1]);
+        const hgt=rand(0.8,Math.min(2.0,eV*0.55));
+        const ct=new THREE.Mesh(curtainGeo(rand(1.1,2.4),hgt));
+        ct.position.set(p.x+dx*(E-0.30), eV+0.22-hgt/2, p.z+dy*(E-0.30));
+        ct.rotation.y = dx? (dx>0?-Math.PI/2:Math.PI/2) : (dy>0?Math.PI:0);
+        curtains.push(ct);
+        break;
+      }
+    }
+    /* flowstone cascades spilling down the banks into the stream */
+    if(code===0&&srand()<0.22){
+      let sdx=0,sdy=0;
+      for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]) if(codeAt(x+dx,y+dy)===3){sdx=dx;sdy=dy;break;}
+      if(sdx||sdy){
+        const bx=p.x+sdx*rand(0.6,1.2), bz=p.z+sdy*rand(0.6,1.2);
+        const n=2+Math.floor(Math.random()*3);
+        for(let i=0;i<n;i++){
+          const f=i/n;
+          const m=new THREE.Mesh(moundGeo(rand(0.28,0.5)*(1-f*0.4),rand(0.4,0.6)));
+          m.position.set(bx+sdx*(f*1.5+rand(-0.2,0.2)), 0.02-f*0.16, bz+sdy*(f*1.5+rand(-0.2,0.2)));
+          m.rotation.y=Math.random()*7;
+          stalUp.push(m);
+        }
+      }
+    }
+    /* the scree keeps its dead: snapped stumps and toppled spires */
+    if(code===4&&srand()<0.14){
+      const sx=p.x+rand(-1.2,1.2), sz=p.z+rand(-1.2,1.2);
+      if(clearOf(sx,sz,0.4)){
+        const h=rand(0.3,0.9);
+        const st=new THREE.Mesh(stumpGeo(rand(0.14,0.28),h));
+        st.position.set(sx,0,sz);
+        st.rotation.y=Math.random()*7; st.rotation.z=(Math.random()-0.5)*0.2;
+        stalUp.push(st);
+        if(h>0.5) CAVE.obstacles.push({x:sx,z:sz,r:0.35});
+        if(Math.random()<0.5){         // its top half, lying where it fell
+          const frag=new THREE.Mesh(spireGeo(rand(0.09,0.15),rand(0.4,0.9),0.02));
+          const fa=Math.random()*7;
+          frag.position.set(sx+Math.cos(fa)*rand(0.5,1.1), 0.10, sz+Math.sin(fa)*rand(0.5,1.1));
+          frag.rotation.z=Math.PI/2+rand(-0.2,0.2); frag.rotation.y=fa;
+          stalUp.push(frag);
+        }
+      }
     }
   }
   if(stalUp.length){ scene.add(mergeStatic(stalUp,wetMat)); for(const m of stalUp) m.geometry.dispose(); }
   if(stalDown.length){ scene.add(mergeStatic(stalDown,wetMat)); for(const m of stalDown) m.geometry.dispose(); }
+  if(curtains.length){ scene.add(mergeStatic(curtains,curtainMat)); for(const m of curtains) m.geometry.dispose(); }
   /* ---- the webs: thicker the closer you get to a nest ---- */
   {
     const webMeshes=[[],[],[],[]];
