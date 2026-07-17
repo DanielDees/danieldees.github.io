@@ -2,11 +2,11 @@
 import { lerp } from "./utils.js";
 import { STATE, KEYS, monster, spider } from "./state.js";
 import { CELL, cellToWorld, worldToCell, isWall } from "./map.js";
-import { AU, sfxStep, sfxJump, sfxLand } from "./audio.js";
+import { AU, sfxStep, sfxJump, sfxLand, sfxStoneStep } from "./audio.js";
 import { camera, playerLight } from "./scene.js";
 import { ui } from "./ui.js";
 import { monsterCanSee } from "./monster.js";
-import { libCollide, underTable } from "./library.js";
+import { libCollide, underTable, libGroundY, shaftClamp } from "./library.js";
 
 const GRAV=13.5, JUMP_V=4.9;
 function collide(px,pz,r){
@@ -47,7 +47,7 @@ export function updatePlayer(dt){
   if(!STATE.grounded){
     STATE.vy-=GRAV*dt;
     STATE.y+=STATE.vy*dt;
-    if(STATE.y<=0){ STATE.y=0; STATE.vy=0; STATE.grounded=true; sfxLand(); }
+    /* landing happens after the move below, against level-aware ground */
   }
 
   /* adrenaline: from the moment the breaker surges until the doors close
@@ -75,6 +75,22 @@ export function updatePlayer(dt){
     (Math.abs(solved.x-STATE.pos.x)>1e-4||Math.abs(solved.z-STATE.pos.z)>1e-4);
   STATE.pos.x=solved.x; STATE.pos.z=solved.z;
 
+  /* THE END's open shaft is a real level component: below floor level the
+     shaft wall is the only wall, and the ground is whichever stair tread is
+     underfoot — riding it up or down step by step, or none at all over the
+     open throat. Level 0 (and the library above its floor) keeps gY=0. */
+  if(STATE.level===1){
+    const sc=shaftClamp(STATE.pos.x,STATE.pos.z,STATE.y,0.42);
+    if(sc){ STATE.pos.x=sc.x; STATE.pos.z=sc.z; }
+  }
+  const gY = STATE.level===1? libGroundY(STATE.pos.x,STATE.pos.z,STATE.y) : 0;
+  if(STATE.grounded){
+    if(gY<STATE.y-0.45){ STATE.grounded=false; STATE.vy=0; }   // stepped off an edge
+    else STATE.y=gY;                                           // ride the treads
+  } else if(STATE.vy<=0&&STATE.y<=gY){
+    STATE.y=gY; STATE.vy=0; STATE.grounded=true; sfxLand();
+  }
+
   /* stamina: airborne sprinting drains at half rate — unless adrenaline
      holds the bar pinned blue and full */
   if(adren){
@@ -101,7 +117,12 @@ export function updatePlayer(dt){
   if(STATE.moving&&STATE.grounded){
     STATE.bob += dt*(STATE.sprinting?13:STATE.crouch?6:9);
     AU.stepTimer-=dt*speed;
-    if(AU.stepTimer<=0){ sfxStep(STATE.crouch,STATE.sprinting,STATE.level===1); AU.stepTimer=2.4; }
+    if(AU.stepTimer<=0){
+      /* below the library floor the carpet gives way to old stone */
+      if(STATE.level===1&&STATE.y<-0.1) sfxStoneStep(STATE.crouch?0.45:STATE.sprinting?1.05:0.8);
+      else sfxStep(STATE.crouch,STATE.sprinting,STATE.level===1);
+      AU.stepTimer=2.4;
+    }
   }
   const targetEye = STATE.crouch? 0.85 : 1.62;
   STATE.curEyeH = lerp(STATE.curEyeH, targetEye, dt*9);

@@ -1,6 +1,6 @@
 # NOCLIP — Escape the Backrooms
 
-**Version: v2.5.0**
+**Version: v2.6.0**
 
 A browser-based survival horror game, playable at
 [danieldees.github.io](https://danieldees.github.io). Vanilla JS ES modules built
@@ -33,7 +33,8 @@ the room, then **drops on you** from above — a telegraphed plunge you survive 
 moving clear, crouch or not. Find the scattered disks and feed them to the terminal at
 the heart of the room while staying quiet and using the tables for cover. About a minute
 and a half after you take the first disk, the lights burn down to embers and the library
-wakes up the rest of the way.
+wakes up the rest of the way. Return every disk and the librarian answers in person —
+not for you, but to open the way down. It did warn you.
 
 ## Controls
 
@@ -50,6 +51,34 @@ Headphones recommended — audio is positional, and both monsters are far easier
 track by ear.
 
 ## Changelog
+
+### v2.6.0 (2026-07-04)
+- **A real ending for THE END.** Feeding the terminal its last disk no longer whites
+  out into the win sheet. The machine prints "THE END", dies into static — and the
+  camera cranes up and out to an aerial seat (chosen at runtime for clearance through
+  the random canopy of hanging lights) to watch the answer: the librarian sprints in
+  and **digs itself through the floor** behind its own desk, working in a churning
+  shroud of earth-brown and carpet-blue dust that swallows the ground completely while
+  the spider stays half-readable inside it. When the dust settles there is a **round
+  hole** rimmed with flung dirt, a **stone spiral stair** winding down its wall, and a
+  blue glow/fog that lets you read two or three turns before it swallows the depths.
+  The camera settles back into your eyes — and the terminal's CRT burns red with one
+  line: **I WARNED YOU**.
+- **Enter the hole.** A new final objective — and the stairs are *real*. Walk over
+  the rim and descend the spiral yourself, tread by tread, the shaft wall at your
+  shoulder and the blue fog thickening with every turn. A couple of spirals down,
+  with most vision already gone, the dark takes the rest of the walk: fade to
+  black, your echoing footsteps on stone carrying on a while longer. (The next
+  floor is TBD — for now, this is the win.)
+- **The dig is dressed properly.** The dust is a pooled soft-billboard particle
+  system — a mottled procedural puff texture tinted across earth and carpet hues,
+  with a churn boiling out of the work, a heavy ground shroud, a breakthrough ring
+  burst when the floor lets go, and tumbling clods that raise their own little puff
+  where they land.
+- **New synthesized audio**: scrabbling claw-work and carpet rips for the dig, a deep
+  rolling collapse for the breakthrough, and echoing stone footfalls for the descent.
+- **Debug warp remapped**: the terminal warp is now tap `8` ×3 (it was typing
+  "the end"), joining `6` ×3 and `7` ×3.
 
 ### v2.5.0 (2026-06-24)
 - **Runs on far weaker hardware.** A performance and memory pass targeting the

@@ -8,7 +8,7 @@ import { debugSkipToElevator, debugSkipToTheEnd, debugWarpToTerminal } from "./l
 
 let dbg6=0, dbg6T=0;   // hidden debug chord: [6] ×3 warps to the endgame
 let dbg7=0, dbg7T=0;   // [7] ×3 drops into THE END / pockets every disk
-let typed="", typedT=0; // typing "the end" warps to the terminal for cutscene testing
+let dbg8=0, dbg8T=0;   // [8] ×3 warps to the terminal, disks in hand, ready for the ending
 addEventListener("keydown",e=>{
   KEYS[e.code]=true;
   if(e.code==="Space") e.preventDefault();
@@ -34,15 +34,10 @@ addEventListener("keydown",e=>{
     dbg7 = (now-dbg7T<1500)? dbg7+1 : 1; dbg7T=now;
     if(dbg7>=3){ dbg7=0; debugSkipToTheEnd(); }
   }
-  /* typed "the end" (space optional): warp to the terminal, set up for the
-     ending cutscene. A rolling buffer of recent printable keys, reset after
-     a 2s pause so it only fires on a deliberate phrase. */
-  if(e.key&&e.key.length===1){
+  if(e.code==="Digit8"){
     const now=performance.now();
-    if(now-typedT>2000) typed="";
-    typedT=now;
-    typed=(typed+e.key.toLowerCase()).slice(-8);
-    if(typed.endsWith("the end")||typed.endsWith("theend")){ typed=""; debugWarpToTerminal(); }
+    dbg8 = (now-dbg8T<1500)? dbg8+1 : 1; dbg8T=now;
+    if(dbg8>=3){ dbg8=0; debugWarpToTerminal(); }
   }
 });
 addEventListener("keyup",e=>KEYS[e.code]=false);

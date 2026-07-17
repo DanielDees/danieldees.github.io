@@ -22,6 +22,7 @@ export const STATE={
   libBlackout:0,                 // 0..1: a temporary whole-floor light failure
   libWakeT:-1,                   // intro cutscene: seconds since the fixtures began waking (-1 = all awake)
   shakeAmp:0,                    // slow micro screen-shake (post-drop ambience)
+  holeOpen:false,                // the librarian has dug the way down (final objective live)
 };
 export const KEYS={};
 export const monster={

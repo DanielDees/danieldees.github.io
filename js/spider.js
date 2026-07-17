@@ -77,7 +77,7 @@ export function makeSpider(){
       tibG.add(new THREE.Mesh(tibGeo,chitinD));
       g.add(hip);
       legs.push({hip, femG, basePhi:phi, phase:(i%2===0)===(side===0)? 0:Math.PI,
-                 front:i===0, fold:0});
+                 front:i===0, row:i, fold:0});
     }
   }
   g.userData={legs, eyeMat, abd, head, BODY_Y, scratchAnim:0, sniffAnim:0, abdTilt:0, animated:true};
@@ -972,6 +972,42 @@ export function spiderPose(dt,speed){
   u.eyeMat.emissive.setHex(0x8a1410);
   s.mesh.position.set(s.pos.x, Math.abs(Math.sin(s.anim*2))*0.07, s.pos.z);
   s.mesh.rotation.set(0,s.faceAng,0);     // clear any surface tilt before the scripted run
+}
+/* scripted digging: the terminal ending parks it over the dig spot and calls
+   this every frame. The front two leg pairs strike downward in a violent
+   flurry, the back pairs brace, the head stays buried in the work — and the
+   whole body rides `sink` metres below the floor as it digs itself under. */
+export function spiderDigPose(dt,sink=0){
+  const s=spider, u=s.mesh.userData;
+  const tNow=performance.now()/1000;
+  s.anim+=dt*3;
+  /* burrowing, not descending on a rope: as the pit deepens the whole body
+     pitches nose-first (to ~55°) and slides FORWARD into the dark — the
+     front goes under while the abdomen is still working the surface */
+  const dive=clamp(sink/1.6,0,1);
+  for(const leg of u.legs){
+    if(leg.row<2){
+      /* alternating downward strikes, fast and deep */
+      leg.hip.rotation.y=-leg.basePhi+Math.sin(tNow*22+leg.phase)*0.24;
+      leg.femG.rotation.z=0.95+Math.sin(tNow*26+leg.phase*2.3)*0.55;
+    } else {
+      /* braced low — scrambling harder the steeper it tips, shoving it down */
+      leg.hip.rotation.y=-leg.basePhi+Math.sin(tNow*(3+dive*15)+leg.phase)*(0.04+dive*0.16);
+      leg.femG.rotation.z=PITCH+0.14+dive*0.30;
+    }
+  }
+  u.sniffAnim=Math.min(1,u.sniffAnim+dt*3);      // head down into the work
+  u.head.position.y=-u.sniffAnim*0.55;
+  u.head.position.z=u.sniffAnim*0.25;
+  u.abd.rotation.x=0.22-dive*0.12;                // abdomen cocked up, throwing spoil
+  u.abd.position.y=(u.BODY_Y+0.12)+0.18;
+  u.eyeMat.emissive.setHex(0x8a1410);
+  const fwd=0.9*dive, pitch=0.16+dive*0.8;
+  s.mesh.position.set(s.pos.x+Math.sin(s.faceAng)*fwd,
+                      Math.abs(Math.sin(tNow*9))*0.05*(1-dive*0.6)-sink,
+                      s.pos.z+Math.cos(s.faceAng)*fwd);
+  s.mesh.rotation.order="YXZ";
+  s.mesh.rotation.set(pitch,s.faceAng,0);
 }
 /* ---- debug hooks (smoke tests): force the new surface transitions ---- */
 export function debugSpiderToWall(){

@@ -36,9 +36,13 @@ export function renderObjectives(){
     const total=STATE.discTotal||"?";
     const allFound=STATE.discTotal>0&&STATE.discsFound>=STATE.discTotal;
     const allFed=STATE.discTotal>0&&STATE.discsDelivered>=STATE.discTotal;
-    [[`Find the floppy disks (${STATE.discsFound}/${total})`, allFound, !allFound],
+    const rows=[
+     [`Find the floppy disks (${STATE.discsFound}/${total})`, allFound, !allFound],
      [`Feed them to the librarian's terminal (${STATE.discsDelivered}/${total})`, allFed, allFound&&!allFed||STATE.discsCarried>0],
-    ].forEach(([txt,done,active])=>{
+    ];
+    /* the dig only exists once it has happened — no spoilers in the log */
+    if(STATE.holeOpen) rows.push([`Enter the hole`, STATE.won, !STATE.won]);
+    rows.forEach(([txt,done,active])=>{
       const li=document.createElement("li");
       li.textContent=txt;
       li.className = done? "done" : active? "active" : "";

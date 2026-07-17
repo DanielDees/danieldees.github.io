@@ -20,8 +20,8 @@ import { updateLights } from "./lights.js";
 import { updateProps, interactables, exitDoor } from "./props.js";
 import { updateFocus } from "./interact.js";
 import { CINE, updateCinematic, startBreakerCine, startElevatorCine,
-         startTheEndIntro, startTerminalCine } from "./cutscene.js";
-import { updateLibrary, LIB, grid2 } from "./library.js";
+         startTheEndIntro, startTerminalCine, startDescentEnd } from "./cutscene.js";
+import { updateLibrary, LIB, grid2, revealHole } from "./library.js";
 import { enterTheEnd, debugSkipToTheEnd, debugWarpToTerminal, respawn } from "./lifecycle.js";
 import { ui, renderObjectives } from "./ui.js";
 import "./input.js";
@@ -44,6 +44,9 @@ function loop(now){
       updatePlayer(dt);
       if(STATE.level===1) updateSpider(dt); else updateMonster(dt);
       updateFocus();
+      /* THE END's stairs are real and yours to walk — the dark only takes
+         over a couple of turns down, once the fog has already won */
+      if(STATE.level===1&&STATE.holeOpen&&STATE.y<-8.5) startDescentEnd();
     }
     if(STATE.level===1) updateLibrary(dt);   // light drop, blackouts, old machines
     updateLights(dt,now/1000);
@@ -58,6 +61,7 @@ requestAnimationFrame(loop);
 /* console/debug handle (also used by automated smoke tests) */
 window.NOCLIP_DEBUG={STATE, monster, spider, CINE, scene, camera, renderer,
   startBreakerCine, startElevatorCine, startTheEndIntro, startTerminalCine,
+  startDescentEnd, revealHole,
   enterTheEnd, debugSkipToTheEnd, debugWarpToTerminal, respawn,
   debugSpiderToWall, debugSpiderToCeiling, spiderHearDisc, debugSpiderDiscTransit,
   get interactables(){ return interactables; },
