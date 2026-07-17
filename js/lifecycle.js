@@ -28,6 +28,7 @@ export function startGame(){
 export function enterTheEnd(){
   STATE.level=1;
   STATE.libT0=STATE.time;
+  STATE.holeOpen=false;
   clearLevelScene();
   clearInteractables();
   clearMonsterFx();
@@ -220,7 +221,7 @@ export function win(){
   const wT=$("winTitle"), wS=$("winSub");
   if(STATE.level===1){
     if(wT) wT.textContent="THE END";
-    if(wS) wS.textContent="THE TERMINAL HAS WHAT IT WANTED. THE LIBRARY LETS YOU GO.";
+    if(wS) wS.textContent="IT WARNED YOU. YOU WENT DOWN ANYWAY — TO BE CONTINUED.";
     $("winStats").innerHTML=
       `<div class="statrow"><span>TIME IN LEVEL 0</span><span>${fmt(STATE.libT0)}</span></div>`+
       `<div class="statrow"><span>TIME IN THE END</span><span>${fmt(STATE.time-STATE.libT0)}</span></div>`+

@@ -16,7 +16,7 @@
 import { rand, clamp, lerp, srand, hash } from "./utils.js";
 import { CELL } from "./map.js";
 import { STATE } from "./state.js";
-import { scene, lights, hemi, amb, makeLightRecord, markShared, mergeStatic, freezeStaticScene } from "./scene.js";
+import { scene, camera, renderer, lights, hemi, amb, makeLightRecord, markShared, mergeStatic, freezeStaticScene } from "./scene.js";
 import { makeCanvas, texLibWall, texLibCarpet, texLibCeil, texShelfWood, texDeskWood,
          makeCrackTexture, makeEndTextTexture, makePosterTexture, makeArtTexture,
          makeBookCoverTexture, BOOK_TITLES, BOOK_BASES,
@@ -43,6 +43,7 @@ export const LIB={
   pcAnims:[],                         // decor computers mid-boot
   blackActive:false, blackElapsed:0, blackDur:0, nextBlack:35,   // periodic light failures (staggered 2s wave)
   webs:[], webGroup:null,             // the spider's silk: live rappel strands + shrivelled coils left on the ceiling
+  hole:null,                          // the dug way down: {x,z,r,group,plug,lights,glow,stair} (see buildHole)
 };
 /* the stacks' shared dimensions: collision, the ladders and the disc sites
    all derive from these so a resize can never strand them again */
@@ -132,6 +133,39 @@ export function pushFromTables(px,pz,margin){
     }
   }
   return {x:nx,z:nz};
+}
+/* ---- the open hole: ground height & shaft containment (player physics) ----
+   Once the dig has happened the stair is a real walkable level component.
+   The spiral passes every bearing once per turn, so which lap you are on is
+   disambiguated by your own height — it never picks a tread overhead. */
+export function libGroundY(x,z,curY){
+  const h=LIB.hole;
+  if(!h||!STATE.holeOpen) return 0;
+  const dx=x-h.x, dz=z-h.z, r=Math.hypot(dx,dz);
+  if(r>=h.r-0.05) return 0;                       // carpet & the rim lip
+  const st=h.stair;
+  if(r<st.rc-0.72) return -999;                   // the open throat: nothing but the drop
+  const stepA=Math.PI*2/st.steps, stepH=st.rise/st.steps;
+  const a=Math.atan2(dz,dx);
+  /* the lap whose tread height sits nearest the feet */
+  const thTarget=st.a0+Math.PI*2*(-(curY+0.02)/st.rise);
+  let k=Math.round((thTarget-a)/(Math.PI*2));
+  for(let guard=0;guard<3;guard++){
+    const i=Math.floor((a+Math.PI*2*k-st.a0)/stepA);
+    if(i<0){ k++; continue; }                     // behind the entry seam: use the lap below
+    const y=-0.02-i*stepH;
+    if(y>curY+0.75){ k++; continue; }             // that lap is overhead — the next one down
+    return i>=st.n? -999 : y;                     // past the last tread the stair is long gone
+  }
+  return -999;
+}
+/* below floor level the shaft wall is the only wall there is */
+export function shaftClamp(x,z,py,pr){
+  const h=LIB.hole;
+  if(!h||!STATE.holeOpen||py>-0.05) return null;
+  const dx=x-h.x, dz=z-h.z, r=Math.hypot(dx,dz), max=h.r-pr+0.05;
+  if(r<=max||r<1e-4) return null;
+  return {x:h.x+dx/r*max, z:h.z+dz/r*max};
 }
 /* spider pathfinding: best-effort BFS — an unreachable target (say, the
    player under a table) routes to the closest cell it CAN stand in, so the
@@ -957,6 +991,17 @@ export function makeVintagePC(scale=1){
       ctx.fillStyle="rgba(120,128,126,0.05)";       // the faintest burn-in ghost
       ctx.font="bold 30px Courier New"; ctx.textAlign="center"; ctx.textBaseline="middle";
       ctx.fillText("THE END",96,72); tex.needsUpdate=true; },
+    warn(alpha=1){ /* the machine's last words, burning red */
+      ctx.fillStyle="#0a0202"; ctx.fillRect(0,0,192,144);
+      const gr=ctx.createRadialGradient(96,72,8,96,72,112);
+      gr.addColorStop(0,`rgba(140,14,8,${0.55*alpha})`);
+      gr.addColorStop(1,"rgba(30,3,2,0)");
+      ctx.fillStyle=gr; ctx.fillRect(0,0,192,144);
+      ctx.fillStyle=`rgba(255,58,38,${alpha})`;
+      ctx.font="bold 21px Courier New"; ctx.textAlign="center"; ctx.textBaseline="middle";
+      ctx.fillText("I WARNED YOU",96,72);
+      ctx.fillStyle=`rgba(255,58,38,${alpha*0.28})`; ctx.fillText("I WARNED YOU",96,72); // bloom
+      tex.needsUpdate=true; },
   };
   screen.off();
   const scrMat=new THREE.MeshBasicMaterial({map:tex});
@@ -1034,9 +1079,141 @@ function makeFixture(wx,wz,alongZ,fy=3.78){     // base layer hung +20% higher (
   return {group:g, glowMat, tubeMat, fixY:FY-0.35};
 }
 
+/* ---------------- the way down ----------------
+   A round shaft behind the desk with a stone spiral stair winding down its
+   wall and a blue glow/fog swallowing the depth: you can read 2–3 turns of
+   stair before the light gives out. Built with the level and kept invisible
+   under the carpet plug; the terminal ending's dig reveals it. */
+const HOLE_R=2.7, HOLE_DEPTH=22;
+const STAIR_RISE=4.48, STAIR_STEPS=16;           // rise per revolution / steps per revolution
+function buildHole(hc,carpetMat){
+  const SZ=LW*CELL;
+  /* packed earth & old stone — local to the shaft, nothing above ever uses it */
+  const texStone=makeCanvas(128,128,(g,w,h)=>{
+    g.fillStyle="#242019"; g.fillRect(0,0,w,h);
+    for(let i=0;i<900;i++){
+      const v=18+Math.random()*30;
+      g.fillStyle=`rgba(${v+10|0},${v+5|0},${v|0},${0.25+Math.random()*0.4})`;
+      g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*3,1+Math.random()*2);
+    }
+    for(let i=0;i<22;i++){                       // strata seams
+      g.strokeStyle=`rgba(8,7,5,${0.2+Math.random()*0.3})`; g.lineWidth=1;
+      const y=Math.random()*h; g.beginPath(); g.moveTo(0,y);
+      for(let x=0;x<=w;x+=8) g.lineTo(x,y+Math.sin(x*0.2+i)*2+Math.random()*2);
+      g.stroke();
+    }
+  });
+  texStone.wrapS=texStone.wrapT=THREE.RepeatWrapping;
+  const g=new THREE.Group();
+  g.visible=false;
+  /* shaft wall, seen from inside; slightly belled so the depths read wider */
+  const shaftTex=texStone.clone(); shaftTex.needsUpdate=true; shaftTex.repeat.set(6,4);
+  const shaftMat=new THREE.MeshPhongMaterial({map:shaftTex, specular:0x0a0c10, shininess:6,
+    emissive:0x04070a, side:THREE.BackSide});
+  const shaft=new THREE.Mesh(
+    new THREE.CylinderGeometry(HOLE_R+0.05,HOLE_R+0.4,HOLE_DEPTH,40,1,true),shaftMat);
+  shaft.position.set(hc.x,-HOLE_DEPTH/2,hc.z); g.add(shaft);
+  /* the stair: chunky stone treads hugging the wall, one merged mesh.
+     Entry tread on the south rim (the desk side — where you arrive from). */
+  const stepMat=new THREE.MeshPhongMaterial({map:texStone, color:0xbcc8d2,
+    emissive:0x0c141b, specular:0x141a22, shininess:12});
+  const stair={a0:Math.PI/2, dir:1, rc:HOLE_R-0.62, rise:STAIR_RISE, steps:STAIR_STEPS,
+               n:Math.round(4.5*STAIR_STEPS)};
+  {
+    const stepGeo=new THREE.BoxGeometry(1.3,0.24,1.05);
+    const steps=[];
+    const n=stair.n;                             // ~4½ turns; the glow takes the rest
+    for(let i=0;i<n;i++){
+      const th=stair.a0+stair.dir*i*(Math.PI*2/STAIR_STEPS);
+      const m=new THREE.Mesh(stepGeo,stepMat);
+      m.position.set(hc.x+Math.cos(th)*stair.rc, -0.14-i*(STAIR_RISE/STAIR_STEPS),
+                     hc.z+Math.sin(th)*stair.rc);
+      m.rotation.y=-th;                          // tread runs tangentially
+      steps.push(m);
+    }
+    g.add(mergeStatic(steps,stepMat));
+    stepGeo.dispose();
+  }
+  /* the blue glow/fog: stacked translucent discs, denser with depth — from
+     above they composite into a luminous murk that swallows the stair */
+  const glow=[];
+  [[-2.5,0.05],[-5,0.10],[-7.5,0.17],[-10,0.28],[-13,0.46],[-16,0.68],[-19,0.9]]
+  .forEach(([y,op],i,arr)=>{
+    const c=new THREE.Color(0x2b4c66).lerp(new THREE.Color(0x63ccff),i/(arr.length-1));
+    const m=new THREE.MeshBasicMaterial({color:c, transparent:true, opacity:op,
+      depthWrite:false, side:THREE.DoubleSide});
+    const d=new THREE.Mesh(new THREE.CircleGeometry(HOLE_R+0.04,36),m);
+    d.rotation.x=-Math.PI/2; d.position.set(hc.x,y,hc.z);
+    glow.push({mat:m, baseOp:op}); g.add(d);
+  });
+  const cap=new THREE.Mesh(new THREE.CircleGeometry(HOLE_R+0.45,40),
+    new THREE.MeshBasicMaterial({color:0x0c2836}));
+  cap.rotation.x=-Math.PI/2; cap.position.set(hc.x,-HOLE_DEPTH+0.1,hc.z); g.add(cap);
+  /* the rim: a ring of disturbed earth and flung dirt breaking the carpet edge */
+  const dirtMat=new THREE.MeshPhongMaterial({map:texStone, color:0x9a7c56,
+    specular:0x0c0a08, shininess:4});
+  const ring=new THREE.Mesh(new THREE.RingGeometry(HOLE_R-0.02,HOLE_R+0.95,40),dirtMat);
+  ring.rotation.x=-Math.PI/2; ring.position.set(hc.x,0.02,hc.z); g.add(ring);
+  {
+    const moundGeo=new THREE.SphereGeometry(1,7,5);
+    const mounds=[];
+    for(let i=0;i<14;i++){
+      const a=i/14*Math.PI*2+rand(-0.25,0.25), rr=HOLE_R+rand(0.25,1.05);
+      const m=new THREE.Mesh(moundGeo,dirtMat);
+      const s=rand(0.16,0.42);
+      m.scale.set(s,s*rand(0.32,0.5),s*rand(0.8,1.3));
+      m.position.set(hc.x+Math.cos(a)*rr, 0.02, hc.z+Math.sin(a)*rr);
+      m.rotation.y=rand(0,Math.PI*2);
+      mounds.push(m);
+    }
+    g.add(mergeStatic(mounds,dirtMat));
+    moundGeo.dispose();
+  }
+  /* the glow leaks: lights in the throat and one washing up over the rim.
+     They live OUTSIDE the hidden group, in the scene and awake-but-dark from
+     the first frame: revealing the hole must never change the scene's light
+     count, because that forces three.js to recompile every shader program at
+     once — a hard mid-cutscene hitch right as the dust began to clear. The
+     reveal cutscene breathes their intensity up from 0. */
+  const holeLights=[];
+  [[1.6,0.55,9],[-2.6,1.35,11],[-8.5,1.2,12],[-14,0.9,12]].forEach(([y,I,dist])=>{
+    const l=new THREE.PointLight(0x54bcf2,0,dist,1.7);
+    l.position.set(hc.x,y,hc.z); scene.add(l);
+    holeLights.push({l,I});
+  });
+  /* a dormant sprite keeps the dig dust's shader program in the pre-warmed
+     set (the FX pool is created mid-cutscene, too late to compile cheaply) */
+  const spr=new THREE.Sprite(new THREE.SpriteMaterial({map:texStone, transparent:true, opacity:0}));
+  spr.scale.set(0.001,0.001,1); spr.position.set(hc.x,-2,hc.z); g.add(spr);
+  renderer.initTexture(texStone); renderer.initTexture(shaftTex);
+  scene.add(g);
+  /* the plug: a carpet-matched disc hiding all of it until the dig */
+  const plugGeo=new THREE.CircleGeometry(HOLE_R+0.14,44);
+  {
+    const uv=plugGeo.attributes.uv, ps=plugGeo.attributes.position;
+    for(let i=0;i<uv.count;i++)
+      uv.setXY(i,(hc.x+ps.getX(i)+SZ/2)/SZ,(SZ/2-hc.z+ps.getY(i))/SZ);
+  }
+  const plug=new THREE.Mesh(plugGeo,carpetMat);
+  plug.rotation.x=-Math.PI/2; plug.position.set(hc.x,0.006,hc.z);
+  scene.add(plug);
+  LIB.hole={x:hc.x, z:hc.z, r:HOLE_R, depth:HOLE_DEPTH, group:g, plug, lights:holeLights, glow, stair};
+}
+/* the dig breaks through: swap the carpet plug for the open shaft. The
+   cutscene calls this at peak dust, so the pop is never seen; it also owns
+   ramping LIB.hole.lights[].l.intensity up to their .I targets. */
+export function revealHole(){
+  const h=LIB.hole;
+  if(!h||STATE.holeOpen) return;
+  STATE.holeOpen=true;
+  h.group.visible=true;
+  if(h.plug){ scene.remove(h.plug); h.plug.geometry.dispose(); h.plug=null; }
+}
+
 /* ---------------- build ---------------- */
 export function buildLibrary(){
   ensureBooks();                       // the design pool, built on first visit
+  LIB.hole=null;
   LIB.obstacles=[]; LIB.pcAnims=[]; LIB.blackActive=false; LIB.blackElapsed=0; LIB.nextBlack=35;
   LIB.webs=[]; LIB.webGroup=new THREE.Group(); LIB.webGroup.userData.animated=true;   // strands spawn/reskin at runtime
   scene.add(LIB.webGroup);
@@ -1046,11 +1223,29 @@ export function buildLibrary(){
      just enough that the dark spider reads as a silhouette against them */
   const libWallMat=new THREE.MeshPhongMaterial({map:texLibWall, specular:0x0c0b09, shininess:5,
     emissive:0x010101});
-  /* floor & high ceiling */
+  /* floor & high ceiling. The carpet is cast with a circular hole already cut
+     two cells behind the desk (the protected clearing keeps those cells open)
+     — the librarian's way down. A carpet plug covers it seamlessly until the
+     terminal ending digs it open (revealHole). */
   texLibCarpet.repeat.set(LW,LH);
-  const floor=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),
-    new THREE.MeshPhongMaterial({map:texLibCarpet, specular:0x000000, shininess:1}));
-  floor.rotation.x=-Math.PI/2; scene.add(floor);
+  const carpetMat=new THREE.MeshPhongMaterial({map:texLibCarpet, specular:0x000000, shininess:1});
+  const holeC=cellToWorld2(cx0,cy0-2);
+  {
+    const shape=new THREE.Shape();
+    shape.moveTo(-SZ/2,-SZ/2); shape.lineTo(SZ/2,-SZ/2);
+    shape.lineTo(SZ/2,SZ/2);   shape.lineTo(-SZ/2,SZ/2);
+    const hp=new THREE.Path();
+    hp.absarc(holeC.x,-holeC.z,HOLE_R,0,Math.PI*2,true);   // shape y = −world z (the −π/2 roll)
+    shape.holes.push(hp);
+    const fg=new THREE.ShapeGeometry(shape,48);
+    /* remap UVs to the mapping a full SZ×SZ plane had, so the plug and the
+       surrounding carpet tile as one uninterrupted surface */
+    const uv=fg.attributes.uv, ps=fg.attributes.position;
+    for(let i=0;i<uv.count;i++) uv.setXY(i,(ps.getX(i)+SZ/2)/SZ,(ps.getY(i)+SZ/2)/SZ);
+    const floor=new THREE.Mesh(fg,carpetMat);
+    floor.rotation.x=-Math.PI/2; scene.add(floor);
+  }
+  buildHole(holeC,carpetMat);
   texLibCeil.repeat.set(LW/2,LH/2);
   const ceilMat=new THREE.MeshPhongMaterial({map:texLibCeil, specular:0x000000, shininess:1, emissive:0x020100});
   ceilMat.emissive.setRGB(1.25/255, 1.0/255, 0.75/255);  // hue nudged 75% from warm 0x020100 toward the neutral wall backlight (0x010101)
@@ -1109,8 +1304,10 @@ export function buildLibrary(){
   /* shelf runs */
   for(const run of LIB.runs) scene.add(makeShelfRun(run));
   /* free-standing prop spacing: nothing may spawn touching (or inside)
-     anything already placed — a clear hand-span between colliders */
-  const clearOf=(x,z,r)=>LIB.obstacles.every(o=>Math.hypot(x-o.x,z-o.z)>=o.r+r+0.25);
+     anything already placed — a clear hand-span between colliders. The dig
+     zone stays bare too: nothing may sit over (or lean into) the hidden hole. */
+  const clearOf=(x,z,r)=>Math.hypot(x-holeC.x,z-holeC.z)>=HOLE_R+r+0.7 &&
+    LIB.obstacles.every(o=>Math.hypot(x-o.x,z-o.z)>=o.r+r+0.25);
   /* tables + chairs + the occasional vintage machine */
   const pcTables=new Set();
   while(pcTables.size<Math.min(8,tables.length)) pcTables.add(Math.floor(srand()*tables.length));
@@ -1374,6 +1571,12 @@ export function buildLibrary(){
      fixtures, merged walls). The spider is added after this returns; the discs
      and the elevator are tagged animated, so the sweep skips them. */
   freezeStaticScene();
+  /* pre-warm every shader program and texture — the hidden hole's included —
+     while the level is still behind the intro's black. First-use compilation
+     at reveal time was a visible frame stall in the ending cutscene. */
+  LIB.hole.group.visible=true;
+  renderer.compile(scene,camera);
+  LIB.hole.group.visible=false;
 }
 
 /* ---------------- per-frame level logic ---------------- */
@@ -1430,6 +1633,7 @@ export function severWeb(rec){
   rec.finalLen=rec.fullLen*rand(0.4,0.7);
 }
 
+const FOG_LIB=new THREE.Color(0x030404), FOG_HOLE=new THREE.Color(0x11303f);
 export function updateLibrary(dt){
   /* the intro's wake-up wave clock */
   if(STATE.libWakeT>=0){
@@ -1489,6 +1693,19 @@ export function updateLibrary(dt){
     }
   }
   LIB.pcAnims=LIB.pcAnims.filter(a=>a.phase!=="dead");
+  /* the open hole breathes: its glow discs swell and settle, out of phase */
+  if(STATE.holeOpen&&LIB.hole){
+    const tN=performance.now()/1000;
+    LIB.hole.glow.forEach((gl,i)=>{ gl.mat.opacity=gl.baseOp*(1+0.10*Math.sin(tN*0.7+i*1.7)); });
+    /* the shaft's own weather: the deeper you walk the stairs, the bluer and
+       denser the fog — a couple of turns down the world is nearly gone.
+       Pure function of depth, so climbing back up restores the library. */
+    const sink=clamp(-STATE.y/8,0,1);
+    scene.fog.color.copy(FOG_LIB).lerp(FOG_HOLE,sink);
+    if(scene.background&&scene.background.isColor) scene.background.copy(scene.fog.color);
+    scene.fog.near=lerp(10,2,sink);
+    scene.fog.far=lerp(190,18,sink);
+  }
   /* silk: live strands track the spider; severed ones shrivel once, then rest */
   for(const rec of LIB.webs){
     if(rec.live){

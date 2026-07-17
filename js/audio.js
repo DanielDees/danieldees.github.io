@@ -844,6 +844,52 @@ export function sfxComputerStatic(dur=2,vol=1){
   src.connect(hp);hp.connect(g);g.connect(AU.sfx);src.start(t);
 }
 
+/* ---- the ending: the librarian digs the way down ---- */
+/* one burst of digging: rapid claw scrabble through carpet into packed earth
+   — a flurry of mid strokes, a fibrous rip, and the soft thud of flung soil */
+export function sfxSpiderDig(vol=1,pan=0){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  const n=4+Math.floor(Math.random()*3);
+  for(let i=0;i<n;i++)
+    pannedNoise(t+i*rand(0.05,0.11),rand(0.06,0.12),"bandpass",rand(650,1250),3,
+      vol*rand(0.22,0.4),pan,0.004);
+  if(Math.random()<0.6)                          // carpet fibres tearing
+    pannedNoise(t+rand(0,0.15),rand(0.12,0.2),"highpass",rand(1800,2600),1,vol*0.14,pan,0.01);
+  if(Math.random()<0.55)                         // a pawful of earth landing
+    pannedNoise(t+rand(0.12,0.3),0.11,"lowpass",230,1,vol*0.3,pan,0.015);
+}
+/* the floor letting go under the dust: a deep rolling collapse */
+export function sfxHoleRumble(dur=3.2){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  const len=Math.floor(C.sampleRate*dur), buf=C.createBuffer(1,len,C.sampleRate);
+  const d=buf.getChannelData(0);
+  let v=0;
+  for(let i=0;i<len;i++){ v=(v+(Math.random()*2-1)*0.05)*0.982; d[i]=v*6*(1-i/len); }
+  const src=C.createBufferSource(); src.buffer=buf;
+  const lp=C.createBiquadFilter(); lp.type="lowpass"; lp.frequency.value=110;
+  const g=C.createGain(); env(g,t,dur*0.25,0.5,dur*0.75);
+  src.connect(lp); lp.connect(g); g.connect(AU.sfx); src.start(t);
+  const o=C.createOscillator(); o.type="sine"; o.frequency.setValueAtTime(42,t);
+  o.frequency.exponentialRampToValueAtTime(26,t+dur);
+  const g2=C.createGain(); env(g2,t,dur*0.2,0.3,dur*0.8);
+  o.connect(g2); g2.connect(AU.sfx); o.start(t); o.stop(t+dur+0.3);
+}
+/* one footfall on old stone, wrapped in the stairwell's echo: a dry tap and
+   knock, answered twice from below at a fading delay */
+export function sfxStoneStep(vol=1){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  [[0,1,0],[0.11,0.4,-0.35],[0.26,0.16,0.3]].forEach(([at,v,pan])=>{
+    pannedNoise(t+at,0.03,"bandpass",rand(1100,1600),1.8,vol*0.16*v,pan,0.002);
+    const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(128,t+at);
+    o.frequency.exponentialRampToValueAtTime(66,t+at+0.09);
+    const g=C.createGain();env(g,t+at,0.003,vol*0.14*v,0.16);
+    const p=C.createStereoPanner?C.createStereoPanner():null;
+    o.connect(g);
+    if(p){p.pan.value=pan;g.connect(p);p.connect(AU.sfx);}else g.connect(AU.sfx);
+    o.start(t+at);o.stop(t+at+0.3);
+  });
+}
+
 export function sfxKnock(vol,raps,pan=0){
   /* knuckles on wood/drywall: two fast-decaying mid partials + a sharp tap,
      rather than a bassy thump */
