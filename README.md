@@ -99,8 +99,13 @@ track by ear.
 - **The look.** Bump-mapped strata rock; a corner-shared faceted vault instead of a
   flat ceiling (chambers slope into their tunnel mouths, tunnels pinch into the
   squeezes); wet glossy dripstone grown in floor/ceiling pairs plus soda-straw
-  stalactites, merged to single draws; shelf-bracket fungus with emissive shading,
-  additive glow halos and living veins; a drifting caustic skin on the stream;
+  stalactites, merged to single draws; a real fungus ecosystem — lathe-built
+  mushrooms skinned by a procedural atlas (glowing gill undersides, banded conk
+  tops, pore-speckled bulbs) in location-driven varieties: shelf conks climbing
+  the chamber walls, toadstool families on the floors, green coral fingers on
+  the stream banks, pale puffballs in the scree, all blushing violet near the
+  brood chambers — plus additive glow halos and living veins; a drifting
+  caustic skin on the stream;
   layered cold haze in the chasm; nest-glow pooled under the clutches that turns
   fire-orange as they burn.
 - New intro and ending cinematics; new death/win copy; level-2 objectives HUD +

@@ -18,7 +18,8 @@ import { CELL } from "./map.js";
 import { STATE } from "./state.js";
 import { scene, camera, renderer, lights, makeLightRecord, markShared,
          mergeStatic, freezeStaticScene } from "./scene.js";
-import { makeCanvas, texCaveRock, texCaveFloor, makeWebTexture, makeFungusTexture, scaleBoxUV } from "./textures.js";
+import { makeCanvas, texCaveRock, texCaveFloor, makeWebTexture, makeFungusTexture,
+         makeFungusSkin, scaleBoxUV } from "./textures.js";
 import { addInteractable } from "./props.js";
 import { die } from "./lifecycle.js";
 import { renderObjectives, toast } from "./ui.js";
@@ -439,6 +440,67 @@ const webMats=webTexes.map(t=>new THREE.MeshBasicMaterial({map:t, transparent:tr
 webTexes.forEach(t=>markShared(t)); webMats.forEach(m=>markShared(m));
 const fungusTexes=[makeFungusTexture(),makeFungusTexture(),makeFungusTexture()];
 fungusTexes.forEach(t=>markShared(t));
+/* the mushroom skin atlas (diffuse + emissive) shared by every colony */
+const FSKIN=makeFungusSkin();
+markShared(FSKIN.map,FSKIN.emit);
+
+/* ---------------- fungus geometry: real mushrooms, lathe-built ----------------
+   Every variety is a LatheGeometry whose profile points are hand-mapped into
+   the skin atlas strips (stem fibers / glowing gills / banded cap / speckled
+   bulb), so caps read as caps and undersides actually radiate. All meshes of
+   a colony merge into ONE draw on the colony's Phong material — the glow is
+   emissive (lights.js cold branch drives it), so shapes keep their shading. */
+const F_STEM=[0.05,0.21], F_GILL=[0.30,0.46], F_CAP=[0.55,0.71], F_BULB=[0.79,0.96];
+const fv=(s,f)=>s[0]+(s[1]-s[0])*f;
+function latheFungus(P,B,segs){
+  const g=new THREE.LatheGeometry(P.map(p=>new THREE.Vector2(p[0],p[1])),segs);
+  const uv=g.attributes.uv, N=P.length;
+  for(let i=0;i<uv.count;i++) uv.setY(i, B[Math.round(uv.getY(i)*(N-1))]);
+  return g;
+}
+/* a classic toadstool: flared stem, radiating gill underside, domed cap */
+function toadstoolGeo(rc,rs,hs,ch){
+  const P=[],B=[];
+  P.push([rs*1.4,0]);            B.push(fv(F_STEM,0.02));
+  P.push([rs*1.05,hs*0.3]);      B.push(fv(F_STEM,0.35));
+  P.push([rs*0.92,hs*0.8]);      B.push(fv(F_STEM,0.75));
+  P.push([rs,hs]);               B.push(fv(F_STEM,0.98));
+  P.push([rs*1.15,hs+0.004]);    B.push(fv(F_GILL,0.03));
+  P.push([rc*0.6,hs+0.012]);     B.push(fv(F_GILL,0.5));
+  P.push([rc*0.98,hs+0.03]);     B.push(fv(F_GILL,0.97));
+  P.push([rc,hs+0.05]);          B.push(fv(F_CAP,0.02));
+  P.push([rc*0.88,hs+ch*0.5]);   B.push(fv(F_CAP,0.38));
+  P.push([rc*0.55,hs+ch*0.85]);  B.push(fv(F_CAP,0.7));
+  P.push([rc*0.2,hs+ch]);        B.push(fv(F_CAP,0.9));
+  P.push([0.001,hs+ch*1.02]);    B.push(fv(F_CAP,1));
+  return latheFungus(P,B,9);
+}
+/* a shelf conk: stemless cap, half of it buried in the rock face */
+function conkGeo(rc){
+  const P=[],B=[];
+  P.push([0.02,0.0]);            B.push(fv(F_GILL,0.02));
+  P.push([rc*0.55,0.008]);       B.push(fv(F_GILL,0.5));
+  P.push([rc*0.97,0.03]);        B.push(fv(F_GILL,0.96));
+  P.push([rc,0.06]);             B.push(fv(F_CAP,0.02));
+  P.push([rc*0.9,rc*0.24]);      B.push(fv(F_CAP,0.35));
+  P.push([rc*0.55,rc*0.38]);     B.push(fv(F_CAP,0.7));
+  P.push([rc*0.2,rc*0.44]);      B.push(fv(F_CAP,0.9));
+  P.push([0.001,rc*0.46]);       B.push(fv(F_CAP,1));
+  return latheFungus(P,B,10);
+}
+/* one coral finger: a tapered spindle, tip mapped to the bright bulb crown */
+function fingerGeo(r,hgt){
+  const P=[[r,0],[r*0.9,hgt*0.35],[r*0.68,hgt*0.65],[r*0.38,hgt*0.86],[0.001,hgt]];
+  const B=[fv(F_BULB,0.03),fv(F_BULB,0.3),fv(F_BULB,0.6),fv(F_BULB,0.85),fv(F_BULB,1)];
+  return latheFungus(P,B,7);
+}
+/* a puffball: squashed sphere remapped into the pore-speckled bulb strip */
+function puffGeo(r){
+  const g=new THREE.SphereGeometry(r,8,7);
+  const uv=g.attributes.uv;
+  for(let i=0;i<uv.count;i++) uv.setY(i, fv(F_BULB, uv.getY(i)*0.85+0.05));
+  return g;
+}
 
 /* one quad accumulator (positions/uv/normals) merged into a single mesh */
 class QuadAcc{
@@ -828,7 +890,12 @@ export function buildCave(){
       for(const m of cocoons) m.geometry.dispose();
     }
   }
-  /* ---- fungus: the level's light grid (cold records; silent; no buzz) ---- */
+  /* ---- fungus: the level's light grid (cold records; silent; no buzz) ----
+     Real mushrooms now, in location-driven varieties: shelf CONKS climb the
+     chamber walls, TOADSTOOL families crowd the floors, green coral FINGERS
+     line the stream banks, pale PUFFBALLS dot the scree — and every colony
+     blushes violet as it nears a brood chamber. One light record + one
+     merged mesh + halo + vein per colony (3 draws, same as the old blobs). */
   {
     const streamNear=(x,y)=>{
       for(let yy=y-2;yy<=y+2;yy++)for(let xx=x-2;xx<=x+2;xx++)
@@ -836,97 +903,184 @@ export function buildCave(){
       return false;
     };
     let placedCells=new Set();
-    const tryFungus=(x,y,bright)=>{
+    /* per-variety glow: e drives the emissive tint (lights.js cold branch),
+       pool colors the bound point light, halo colors the additive bloom.
+       e runs >1 because the emissive MAP averages well under white. */
+    const TINTS={
+      conk:  {e:[0.42,1.30,1.50], halo:0x58c8e6, pool:[0.36,0.86,1.00]},
+      shroom:{e:[0.40,1.45,1.25], halo:0x54dcc4, pool:[0.34,0.95,0.85]},
+      finger:{e:[0.45,1.50,1.00], halo:0x5ee6a8, pool:[0.36,1.00,0.70]},
+      puff:  {e:[0.70,1.25,1.50], halo:0x86c8f0, pool:[0.50,0.85,1.00]},
+    };
+    const VIOLET={e:[1.05,0.85,1.65], halo:0x8d8af0, pool:[0.62,0.60,1.00]};
+    const tryFungus=(x,y,bright,kind)=>{
       if(placedCells.has(K(x,y))) return;
       let faces=[];
-      for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]])
-        if(codeAt(x+dx,y+dy)===1) faces.push([dx,dy]);
-      /* mid-chamber cells have no wall to grow on: slide to the nearest
-         cell that does (the "dependable" spawn/stream clusters relied on
-         this and used to fail silently) */
-      if(!faces.length){
+      for(const[dx0,dy0]of[[1,0],[-1,0],[0,1],[0,-1]])
+        if(codeAt(x+dx0,y+dy0)===1) faces.push([dx0,dy0]);
+      /* conks need a wall: slide to the nearest cell that has one (the
+         "dependable" spawn clusters rely on this), else become a floor family */
+      if(kind==="conk"&&!faces.length){
         outer:
         for(let r=1;r<=3;r++)for(let oy=-r;oy<=r;oy++)for(let ox=-r;ox<=r;ox++){
           const nx=x+ox, ny=y+oy;
           if(!inB(nx,ny)||grid3[ny][nx]===1||grid3[ny][nx]===5||placedCells.has(K(nx,ny))) continue;
-          for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]])
-            if(codeAt(nx+dx,ny+dy)===1){ x=nx; y=ny; faces.push([dx,dy]); }
+          for(const[dx0,dy0]of[[1,0],[-1,0],[0,1],[0,-1]])
+            if(codeAt(nx+dx0,ny+dy0)===1){ x=nx; y=ny; faces.push([dx0,dy0]); }
           if(faces.length) break outer;
         }
-        if(!faces.length) return;
+        if(!faces.length) kind="shroom";
       }
-      const [dx,dy]=faces[Math.floor(srand()*faces.length)];
+      if(kind!=="conk"&&grid3[y][x]===3) return;   // nothing sprouts mid-stream
       const p=cellToWorld3(x,y);
+      /* brood proximity first: the tint needs it */
+      let region=-1, best=1e9;
+      broods.forEach((b,i)=>{ const d=Math.hypot(x-b.cx,y-b.cy); if(d<best){best=d;region=i;} });
+      const vk=clamp(1-best/5,0,1)*0.85;
+      const T=TINTS[kind];
+      const mix=(a,b)=>[lerp(a[0],b[0],vk),lerp(a[1],b[1],vk),lerp(a[2],b[2],vk)];
+      const eTint=mix(T.e,VIOLET.e), poolCol=mix(T.pool,VIOLET.pool);
+      const haloCol=new THREE.Color(T.halo).lerp(new THREE.Color(VIOLET.halo),vk);
       const g=new THREE.Group();
-      /* Phong, not Basic: the glow is EMISSIVE (lights.js cold branch drives
-         it), so the brackets keep shading and rim — dimensional, not flat */
-      const glowMat=new THREE.MeshPhongMaterial({color:0x0e2226, emissive:0x081418,
-        specular:0x16383e, shininess:38});
-      const hh=rand(0.6,Math.min(2.6,ceilH[y][x]-0.6));
-      const bx=p.x+dx*(E-0.10), bz=p.z+dy*(E-0.10);
-      const faceRot = dx? (dx>0?-Math.PI/2:Math.PI/2) : (dy>0?Math.PI:0);
-      /* shelf-fungus: bracket runs climbing the rock, caps shrinking as they
-         go — merged to a single draw per fixture */
-      const caps=[];
-      const runs=1+(srand()<0.6?1:0);
-      for(let rI=0;rI<runs;rI++){
-        const off=(srand()-0.5)*1.7;                      // slide along the wall
-        const cx2=bx+(dy!==0?off:0), cz2=bz+(dx!==0?off:0);
-        const y0=Math.max(0.35,hh+rand(-0.6,0.2));
-        const nCaps=3+Math.floor(srand()*3);
-        for(let i=0;i<nCaps;i++){
-          const r=rand(0.11,0.22)*(1-0.4*i/nCaps);
-          const cap=new THREE.Mesh(new THREE.SphereGeometry(r,8,6));
-          cap.scale.set(1.35,0.42,0.65);                  // wide, shallow bracket
-          cap.rotation.y=faceRot;
-          cap.position.set(cx2+(dy!==0?rand(-0.1,0.1):0)-dx*rand(0,0.05),
-                           y0+i*rand(0.15,0.26),
-                           cz2+(dx!==0?rand(-0.1,0.1):0)-dy*rand(0,0.05));
-          caps.push(cap);
+      /* Phong + the skin atlas: diffuse gives mushroom flesh under the
+         lantern, emissiveMap gives gill-lines/rims/pores their own glow
+         while lights.js drives the emissive COLOR (so shapes keep shading) */
+      const glowMat=new THREE.MeshPhongMaterial({color:0xc9d2cf, map:FSKIN.map,
+        emissive:0x081418, emissiveMap:FSKIN.emit, specular:0x2a4a50, shininess:30});
+      const parts=[];
+      let ax=p.x, az=p.z, hh=0.55, fdx=0, fdy=0, faceRot=0, onWall=false;
+      if(kind==="conk"){
+        const [dx,dy]=faces[Math.floor(srand()*faces.length)];
+        fdx=dx; fdy=dy; onWall=true;
+        hh=rand(0.6,Math.min(2.6,ceilH[y][x]-0.6));
+        const bx=p.x+dx*(E-0.10), bz=p.z+dy*(E-0.10);
+        faceRot = dx? (dx>0?-Math.PI/2:Math.PI/2) : (dy>0?Math.PI:0);
+        ax=bx; az=bz;
+        /* 1-2 shelf runs climbing the rock face, conks shrinking as they go */
+        const runs=1+(srand()<0.6?1:0);
+        for(let rI=0;rI<runs;rI++){
+          const off=(srand()-0.5)*1.7;                    // slide along the wall
+          const cx2=bx+(dy!==0?off:0), cz2=bz+(dx!==0?off:0);
+          let yy=Math.max(0.35,hh-rand(0.3,0.8));
+          const n=3+Math.floor(srand()*3);
+          for(let i=0;i<n;i++){
+            if(yy>ceilH[y][x]-0.35) break;
+            const rc=rand(0.16,0.3)*(1-0.4*i/n);
+            const m=new THREE.Mesh(conkGeo(rc));
+            /* half-buried in the face: only the shelf protrudes */
+            m.position.set(cx2+dx*rand(0.02,0.16)+(dy!==0?rand(-0.12,0.12):0),
+                           yy,
+                           cz2+dy*rand(0.02,0.16)+(dx!==0?rand(-0.12,0.12):0));
+            m.rotation.set(rand(-0.14,0.14),Math.random()*Math.PI*2,rand(-0.14,0.14));
+            m.scale.y=rand(0.6,0.85);
+            parts.push(m);
+            yy+=rc*rand(0.9,1.6)+0.08;
+          }
         }
+        /* juveniles sprouting from the floor at the wall's foot */
+        const nb=1+Math.floor(srand()*3);
+        for(let i=0;i<nb;i++){
+          const rc=rand(0.05,0.1);
+          const m=new THREE.Mesh(toadstoolGeo(rc,rc*0.32,rand(0.05,0.14),rc*rand(0.6,1)));
+          m.position.set(bx-dx*rand(0.25,0.7)+(dy!==0?rand(-0.5,0.5):0), 0,
+                         bz-dy*rand(0.25,0.7)+(dx!==0?rand(-0.5,0.5):0));
+          m.rotation.y=Math.random()*Math.PI*2;
+          parts.push(m);
+        }
+      } else if(kind==="shroom"){
+        /* a toadstool family: one or two elders ringed by juveniles */
+        const nBig=1+(srand()<0.35?1:0), nSmall=3+Math.floor(srand()*4);
+        for(let i=0;i<nBig+nSmall;i++){
+          const big=i<nBig;
+          const rc=big?rand(0.15,0.28):rand(0.05,0.12);
+          const hs=big?rand(0.2,0.42):rand(0.07,0.18);
+          const m=new THREE.Mesh(toadstoolGeo(rc,rc*rand(0.24,0.36),hs,rc*rand(0.55,1.35)));
+          const a=Math.random()*Math.PI*2, rr=big?Math.random()*0.35:0.3+Math.random()*0.75;
+          m.position.set(p.x+Math.cos(a)*rr,0,p.z+Math.sin(a)*rr);
+          m.rotation.set(rand(-0.09,0.09),Math.random()*Math.PI*2,rand(-0.09,0.09));
+          parts.push(m);
+        }
+      } else if(kind==="finger"){
+        /* coral clumps: spindles leaning outward, tips alight */
+        const clumps=2+(srand()<0.5?1:0);
+        for(let c=0;c<clumps;c++){
+          const a0=Math.random()*Math.PI*2, rr=c===0?Math.random()*0.3:0.45+Math.random()*0.7;
+          const cx2=p.x+Math.cos(a0)*rr, cz2=p.z+Math.sin(a0)*rr;
+          const n=5+Math.floor(Math.random()*5);
+          for(let i=0;i<n;i++){
+            const m=new THREE.Mesh(fingerGeo(rand(0.02,0.045),rand(0.14,0.42)));
+            const fa=Math.random()*Math.PI*2, fr=Math.random()*0.16;
+            m.position.set(cx2+Math.cos(fa)*fr,0,cz2+Math.sin(fa)*fr);
+            m.rotation.set(Math.sin(fa)*rand(0.05,0.35),0,-Math.cos(fa)*rand(0.05,0.35));
+            parts.push(m);
+          }
+        }
+        hh=0.4;
+      } else {
+        /* puffballs half-sunk in the grit */
+        const n=5+Math.floor(srand()*5);
+        for(let i=0;i<n;i++){
+          const r=rand(0.05,0.15);
+          const m=new THREE.Mesh(puffGeo(r));
+          const a=Math.random()*Math.PI*2, rr=Math.random()*0.85;
+          m.position.set(p.x+Math.cos(a)*rr, r*0.72, p.z+Math.sin(a)*rr);
+          m.scale.y=0.85; m.rotation.y=Math.random()*Math.PI*2;
+          parts.push(m);
+        }
+        hh=0.35;
       }
-      g.add(mergeStatic(caps,glowMat));
-      for(const c of caps) c.geometry.dispose();
-      /* the halo: additive light pooled on the rock behind the shelves */
-      const haloMat=new THREE.MeshBasicMaterial({map:HALO_TEX, color:0x58c8e6,
+      g.add(mergeStatic(parts,glowMat));
+      for(const m of parts) m.geometry.dispose();
+      /* the halo: additive light pooled on the rock (wall) or floor */
+      const haloMat=new THREE.MeshBasicMaterial({map:HALO_TEX, color:haloCol,
         transparent:true, opacity:0.25, blending:THREE.AdditiveBlending, depthWrite:false});
       const halo=new THREE.Mesh(new THREE.PlaneGeometry(rand(1.3,2.1),rand(1.3,2.1)),haloMat);
-      halo.position.set(bx+dx*0.06, hh, bz+dy*0.06);
-      halo.rotation.y=faceRot;
-      g.add(halo);
-      /* a vein decal wandering out of the cluster — additive, alive */
+      /* a vein decal wandering out of the colony — additive, alive */
       const vt=fungusTexes[Math.floor(Math.random()*3)];
       const vm=new THREE.Mesh(new THREE.PlaneGeometry(rand(1.4,2.6),rand(0.7,1.3)),
         new THREE.MeshBasicMaterial({map:vt, transparent:true, depthWrite:false,
           opacity:0.8, blending:THREE.AdditiveBlending}));
-      vm.position.set(bx+dx*0.03, hh, bz+dy*0.03);
-      vm.rotation.y=faceRot;
-      vm.material.color.setHex(0x9adfef);
-      g.userData.veinMat=vm.material;
-      g.add(vm);
+      vm.material.color.copy(haloCol).lerp(new THREE.Color(0xffffff),0.35);
+      if(onWall){
+        halo.position.set(ax+fdx*0.06, hh, az+fdy*0.06);
+        halo.rotation.y=faceRot;
+        vm.position.set(ax+fdx*0.03, hh, az+fdy*0.03);
+        vm.rotation.y=faceRot;
+      } else {
+        halo.rotation.x=-Math.PI/2;
+        halo.position.set(ax,0.05,az);
+        vm.rotation.x=-Math.PI/2; vm.rotation.z=Math.random()*Math.PI*2;
+        vm.position.set(ax+rand(-0.4,0.4),0.045,az+rand(-0.4,0.4));
+      }
+      g.add(halo); g.add(vm);
       scene.add(g);
-      const rec=makeLightRecord(glowMat,glowMat,x,y,{x:bx,y:0,z:bz},
+      const rec=makeLightRecord(glowMat,glowMat,x,y,{x:ax,y:0,z:az},
         {warm:false, bright:bright, dimDen:0.5, flickery:Math.random()<0.35, fixY:hh});
       rec.cold=true; rec.buzz=false; rec.mul2=1;
+      rec.tint=eTint; rec.poolCol=poolCol;
       rec.veinMat=vm.material;
       rec.haloMat=haloMat;
-      let region=-1, best=1e9;
-      broods.forEach((b,i)=>{ const d=Math.hypot(x-b.cx,y-b.cy); if(d<best){best=d;region=i;} });
       rec.region = best<9? region : -1;
       lights.push(rec);
       placedCells.add(K(x,y));
     };
     for(let y=2;y<CH-2;y+=1)for(let x=2;x<CW-2;x+=1){
-      if(grid3[y][x]===1||grid3[y][x]===5||grid3[y][x]===2) continue;
+      const code=grid3[y][x];
+      if(code===1||code===5||code===2) continue;
       const nearWater=streamNear(x,y);
       const inChamber=CAVE.chambers.some(c=>Math.hypot(x-c.cx,y-c.cy)<=c.r);
-      const p = nearWater? 0.34 : inChamber? 0.22 : 0.10;
-      if(srand()<p) tryFungus(x,y, nearWater? rand(0.85,1):rand(0.6,0.9));
+      let kind, pp;
+      if(code===3){ pp=0.10; kind="conk"; }                       // wall growth over the water
+      else if(nearWater){ pp=0.30; kind=srand()<0.55?"finger":"shroom"; }
+      else if(code===4){ pp=0.16; kind="puff"; }                  // scree fields
+      else if(inChamber){ pp=0.22; kind=srand()<0.5?"conk":"shroom"; }
+      else { pp=0.10; kind=srand()<0.65?"conk":"puff"; }          // tunnels
+      if(srand()<pp) tryFungus(x,y, nearWater? rand(0.85,1):rand(0.6,0.9), kind);
     }
-    /* the spawn is never pitch black: one dependable cluster over the wreck
-       of a stair, and one at the stream's first bend */
-    tryFungus(spawnC.cx,spawnC.cy+0,1);
-    tryFungus(spawnC.cx-1,spawnC.cy,0.95);
+    /* the spawn is never pitch black: one dependable colony over the wreck
+       of a stair, and a toadstool family beside it */
+    tryFungus(spawnC.cx,spawnC.cy+0,1,"conk");
+    tryFungus(spawnC.cx-1,spawnC.cy,0.95,"shroom");
   }
   /* ---- rubble piles over the sealed tunnels (and the fissure choke) ---- */
   const boulderGeo=new THREE.SphereGeometry(1,7,6);

@@ -1129,3 +1129,116 @@ export function makeFungusTexture(){
   t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearFilter; t.generateMipmaps=false;
   return t;
 }
+/* the fungus SKIN atlas: one diffuse + one emissive canvas, laid out as four
+   horizontal strips that the cave's lathe-built mushrooms UV into —
+     v 0.03..0.22  STEM  (pale fibrous flesh; faint glow threads)
+     v 0.28..0.47  GILL  (radial slits under the caps; the brightest glow)
+     v 0.53..0.72  CAP   (banded conk top; glow concentrated at the rim, v=0.53 edge)
+     v 0.78..0.97  BULB  (speckled puffball / fingertip; glow pores + bright crown)
+   Strips tile horizontally (u wraps around the lathe); mipmaps are off so the
+   guard gaps between strips never bleed at distance. */
+export function makeFungusSkin(){
+  const S=256;
+  /* band(): canvas-y region for a v-range, drawn with 4px bleed each side */
+  const bandY=(v0,v1)=>{ const y0=(1-v1)*S-4, y1=(1-v0)*S+4; return [y0,y1-y0]; };
+  const map=makeCanvas(S,S,(g,w,h)=>{
+    g.fillStyle="#242a2b";g.fillRect(0,0,w,h);
+    { /* STEM: pale grey-green flesh, vertical fibers */
+      const [y,hh]=bandY(0.03,0.22);
+      const gr=g.createLinearGradient(0,y,0,y+hh);
+      gr.addColorStop(0,"#93a09b");gr.addColorStop(1,"#68716e");
+      g.fillStyle=gr;g.fillRect(0,y,w,hh);
+      for(let i=0;i<70;i++){
+        const x=Math.random()*w, light=Math.random()<0.5;
+        g.fillStyle=light?`rgba(178,190,184,${0.12+Math.random()*0.16})`
+                         :`rgba(58,68,64,${0.14+Math.random()*0.2})`;
+        g.fillRect(x,y,0.8+Math.random()*1.6,hh);
+      }
+    }
+    { /* GILL: dense radial slits (vertical lines wrap to radial on the lathe) */
+      const [y,hh]=bandY(0.28,0.47);
+      g.fillStyle="#5c6b6d";g.fillRect(0,y,w,hh);
+      for(let x=0;x<w;x+=2+Math.random()*2.5){
+        g.fillStyle=`rgba(34,44,45,${0.55+Math.random()*0.3})`;
+        g.fillRect(x,y,1+Math.random(),hh);
+        if(Math.random()<0.3){ g.fillStyle="rgba(140,155,152,0.35)"; g.fillRect(x+1.4,y,0.8,hh); }
+      }
+    }
+    { /* CAP: banded conk top — growth rings + mineral speckle */
+      const [y,hh]=bandY(0.53,0.72);
+      g.fillStyle="#4c4c42";g.fillRect(0,y,w,hh);
+      let yy=y;
+      while(yy<y+hh){
+        const bh=3+Math.random()*6;
+        g.fillStyle=Math.random()<0.5?`rgba(92,90,72,${0.3+Math.random()*0.3})`
+                                     :`rgba(52,54,44,${0.3+Math.random()*0.3})`;
+        g.fillRect(0,yy,w,bh); yy+=bh;
+      }
+      for(let i=0;i<110;i++){
+        g.fillStyle=`rgba(128,132,112,${0.10+Math.random()*0.18})`;
+        g.fillRect(Math.random()*w,y+Math.random()*hh,1+Math.random()*1.6,1);
+      }
+    }
+    { /* BULB: speckled pore skin, paler toward the crown (strip top) */
+      const [y,hh]=bandY(0.78,0.97);
+      const gr=g.createLinearGradient(0,y,0,y+hh);
+      gr.addColorStop(0,"#8d9793");gr.addColorStop(1,"#59615e");
+      g.fillStyle=gr;g.fillRect(0,y,w,hh);
+      for(let i=0;i<130;i++){
+        g.fillStyle=`rgba(48,58,55,${0.25+Math.random()*0.3})`;
+        g.beginPath();g.arc(Math.random()*w,y+Math.random()*hh,0.7+Math.random()*1.3,0,7);g.fill();
+      }
+    }
+  });
+  const emit=makeCanvas(S,S,(g,w,h)=>{
+    g.fillStyle="#000";g.fillRect(0,0,w,h);
+    { /* STEM: near-dark, a few rising glow threads, a bloom where gills meet */
+      const [y,hh]=bandY(0.03,0.22);
+      for(let i=0;i<12;i++){
+        g.fillStyle=`rgba(40,130,150,${0.14+Math.random()*0.16})`;
+        g.fillRect(Math.random()*w,y,0.8+Math.random(),hh);
+      }
+      const gr=g.createLinearGradient(0,y,0,y+7);
+      gr.addColorStop(0,"rgba(70,180,200,0.4)");gr.addColorStop(1,"rgba(70,180,200,0)");
+      g.fillStyle=gr;g.fillRect(0,y,w,7);
+    }
+    { /* GILL: the money glow — bright slits on a lit haze */
+      const [y,hh]=bandY(0.28,0.47);
+      g.fillStyle="rgba(42,115,135,0.5)";g.fillRect(0,y,w,hh);
+      for(let x=0;x<w;x+=2+Math.random()*2.5){
+        g.fillStyle=Math.random()<0.6?`rgba(170,242,255,${0.8+Math.random()*0.2})`
+                                     :`rgba(110,210,235,${0.55+Math.random()*0.25})`;
+        g.fillRect(x,y,0.9+Math.random()*0.8,hh);
+      }
+    }
+    { /* CAP: dark flesh, glow pooling at the rim (bottom edge = v 0.53) + spore dots */
+      const [y,hh]=bandY(0.53,0.72);
+      g.fillStyle="rgba(10,30,38,0.35)";g.fillRect(0,y,w,hh);
+      const gr=g.createLinearGradient(0,y+hh,0,y+hh*0.35);
+      gr.addColorStop(0,"rgba(115,222,242,0.8)");gr.addColorStop(1,"rgba(115,222,242,0)");
+      g.fillStyle=gr;g.fillRect(0,y,w,hh);
+      for(let i=0;i<70;i++){
+        const dy=y+hh*(0.35+Math.random()*0.65);   // denser toward the rim
+        g.fillStyle=`rgba(150,238,255,${0.3+Math.random()*0.5})`;
+        g.beginPath();g.arc(Math.random()*w,dy,0.6+Math.random(),0,7);g.fill();
+      }
+    }
+    { /* BULB: bright crown (strip top) fading down, glowing pores throughout */
+      const [y,hh]=bandY(0.78,0.97);
+      const gr=g.createLinearGradient(0,y,0,y+hh);
+      gr.addColorStop(0,"rgba(150,240,255,0.85)");
+      gr.addColorStop(0.45,"rgba(60,150,175,0.3)");
+      gr.addColorStop(1,"rgba(18,55,70,0.12)");
+      g.fillStyle=gr;g.fillRect(0,y,w,hh);
+      for(let i=0;i<120;i++){
+        g.fillStyle=`rgba(180,250,255,${0.5+Math.random()*0.45})`;
+        g.beginPath();g.arc(Math.random()*w,y+Math.random()*hh,0.6+Math.random()*0.9,0,7);g.fill();
+      }
+    }
+  });
+  for(const t of[map,emit]){
+    t.wrapS=THREE.RepeatWrapping; t.wrapT=THREE.ClampToEdgeWrapping;
+    t.minFilter=THREE.LinearFilter; t.generateMipmaps=false;
+  }
+  return {map,emit};
+}

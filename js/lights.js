@@ -152,7 +152,10 @@ export function updateLights(dt,t){
       if(Math.abs(v-L.on)>0.03){
         L.on=v;
         const vb=v*L.bright;
-        L.glowMat.emissive.setRGB(vb*0.28, vb*0.85, vb*0.95);
+        /* each colony carries its own tint (variety + violet brood-blush);
+           components run >1 because the emissive map averages under white */
+        const t=L.tint||[0.28,0.85,0.95];
+        L.glowMat.emissive.setRGB(vb*t[0], vb*t[1], vb*t[2]);
         if(L.haloMat) L.haloMat.opacity=0.20*Math.min(1,vb);
         if(L.veinMat) L.veinMat.opacity=0.85*Math.min(1,vb*1.3);
       }
@@ -228,7 +231,10 @@ export function updateLights(dt,t){
       pl.intensity=j.I;
       /* warmth >1 (shockwave) extrapolates the gradient into red — clamp so
          the channels never go negative and subtract light */
-      if(j.L.cold) pl.color.setRGB(0.36,0.86,1);   // fungus glow: cold blue-green
+      if(j.L.cold){                                // fungus glow: the colony's own cold color
+        const c=j.L.poolCol;
+        if(c) pl.color.setRGB(c[0],c[1],c[2]); else pl.color.setRGB(0.36,0.86,1);
+      }
       else pl.color.setRGB(1,
         Math.max(0, lerp(lerp(0.933,0.875,j.L.dimY),0.55,j.L.warmth)),
         Math.max(0, lerp(lerp(0.753,0.55,j.L.dimY),0.20,j.L.warmth)));
