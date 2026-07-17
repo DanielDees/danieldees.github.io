@@ -2,11 +2,12 @@
 import { lerp } from "./utils.js";
 import { STATE, KEYS, monster, spider } from "./state.js";
 import { CELL, cellToWorld, worldToCell, isWall } from "./map.js";
-import { AU, sfxStep, sfxJump, sfxLand, sfxStoneStep } from "./audio.js";
+import { AU, sfxStep, sfxJump, sfxLand, sfxStoneStep, sfxWaterStep, sfxGravelStep } from "./audio.js";
 import { camera, playerLight } from "./scene.js";
 import { ui } from "./ui.js";
 import { monsterCanSee } from "./monster.js";
 import { libCollide, underTable, libGroundY, shaftClamp } from "./library.js";
+import { caveCollide, underRock, caveGroundY, caveShaftClamp, surfaceAt, cellAt3 } from "./cave.js";
 
 const GRAV=13.5, JUMP_V=4.9;
 function collide(px,pz,r){
@@ -30,9 +31,11 @@ export function updatePlayer(dt){
   const crouchKey = STATE.crouchToggle? STATE.crouchLatch
                                       : !!KEYS["KeyC"];
   const wantCrouch = STATE.grounded && crouchKey;
-  /* in the library you cannot stand up with a tabletop over your head */
+  /* in the library you cannot stand up with a tabletop over your head;
+     in the cave, the squeezes hold you down the same way */
   STATE.crouch = wantCrouch ||
-    (STATE.level===1 && STATE.crouch && underTable(STATE.pos.x,STATE.pos.z));
+    (STATE.level===1 && STATE.crouch && underTable(STATE.pos.x,STATE.pos.z)) ||
+    (STATE.level===2 && STATE.crouch && underRock(STATE.pos.x,STATE.pos.z));
   const wantSprint = !!(KEYS["ShiftLeft"]||KEYS["ShiftRight"]);
   let fwd=0,str=0;
   if(KEYS["KeyW"])fwd++; if(KEYS["KeyS"])fwd--;
@@ -55,6 +58,10 @@ export function updatePlayer(dt){
      (The fold-capable entity is unoutrunnable on raw legs by then.) */
   const adren = STATE.level===0 && STATE.powerOn;
   let speed = STATE.crouch? 2.2 : STATE.sprinting? (adren?9.6:8.0) : 4.6;
+  /* cranking the lantern is two-handed work: a shuffle at best */
+  if(STATE.cranking) speed=Math.min(speed,2.4);
+  /* wading the black stream drags at the knees (but hides your noise) */
+  if(STATE.level===2&&cellAt3(STATE.pos.x,STATE.pos.z)===3) speed*=0.8;
   const sin=Math.sin(STATE.yaw),cos=Math.cos(STATE.yaw);
   let vx=(-sin*fwd + cos*str), vz=(-cos*fwd - sin*str);
   const vl=Math.hypot(vx,vz)||1; vx/=vl; vz/=vl;
@@ -70,7 +77,9 @@ export function updatePlayer(dt){
     STATE.velZ+=(desZ-STATE.velZ)*k;
   }
   const tx=STATE.pos.x+STATE.velX*dt, tz=STATE.pos.z+STATE.velZ*dt;
-  const solved = STATE.level===1? libCollide(tx,tz,0.42,STATE.crouch) : collide(tx,tz,0.42);
+  const solved = STATE.level===2? caveCollide(tx,tz,0.42,STATE.crouch)
+               : STATE.level===1? libCollide(tx,tz,0.42,STATE.crouch)
+               : collide(tx,tz,0.42);
   STATE.moving = (movingInput||!STATE.grounded) &&
     (Math.abs(solved.x-STATE.pos.x)>1e-4||Math.abs(solved.z-STATE.pos.z)>1e-4);
   STATE.pos.x=solved.x; STATE.pos.z=solved.z;
@@ -82,8 +91,12 @@ export function updatePlayer(dt){
   if(STATE.level===1){
     const sc=shaftClamp(STATE.pos.x,STATE.pos.z,STATE.y,0.42);
     if(sc){ STATE.pos.x=sc.x; STATE.pos.z=sc.z; }
+  } else if(STATE.level===2){
+    const sc=caveShaftClamp(STATE.pos.x,STATE.pos.z,STATE.y,0.42);
+    if(sc){ STATE.pos.x=sc.x; STATE.pos.z=sc.z; }
   }
-  const gY = STATE.level===1? libGroundY(STATE.pos.x,STATE.pos.z,STATE.y) : 0;
+  const gY = STATE.level===2? caveGroundY(STATE.pos.x,STATE.pos.z,STATE.y)
+           : STATE.level===1? libGroundY(STATE.pos.x,STATE.pos.z,STATE.y) : 0;
   if(STATE.grounded){
     if(gY<STATE.y-0.45){ STATE.grounded=false; STATE.vy=0; }   // stepped off an edge
     else STATE.y=gY;                                           // ride the treads
@@ -118,8 +131,16 @@ export function updatePlayer(dt){
     STATE.bob += dt*(STATE.sprinting?13:STATE.crouch?6:9);
     AU.stepTimer-=dt*speed;
     if(AU.stepTimer<=0){
-      /* below the library floor the carpet gives way to old stone */
-      if(STATE.level===1&&STATE.y<-0.1) sfxStoneStep(STATE.crouch?0.45:STATE.sprinting?1.05:0.8);
+      const vol=STATE.crouch?0.45:STATE.sprinting?1.05:0.8;
+      /* below the library floor the carpet gives way to old stone; the cave
+         speaks in three voices — stone, water, and treacherous scree */
+      if(STATE.level===2){
+        const surf=surfaceAt(STATE.pos.x,STATE.pos.z);
+        if(surf==="stream") sfxWaterStep(vol);
+        else if(surf==="scree") sfxGravelStep(vol*1.15);
+        else sfxStoneStep(vol*0.85);
+      }
+      else if(STATE.level===1&&STATE.y<-0.1) sfxStoneStep(vol);
       else sfxStep(STATE.crouch,STATE.sprinting,STATE.level===1);
       AU.stepTimer=2.4;
     }
@@ -141,7 +162,11 @@ export function updatePlayer(dt){
   }
   playerLight.position.set(STATE.pos.x,2.4,STATE.pos.z);
 
-  if(STATE.level===1){
+  if(STATE.level===2){
+    /* deep in a squeeze it cannot reach you and cannot see you */
+    const hid = spider.active && cellAt3(STATE.pos.x,STATE.pos.z)===2;
+    ui.hidden.classList.toggle("show", hid && spider.pos.distanceTo(STATE.pos)<25);
+  } else if(STATE.level===1){
     const hid = STATE.crouch && spider.active && underTable(STATE.pos.x,STATE.pos.z);
     ui.hidden.classList.toggle("show", hid && spider.pos.distanceTo(STATE.pos)<25);
   } else {

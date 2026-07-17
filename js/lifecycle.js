@@ -6,10 +6,13 @@ import { scene, lights, buildLevel, clearLevelScene, setLevelEnvironment } from 
 import { placeProps, interactables, exitDoor, clearInteractables } from "./props.js";
 import { makeMonster, wakeMonster, escalateMonster, clearMonsterFx } from "./monster.js";
 import { buildLibrary, LIB } from "./library.js";
-import { makeSpider, resetSpider, spiderHearDisc } from "./spider.js";
-import { CINE, startTheEndIntro } from "./cutscene.js";
-import { AU, sfxDeath, startLibraryAmbience } from "./audio.js";
+import { buildCave, CAVE } from "./cave.js";
+import { makeSpider, resetSpider, spiderHearDisc, resetSpiderCave } from "./spider.js";
+import { makeHatchlings, resetHatchlings } from "./hatchling.js";
+import { CINE, startTheEndIntro, startNestIntro } from "./cutscene.js";
+import { AU, sfxDeath, startLibraryAmbience, startCaveAmbience } from "./audio.js";
 import { ui, toast, renderObjectives, setPaused, lockPointer } from "./ui.js";
+import { igniteClutch } from "./cave.js";
 
 export function startGame(){
   buildLevel(); placeProps();
@@ -55,7 +58,59 @@ export function enterTheEnd(){
   renderObjectives();
   startTheEndIntro();
 }
+/* ---------------- the second descent: THE END → THE NEST ---------------- */
+/* reached from the end of the stair-descent fade, under a black screen:
+   tear the library down, raise the cave, and set the player down where the
+   cut stone gave up and the rock took over */
+export function enterTheNest(){
+  STATE.level=2;
+  STATE.caveT0=STATE.time;
+  STATE.hasLantern=false; STATE.lanternOn=false; STATE.lanternCharge=0.65; STATE.cranking=false;
+  STATE.clutchesLit=0; STATE.frenzyT=0;
+  STATE.holeOpen=false;                 // the library is above and behind you now
+  clearLevelScene();
+  clearInteractables();
+  spider.active=false; spider.mesh=null;   // the library build owned that mesh
+  if(AU.ctx){
+    const t=AU.ctx.currentTime;
+    AU.proxGain.gain.setTargetAtTime(0,t,0.3);
+    AU.breathGain.gain.setTargetAtTime(0,t,0.3);
+    if(AU.spiderBedGain) AU.spiderBedGain.gain.setTargetAtTime(0,t,0.3);
+  }
+  ui.dread.style.opacity=0; ui.staticfx.style.opacity=0;
+  ui.vignette.style.opacity=0.16;
+  setLevelEnvironment(2);
+  buildCave();
+  spider.mesh=makeSpider(); scene.add(spider.mesh);
+  resetSpiderCave(CAVE.spawn.x,CAVE.spawn.z,34);
+  spider.active=false;                  // it starts tending when the intro ends
+  makeHatchlings();
+  STATE.pos.copy(CAVE.spawn);
+  STATE.y=0; STATE.vy=0; STATE.grounded=true; STATE.velX=0; STATE.velZ=0;
+  STATE.yaw=CAVE.spawnYaw; STATE.pitch=0; STATE.stamina=1; STATE.crouch=false;
+  const hint=$("keysHint");
+  if(hint) hint.textContent="WASD MOVE · SHIFT SPRINT · C CROUCH · E USE · F LAMP · R CRANK";
+  startCaveAmbience();
+  renderObjectives();
+  startNestIntro();
+}
 export function respawn(){
+  if(STATE.level===2){
+    /* you wake back under the stair that no longer goes anywhere. The
+       lantern (and everything already burned) stays yours. */
+    STATE.pos.copy(CAVE.spawn);
+    STATE.yaw=CAVE.spawnYaw; STATE.pitch=0;
+    STATE.y=0; STATE.vy=0; STATE.grounded=true; STATE.velX=0; STATE.velZ=0;
+    STATE.dead=false; STATE.stamina=1; STATE.crouch=false; STATE.crouchLatch=false;
+    STATE.lanternOn=false; STATE.cranking=false;
+    STATE.lanternCharge=Math.max(0.4,STATE.lanternCharge);
+    STATE.frenzyT=0;
+    resetSpiderCave(CAVE.spawn.x,CAVE.spawn.z,30);
+    resetHatchlings();
+    ui.dread.style.opacity=0;
+    ui.staticfx.style.opacity=0;
+    return;
+  }
   if(STATE.level===1){
     /* you wake back at the wreck; the disks you fed the terminal stay fed,
        the ones in your pockets are somehow still there */
@@ -180,6 +235,43 @@ export function debugWarpToTerminal(){
   renderObjectives();
   toast("DEBUG: at the terminal, disks in hand.",2200);
 }
+/* debug warp (triple-tap [9]): drop straight into THE NEST with the lantern
+   already in hand; already there, burn the brood down to one and stand the
+   player at the survivor — ready to play the ending. */
+export function debugWarpToNest(){
+  if(!STATE.playing||STATE.dead||STATE.won) return;
+  if(STATE.level!==2){
+    if(CINE.active){ CINE.active=false; CINE.kind=null; }
+    STATE.bottles=3; STATE.hasFuse=true; STATE.powerOn=true; STATE.objective=3;
+    if(STATE.level===0) STATE.libT0=STATE.time;
+    enterTheNest();                      // builds the cave + starts the intro
+    /* skip the intro: lift the black, wake the cave */
+    if(CINE.active){ CINE.active=false; CINE.kind=null; }
+    ui.flash.style.transition="none"; ui.flash.style.opacity=0;
+    spider.active=true;
+    if(spider.mesh) spider.mesh.visible=true;
+    for(const it of interactables){
+      if(it.kind!=="corpse"||it.taken) continue;
+      it.taken=true; scene.remove(it.mesh);
+    }
+    STATE.hasLantern=true; STATE.lanternCharge=0.85;
+    renderObjectives();
+    toast("DEBUG: dropped into THE NEST, lantern in hand.",2200);
+  } else {
+    const un=interactables.filter(it=>it.kind==="clutch"&&!it.taken);
+    if(un.length<=1){ toast("DEBUG: one clutch (or none) left already.",2000); return; }
+    const keep=un[un.length-1];
+    for(const it of un) if(it!==keep) igniteClutch(it);
+    STATE.frenzyT=0;                     // calm the room for the test
+    const bp=keep.mesh.position;
+    STATE.pos.set(bp.x, 0, bp.z+2.2);      // inside the 2.7m interact-focus radius
+    STATE.y=0; STATE.vy=0; STATE.grounded=true; STATE.velX=0; STATE.velZ=0;
+    STATE.yaw=0; STATE.pitch=-0.05;      // yaw 0 faces −z: straight at the clutch
+    resetSpiderCave(bp.x,bp.z,34);
+    renderObjectives();
+    toast("DEBUG: brood burned down to one — it's right there.",2400);
+  }
+}
 export function die(){
   if(STATE.dead) return;
   STATE.dead=true; STATE.deaths++;
@@ -192,14 +284,19 @@ export function die(){
   }
   ui.flash.style.transition="none"; ui.flash.style.background="#1a0000"; ui.flash.style.opacity=0.95;
   setTimeout(()=>{ui.flash.style.transition="opacity 1.2s";ui.flash.style.opacity=0;},120);
-  const quotes = STATE.level===1
+  const quotes = STATE.level===2
+    ? ["LIGHT FOR THE CHILDREN, DARK FOR THE MOTHER","THE SILK FELT YOUR HEARTBEAT",
+       "YOU CRANKED IT ONE NOTCH TOO MANY","THE DRIP HAD LEGS","SHE WON'T FORGIVE THIS"]
+    : STATE.level===1
     ? ["IT HEARD THE DISK LEAVE THE SHELF","EIGHT LEGS ARE FASTER THAN TWO",
        "THE TABLES WERE RIGHT THERE","NEXT TIME, CRAWL","SILENCE IS A CURRENCY — YOU OVERSPENT"]
     : ["YOU SHOULDN'T HAVE LET IT SEE YOU","IT WAS FASTER THAN YOU THOUGHT",
        "THE HUM SWALLOWED YOUR SCREAM","NEXT TIME, CROUCH SOONER"];
   $("deathQuote").textContent=quotes[Math.floor(Math.random()*quotes.length)];
   const body=$("deathBody");
-  if(body) body.textContent = STATE.level===1
+  if(body) body.textContent = STATE.level===2
+    ? "You wake at the foot of the stair that no longer goes anywhere, the lantern beside you as if placed there. What burned stays burned. The tending has resumed."
+    : STATE.level===1
     ? "You wake on the floor of the wrecked cab. Your pockets are, somehow, still full — and the terminal keeps what it was fed. The librarian has gone back to its shelves."
     : "You wake at the place you first fell through — but the backrooms have already rearranged themselves, and whatever you'd gathered is gone. Start the floor again. Quieter, this time.";
   setPaused(true,true);            // keep audio so the death sound plays out
@@ -219,7 +316,16 @@ export function win(){
   if(document.pointerLockElement) document.exitPointerLock();
   const fmt=s=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(Math.floor(s)%60).padStart(2,"0")}`;
   const wT=$("winTitle"), wS=$("winSub");
-  if(STATE.level===1){
+  if(STATE.level===2){
+    if(wT) wT.textContent="THE NEST";
+    if(wS) wS.textContent="YOU BURNED HER BROOD AND CLIMBED TOWARD THE COLD AIR — TO BE CONTINUED.";
+    $("winStats").innerHTML=
+      `<div class="statrow"><span>TIME IN LEVEL 0</span><span>${fmt(STATE.libT0)}</span></div>`+
+      `<div class="statrow"><span>TIME IN THE END</span><span>${fmt(Math.max(0,STATE.caveT0-STATE.libT0))}</span></div>`+
+      `<div class="statrow"><span>TIME IN THE NEST</span><span>${fmt(STATE.time-STATE.caveT0)}</span></div>`+
+      `<div class="statrow"><span>CLUTCHES BURNED</span><span>${STATE.clutchesLit}/4</span></div>`+
+      `<div class="statrow"><span>TIMES CAUGHT</span><span>${STATE.deaths}</span></div>`;
+  } else if(STATE.level===1){
     if(wT) wT.textContent="THE END";
     if(wS) wS.textContent="IT WARNED YOU. YOU WENT DOWN ANYWAY — TO BE CONTINUED.";
     $("winStats").innerHTML=

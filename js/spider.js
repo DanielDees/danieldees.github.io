@@ -1054,3 +1054,396 @@ export function resetSpider(farFromX,farFromZ,minDist=33){
     u.abdTilt=0; u.sniffAnim=0; u.abd.rotation.x=0; u.abd.position.set(0,u.BODY_Y+0.12,-0.95);
   }
 }
+
+/* ================= THE NEST — the librarian, at home ================= */
+/* Down here it is a parent. It circulates between the brood chambers on a
+   tending patrol; near the nests the silk-laced ground carries your
+   footfalls to it at twice the range, while out in the open cave it is
+   duller than you remember. It cannot follow you through the squeezes.
+   Burn a clutch and it comes at a dead run — and once the last one burns,
+   it never goes back to tending anything. */
+import { CAVE, cellToWorld3, worldToCell3, isBlockedSpider3, bfsPath3, losCells3,
+         cellAt3, randomReachCell3, surfaceNoiseGain, silkGainAt, CAVE_SPAN } from "./cave.js";
+import { anyLatched } from "./hatchling.js";
+
+const inSqueeze=()=>cellAt3(STATE.pos.x,STATE.pos.z)===2;
+function corridorClear3(ax,az,bx,bz){
+  const dx=bx-ax, dz=bz-az, len=Math.hypot(dx,dz);
+  if(len<0.001) return true;
+  const ox=-dz/len*0.7, oz=dx/len*0.7;
+  const steps=Math.ceil(len);
+  for(let i=1;i<=steps;i++){
+    const t=i/steps, x=lerp(ax,bx,t), z=lerp(az,bz,t);
+    for(const[sx,sz]of[[0,0],[ox,oz],[-ox,-oz]]){
+      const c=worldToCell3(x+sx,z+sz);
+      if(isBlockedSpider3(c.cx,c.cy)) return false;
+    }
+  }
+  return true;
+}
+function setPath3(wx,wz){
+  const s=spider;
+  let a=worldToCell3(s.pos.x,s.pos.z);
+  if(isBlockedSpider3(a.cx,a.cy)){
+    for(const[ox,oy]of[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]){
+      if(!isBlockedSpider3(a.cx+ox,a.cy+oy)){
+        const q=cellToWorld3(a.cx+ox,a.cy+oy);
+        s.pos.x=q.x; s.pos.z=q.z;
+        a=worldToCell3(q.x,q.z);
+        break;
+      }
+    }
+  }
+  const b=worldToCell3(clamp(wx,-CAVE_SPAN/2+CELL,CAVE_SPAN/2-CELL),
+                       clamp(wz,-CAVE_SPAN/2+CELL,CAVE_SPAN/2-CELL));
+  const p=bfsPath3(a.cx,a.cy,b.cx,b.cy,false);
+  s.path = p? p.map(c=>cellToWorld3(c.cx,c.cy)) : [];
+  if(s.path.length>1) s.path.shift();
+  /* smooth */
+  if(s.path.length>=3){
+    const out=[]; let cx=s.pos.x, cz=s.pos.z, i=0;
+    while(i<s.path.length){
+      let j=s.path.length-1;
+      while(j>i && !corridorClear3(cx,cz,s.path[j].x,s.path[j].z)) j--;
+      out.push(s.path[j]); cx=s.path[j].x; cz=s.path[j].z; i=j+1;
+    }
+    s.path=out;
+  }
+}
+function caveCanSee(){
+  if(inSqueeze()) return false;                    // the crawl hides you whole
+  const d=spider.pos.distanceTo(STATE.pos);
+  const range=(STATE.crouch||!STATE.moving)? 3.6 : 9.4*(STATE.sprinting?1.15:1.05);
+  if(d>range) return false;
+  return losCells3(spider.pos.x,spider.pos.z,STATE.pos.x,STATE.pos.z);
+}
+function nextBrood(){
+  const s=spider;
+  const alive=CAVE.broods.map((b,i)=>({b,i})).filter(e=>!e.b.burned);
+  if(!alive.length) return null;
+  /* the tending round: the next unburned nest along, never the one it's at */
+  const cur=s.nestIdx===undefined? -1 : s.nestIdx;
+  const next=alive.find(e=>e.i>cur) || alive[0];
+  s.nestIdx=next.i;
+  return next.b;
+}
+export function updateSpiderCave(dt){
+  if(!spider.active||STATE.dead||STATE.won) return;
+  const s=spider, u=s.mesh.userData;
+  const dx=STATE.pos.x-s.pos.x, dz=STATE.pos.z-s.pos.z;
+  const d=Math.hypot(dx,dz);
+  const frenzy=STATE.frenzyT>0;
+  const allBurned=STATE.clutchesLit>=4;
+  s.repath-=dt; s.mildCD-=dt; s.screechCD-=dt; s.scratchCD-=dt; s.sniffCD-=dt;
+
+  /* sniff fits (same voice as upstairs) */
+  if(s.sniffsLeft>0){
+    s.sniffT-=dt;
+    if(s.sniffT<=0){
+      s.sniffsLeft--;
+      s.sniffT=rand(0.25,0.95);
+      if(s.sniffsLeft<=0) s.sniffCD=rand(22,38);
+      sfxSpiderSniff(clamp(1-d/34,0.06,1)*0.55, panTo(s.pos.x,s.pos.z));
+    }
+  }
+
+  /* ---- a clutch just went up ---- */
+  if(CAVE.lastBurn && s.burnSeen!==CAVE.lastBurn.at){
+    s.burnSeen=CAVE.lastBurn.at;
+    s.state="frenzy";
+    s.lastKnown=new THREE.Vector3(CAVE.lastBurn.x,0,CAVE.lastBurn.z);
+    s.repath=0; s.path=[];
+    sfxSpiderShriek(1.0,panTo(s.pos.x,s.pos.z));
+  }
+
+  /* ---- hearing ---- */
+  const latched=anyLatched();
+  if(latched){
+    /* its child is screaming from your shoulder */
+    s.lastKnown=STATE.pos.clone();
+    if(s.state!=="chase"&&s.state!=="frenzy"){ s.state="seek"; s.seekRun=true; if(s.repath>0.35)s.repath=0.35; }
+  } else if(STATE.cranking){
+    /* the ratchet grind carries clean through stone */
+    if(d<18){
+      s.lastKnown=STATE.pos.clone();
+      if(s.state!=="chase"&&s.state!=="frenzy"){ s.state="seek"; s.seekRun=d<10; s.repath=Math.min(s.repath,0.5); }
+    }
+  } else if(STATE.moving&&!STATE.crouch){
+    const moveGain=STATE.sprinting? 1.15:1.10;
+    const surfGain=surfaceNoiseGain(STATE.pos.x,STATE.pos.z);
+    const silk=silkGainAt(STATE.pos.x,STATE.pos.z);
+    const dull=silk>1? 1:0.8;                     // open cave: duller than the library
+    const sense=frenzy? 1.6 : allBurned? 1.25 : 1;
+    const strongR=10.2*moveGain*surfGain*silk*dull*sense;
+    const mildR=15.3*moveGain*surfGain*silk*dull*sense;
+    if(d<strongR){
+      s.lastKnown=STATE.pos.clone();
+      if(s.state!=="chase"&&s.state!=="frenzy"){
+        if(s.state!=="seek"||!s.seekRun) s.repath=0;
+        s.state="seek"; s.seekRun=true;
+      }
+    } else if(d<mildR&&s.mildCD<=0&&(s.state==="tend"||s.state==="tending"||s.state==="rampage")){
+      s.mildCD=2;
+      s.lastKnown=STATE.pos.clone();
+      s.state="seek"; s.seekRun=false; s.repath=0;
+    }
+  }
+  /* ---- the lantern is a beacon ---- */
+  if(STATE.lanternOn){
+    s.glowT=(s.glowT||0)+dt;
+    s.glowCD=(s.glowCD||0)-dt;
+    if(s.glowT>5&&s.glowCD<=0&&d<40&&losCells3(s.pos.x,s.pos.z,STATE.pos.x,STATE.pos.z)
+       &&s.state!=="chase"&&s.state!=="frenzy"){
+      s.glowCD=3;
+      s.lastKnown=STATE.pos.clone();
+      s.state="seek"; s.seekRun=d<16; s.repath=0;
+    }
+  } else s.glowT=0;
+
+  const sees=caveCanSee();
+  let movedSpeed=0;
+
+  /* ---- state machine ---- */
+  switch(s.state){
+    case "tend":{
+      if(sees){ s.state="chase"; s.repath=0; if(s.screechCD<=0){s.screechCD=6;sfxSpiderShriek(1,panTo(s.pos.x,s.pos.z));} break; }
+      if(!s.tendTgt){
+        const b=allBurned? null : nextBrood();
+        if(!b){ s.state="hunt"; break; }
+        s.tendTgt=b.center;
+        setPath3(s.tendTgt.x,s.tendTgt.z); s.repath=2;
+      }
+      if(s.path.length===0&&s.repath<=0&&s.tendTgt){ setPath3(s.tendTgt.x,s.tendTgt.z); s.repath=2; }
+      if(s.tendTgt&&Math.hypot(s.tendTgt.x-s.pos.x,s.tendTgt.z-s.pos.z)<2.6){
+        s.state="tending"; s.pauseT=rand(4,7); s.scratchT=rand(0.4,1.0);
+        s.faceAng=Math.atan2(s.tendTgt.x-s.pos.x,s.tendTgt.z-s.pos.z);
+        s.tendTgt=null; s.path=[];
+      }
+      break;
+    }
+    case "tending":
+      if(sees){ s.state="chase"; s.repath=0; break; }
+      s.pauseT-=dt; s.scratchT-=dt;
+      if(s.scratchT<=0&&s.scratchCD<=0){
+        s.scratchT=rand(3,6); s.scratchCD=rand(4,8);
+        u.scratchAnim=1.0;
+        sfxSpiderScratch(clamp(1-d/60,0.05,1)*0.7, panTo(s.pos.x,s.pos.z));
+      }
+      if(s.pauseT<=0){ s.state="tend"; s.repath=0; }
+      break;
+    case "seek":{
+      if(sees){ s.state="chase"; s.repath=0; if(s.screechCD<=0){s.screechCD=6;sfxSpiderShriek(1,panTo(s.pos.x,s.pos.z));} break; }
+      if(s.lastKnown&&s.repath<=0){ setPath3(s.lastKnown.x,s.lastKnown.z); s.repath=s.seekRun?0.35:0.8; }
+      const dLK=s.lastKnown? s.pos.distanceTo(s.lastKnown) : 1e9;
+      if(dLK<2.0||(s.path.length===0&&dLK<CELL*1.5)){
+        if(s.lastKnown) s.faceAng=Math.atan2(s.lastKnown.x-s.pos.x,s.lastKnown.z-s.pos.z);
+        s.state="investigate"; s.searchT=rand(1.8,3.2); s.path=[];
+        if(s.sniffCD<=0){ s.sniffsLeft=2+Math.floor(Math.random()*3); s.sniffT=rand(0.4,0.9); }
+      }
+      break;
+    }
+    case "investigate":
+      if(sees){ s.state="chase"; s.repath=0; break; }
+      s.searchT-=dt;
+      u.sniffAnim=Math.min(1,u.sniffAnim+dt*3);
+      s.faceAng+=dt*0.9;
+      if(s.searchT<=0){
+        s.seekRun=false;
+        s.state = frenzy? "rampage" : allBurned? "hunt" : "tend";
+        s.tendTgt=null; s.repath=0;
+      }
+      break;
+    case "chase":
+      if(!sees){
+        s.lastKnown=STATE.pos.clone();
+        s.state="seek"; s.seekRun=true; s.repath=0;
+      } else {
+        s.lastKnown=STATE.pos.clone();
+        if(s.repath<=0){ setPath3(STATE.pos.x,STATE.pos.z); s.repath=0.3; }
+      }
+      break;
+    case "frenzy":{
+      /* coming for the fire at a dead run */
+      if(sees){ s.state="chase"; s.repath=0; break; }
+      if(s.lastKnown&&s.repath<=0){ setPath3(s.lastKnown.x,s.lastKnown.z); s.repath=0.4; }
+      const dB=s.lastKnown? s.pos.distanceTo(s.lastKnown):0;
+      if(dB<3.4||(s.path.length===0&&dB<CELL*1.6)){
+        s.state="rampage"; s.path=[]; s.repath=0;
+        s.rageC=s.lastKnown? s.lastKnown.clone() : s.pos.clone();
+        if(s.sniffCD<=0){ s.sniffsLeft=3; s.sniffT=0.3; }
+      }
+      break;
+    }
+    case "rampage":{
+      /* circling the murdered nest until the rage clock runs out */
+      if(sees){ s.state="chase"; s.repath=0; break; }
+      if(!frenzy){ s.state=allBurned? "hunt":"tend"; s.tendTgt=null; s.repath=0; break; }
+      if(s.path.length===0&&s.repath<=0){
+        const c=worldToCell3(s.rageC.x,s.rageC.z);
+        let px=null,pz=null;
+        for(let t=0;t<10;t++){
+          const ox=Math.floor(rand(-4,5)), oy=Math.floor(rand(-4,5));
+          if(!isBlockedSpider3(c.cx+ox,c.cy+oy)){
+            const q=cellToWorld3(c.cx+ox,c.cy+oy); px=q.x; pz=q.z; break;
+          }
+        }
+        if(px!==null) setPath3(px,pz);
+        s.repath=rand(0.8,1.5);
+        if(Math.random()<0.3&&s.screechCD<=0){ s.screechCD=5; sfxSpiderShriek(0.6,panTo(s.pos.x,s.pos.z)); }
+      }
+      break;
+    }
+    case "hunt":{
+      /* nothing left to tend. There is only you. */
+      if(sees){ s.state="chase"; s.repath=0; break; }
+      s.huntT=(s.huntT||0)-dt;
+      if(s.repath<=0){
+        if(s.lastKnown&&s.pos.distanceTo(s.lastKnown)>3){
+          setPath3(s.lastKnown.x,s.lastKnown.z); s.repath=0.5;
+        } else {
+          /* a hunch: it quarters the cave toward where you breathe */
+          const pc=worldToCell3(STATE.pos.x,STATE.pos.z);
+          let q=null;
+          for(let t=0;t<12;t++){
+            const ox=Math.floor(rand(-6,7)), oy=Math.floor(rand(-6,7));
+            if(!isBlockedSpider3(pc.cx+ox,pc.cy+oy)){ q=cellToWorld3(pc.cx+ox,pc.cy+oy); break; }
+          }
+          if(!q){ const c=randomReachCell3(); q=cellToWorld3(c.cx,c.cy); }
+          setPath3(q.x,q.z); s.repath=rand(1.2,2.2);
+        }
+      }
+      if(s.huntT===undefined||s.huntT<=0){
+        s.huntT=rand(12,20);
+        sfxSpiderShriek(0.55,panTo(s.pos.x,s.pos.z));
+      }
+      break;
+    }
+    default:
+      s.state="tend"; s.tendTgt=null;
+  }
+
+  /* ---- speed ---- */
+  let tgt=0;
+  if(s.state==="tend") tgt=4.6;
+  else if(s.state==="seek") tgt=s.seekRun? RUN_BASE*(frenzy?1.15:allBurned?1.05:1) : SPD.mildSeek;
+  else if(s.state==="chase") tgt=RUN_BASE*(frenzy?1.15:1.05);
+  else if(s.state==="frenzy") tgt=RUN_BASE*1.15;
+  else if(s.state==="rampage") tgt=6.2;
+  else if(s.state==="hunt") tgt=6.6;
+  const rate = tgt>s.curSpeed? 6:11;
+  s.curSpeed += clamp(tgt-s.curSpeed, -rate*dt, rate*dt);
+
+  /* ---- movement ---- */
+  const prevX=s.pos.x, prevZ=s.pos.z;
+  if(s.curSpeed>0.05&&s.path.length){
+    if(s.path.length>1 && corridorClear3(s.pos.x,s.pos.z,s.path[1].x,s.path[1].z)) s.path.shift();
+    const wp=s.path[0], wx=wp.x-s.pos.x, wz=wp.z-s.pos.z, wl=Math.hypot(wx,wz);
+    if(wl<0.6) s.path.shift();
+    else { s.pos.x+=wx/wl*s.curSpeed*dt; s.pos.z+=wz/wl*s.curSpeed*dt; s.faceAng=Math.atan2(wx,wz); }
+  } else if(s.curSpeed>0.05&&s.state==="chase"){
+    const dl=d||1;
+    const nx=s.pos.x+dx/dl*s.curSpeed*dt, nz=s.pos.z+dz/dl*s.curSpeed*dt;
+    const cc=worldToCell3(nx,nz);
+    if(!isBlockedSpider3(cc.cx,cc.cy)){ s.pos.x=nx; s.pos.z=nz; }
+    s.faceAng=Math.atan2(dx,dz);
+  }
+  movedSpeed=Math.hypot(s.pos.x-prevX,s.pos.z-prevZ)/Math.max(dt,1e-5);
+  s.headDir.set(Math.sin(s.faceAng),0,Math.cos(s.faceAng));
+
+  /* watchdog: pinned → give up the path (same trap-safety as upstairs) */
+  if(s.path.length&&s.curSpeed>0.5&&movedSpeed<0.3){
+    s.stuckT+=dt;
+    if(s.stuckT>1.2){
+      s.stuckT=0; s.path=[]; s.repath=0;
+      if(s.state==="seek"&&s.lastKnown&&s.pos.distanceTo(s.lastKnown)<CELL*1.5){
+        s.faceAng=Math.atan2(s.lastKnown.x-s.pos.x,s.lastKnown.z-s.pos.z);
+        s.state="investigate"; s.searchT=rand(1.8,3.2);
+      }
+    }
+  } else s.stuckT=0;
+
+  /* ---- the catch: the squeezes are the tables of this level ---- */
+  const lethal = s.state==="chase"||s.state==="frenzy"||s.state==="hunt"||(s.state==="seek"&&s.seekRun);
+  if(!inSqueeze() && d<(lethal?2.1:1.5)) die();
+
+  /* ---- taps ---- */
+  s.stepAcc+=movedSpeed*dt;
+  const strideLen=movedSpeed>5? 0.95:0.55;
+  if(s.stepAcc>=strideLen&&d<46){
+    s.stepAcc=0;
+    sfxSpiderTap(clamp(1-d/42,0,1)*(movedSpeed>5?0.6:0.34), panTo(s.pos.x,s.pos.z));
+  }
+
+  /* ---- animation (floor gait; there is no climbing down here) ---- */
+  const sp01=clamp(movedSpeed/10,0,1);
+  s.anim += dt*(1.2+movedSpeed*1.35);
+  const tNow=performance.now()/1000;
+  const cosY=Math.cos(s.faceAng), sinY=Math.sin(s.faceAng);
+  for(const leg of u.legs){
+    const sw=Math.sin(s.anim+leg.phase);
+    const lift=Math.max(0,Math.sin(s.anim+leg.phase+1.3));
+    let yaw=-leg.basePhi+sw*0.30*clamp(movedSpeed/3,0,1);
+    let pitch=PITCH+lift*0.34*clamp(movedSpeed/3,0,1);
+    if(u.scratchAnim>0&&leg.front){
+      yaw=-leg.basePhi+Math.sin(tNow*30+leg.phase)*0.18;
+      pitch=0.85+Math.sin(tNow*34+leg.phase*2)*0.4;
+    }
+    let foldTgt=0;
+    {
+      const phiEff=-yaw;
+      const horiz=FEM*Math.cos(pitch)+TIB*Math.cos(-KNEE-pitch);
+      const lx=leg.hip.position.x+Math.cos(phiEff)*horiz;
+      const lz=leg.hip.position.z+Math.sin(phiEff)*horiz;
+      const ct=cellAt3(s.pos.x+lx*cosY+lz*sinY, s.pos.z-lx*sinY+lz*cosY);
+      foldTgt = (ct===1||ct===2||ct===7)? 0.55 : 0;
+    }
+    leg.fold+=(foldTgt-leg.fold)*Math.min(1,dt*7);
+    leg.hip.rotation.y=yaw;
+    leg.femG.rotation.z=pitch+leg.fold;
+  }
+  if(u.scratchAnim>0) u.scratchAnim-=dt;
+  if(s.state!=="investigate") u.sniffAnim=Math.max(0,u.sniffAnim-dt*2);
+  u.head.position.y=-u.sniffAnim*0.55;
+  u.head.position.z=u.sniffAnim*0.25;
+  u.abd.rotation.x=0;
+  const breath=1+Math.sin(tNow*0.9)*0.04*(1-sp01);
+  u.abd.scale.set(1.0*breath,0.9,1.35/breath);
+  u.abd.position.y=u.BODY_Y+0.12;
+  const aggressive=s.state==="chase"||s.state==="frenzy"||s.state==="hunt"||s.state==="rampage";
+  u.eyeMat.emissive.setHex(aggressive? 0x8a1410:0x3a0805);
+  const bob=Math.abs(Math.sin(s.anim*2))*0.07*sp01;
+  s.mesh.position.set(s.pos.x,bob,s.pos.z);
+  s.mesh.quaternion.setFromEuler(new THREE.Euler(0,s.faceAng,0));
+
+  /* ---- dread & the skitter bed ---- */
+  const prox=clamp(1-d/20,0,1);
+  ui.dread.style.opacity = aggressive? (0.09+prox*0.18):prox*0.135;
+  if(AU.ctx&&AU.spiderBedGain){
+    const t=AU.ctx.currentTime;
+    AU.spiderBedGain.gain.setTargetAtTime(clamp(1-d/16,0,1)*0.16*(0.4+sp01*0.6), t, 0.2);
+    if(AU.spiderBedPan) AU.spiderBedPan.pan.setTargetAtTime(panTo(s.pos.x,s.pos.z), t, 0.15);
+  }
+  AU.heartTimer-=dt;
+  if(prox>0.3&&AU.heartTimer<=0){ sfxHeartbeat(); AU.heartTimer=lerp(1.4,0.5,prox); }
+}
+/* drop it at its rounds, far from a point (the arrival / a respawn) */
+export function resetSpiderCave(farFromX,farFromZ,minDist=30){
+  const s=spider;
+  let p=cellToWorld3(16,15);
+  for(let t=0;t<400;t++){
+    const c=randomReachCell3(), q=cellToWorld3(c.cx,c.cy);
+    if(Math.hypot(q.x-farFromX,q.z-farFromZ)>minDist){ p=q; break; }
+  }
+  s.pos.set(p.x,0,p.z);
+  s.state="tend"; s.tendTgt=null; s.nestIdx=-1; s.path=[]; s.repath=0; s.curSpeed=0;
+  s.pendingT=0; s.speedMult=1; s.stacking=false; s.seekRun=false;
+  s.lastKnown=null; s.target=null; s.mildCD=0; s.screechCD=0; s.stepAcc=0;
+  s.sniffsLeft=0; s.scratchCD=0; s.sniffCD=0; s.stuckT=0;
+  s.glowT=0; s.glowCD=0; s.burnSeen=CAVE.lastBurn? CAVE.lastBurn.at : null;
+  s.huntT=rand(8,14);
+  if(s.mesh){
+    s.mesh.position.set(p.x,0,p.z); s.mesh.quaternion.identity();
+    const u=s.mesh.userData;
+    u.abdTilt=0; u.sniffAnim=0; u.abd.rotation.x=0; u.abd.position.set(0,u.BODY_Y+0.12,-0.95);
+  }
+}

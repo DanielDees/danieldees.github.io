@@ -62,8 +62,8 @@ export function updateLights(dt,t){
   const escD = 1 + 0.10*monster.escalation;   // disruption AOE & hue deepen +10% per objective
   /* whichever thing haunts the current level is the disruption source —
      in THE END the librarian carries the same tell */
-  const disPos = STATE.level===1? (spider.active? spider.pos:null)
-                                : (monster.active? monster.pos:null);
+  const disPos = STATE.level===0? (monster.active? monster.pos:null)
+                                : (spider.active? spider.pos:null);
   for(const L of lights){
     const dl=Math.hypot(L.world.x-px,L.world.z-pz);
     /* the AOE is centered on the ENTITY: panels near IT misbehave,
@@ -123,6 +123,8 @@ export function updateLights(dt,t){
       /* the periodic failure: each strip dips on its own schedule (set in library.js) */
       v*=L.blackMul;
     }
+    /* THE NEST: a burned brood chamber's fungus dies back (cave.js ramps mul2) */
+    if(STATE.level===2&&L.mul2!==undefined) v*=L.mul2;
     if(L.shockT>0){
       /* the wake shockwave passing through: a hard strobe on impact, then
          held dim and DEEP — dimness drags the hue past orange into red,
@@ -142,6 +144,16 @@ export function updateLights(dt,t){
       const k = L.shockT<0.5? L.shockT/0.5 : 1;                    // ease back at the end
       v=lerp(v,vS,k); warmth=lerp(warmth,wS,k);
     }
+    if(L.cold){
+      /* fungus: a cold blue-green ramp, no warmth pipeline, no ballast tick —
+         living light misbehaves silently */
+      if(Math.abs(v-L.on)>0.03){
+        L.on=v;
+        const vb=v*L.bright;
+        L.glowMat.color.setRGB(vb*0.30, vb*0.92, vb*1.0);
+        L.tubeMat.color.setRGB(vb*0.16, vb*0.50, vb*0.56);
+      }
+    } else
     if(Math.abs(v-L.on)>0.04 || Math.abs(warmth-L.warmth)>0.02){
       /* ballast tick fires WITH the visible transition, from the fixture's
          direction, fading with distance — classic fluorescent static */
@@ -213,7 +225,8 @@ export function updateLights(dt,t){
       pl.intensity=j.I;
       /* warmth >1 (shockwave) extrapolates the gradient into red — clamp so
          the channels never go negative and subtract light */
-      pl.color.setRGB(1,
+      if(j.L.cold) pl.color.setRGB(0.36,0.86,1);   // fungus glow: cold blue-green
+      else pl.color.setRGB(1,
         Math.max(0, lerp(lerp(0.933,0.875,j.L.dimY),0.55,j.L.warmth)),
         Math.max(0, lerp(lerp(0.753,0.55,j.L.dimY),0.20,j.L.warmth)));
     } else pl.intensity=0;
@@ -226,7 +239,7 @@ export function updateLights(dt,t){
     const tN=AU.ctx.currentTime;
     for(let i=0;i<AU.humVoices.length;i++){
       const hv=AU.humVoices[i];
-      if(i<candN){
+      if(i<candN&&_cand[i].L.buzz!==false){
         const L=_cand[i].L, dist=Math.sqrt(_cand[i].d2);
         /* falloff radius trimmed 10% (16 → 14.4): the steeper roll-off makes
            walking past a fixture read more clearly as approach/retreat */
@@ -238,7 +251,8 @@ export function updateLights(dt,t){
   }
   /* murk floor: THE END's minimum ambient is HALF of level 0's, and it
      sinks further once the lights drop */
-  const hemiTgt = (STATE.level===1? (STATE.libDim? 0.032:0.048)
-                                  : (STATE.powerOn? 0.10:0.08)) * STATE.ambDim;
+  const hemiTgt = (STATE.level===2? 0.030
+                 : STATE.level===1? (STATE.libDim? 0.032:0.048)
+                 : (STATE.powerOn? 0.10:0.08)) * STATE.ambDim;
   hemi.intensity = lerp(hemi.intensity, hemiTgt, 0.1);
 }

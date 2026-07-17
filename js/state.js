@@ -23,6 +23,12 @@ export const STATE={
   libWakeT:-1,                   // intro cutscene: seconds since the fixtures began waking (-1 = all awake)
   shakeAmp:0,                    // slow micro screen-shake (post-drop ambience)
   holeOpen:false,                // the librarian has dug the way down (final objective live)
+  /* ---- THE NEST progression ---- */
+  caveT0:0,                      // STATE.time at the moment the cave was entered
+  hasLantern:false,              // the dead wanderer's crank lantern (and journal)
+  lanternOn:false, lanternCharge:0.65, cranking:false,
+  clutchesLit:0,                 // egg clutches burned (of 4)
+  frenzyT:0,                     // >0: the brood is frenzied, the matriarch enraged
 };
 export const KEYS={};
 export const monster={

@@ -1020,3 +1020,112 @@ export function sliceTexture(tex,u0,u1,flip=false){
   t.generateMipmaps=false;
   return t;
 }
+
+/* ================= THE NEST — the cave below ================= */
+/* wet karst rock, TILEABLE at a fixed world scale (scaleBoxUV again):
+   dark limestone with mineral mottling and seep-streaks that fade in and
+   out so the tile seam never betrays itself */
+export const texCaveRock = makeCanvas(256,256,(g,w,h)=>{
+  g.fillStyle="#332f2b";g.fillRect(0,0,w,h);
+  for(let i=0;i<900;i++){               // mineral mottling
+    const v=Math.random();
+    g.fillStyle=`rgba(${v<0.5?34:74},${v<0.5?32:68},${v<0.5?28:58},${0.06+Math.random()*0.10})`;
+    g.fillRect(Math.random()*w,Math.random()*h,Math.random()*7+2,Math.random()*5+2);
+  }
+  for(let i=0;i<14;i++){                // strata seams, wandering
+    g.strokeStyle=`rgba(12,10,8,${0.18+Math.random()*0.25})`; g.lineWidth=1+Math.random()*1.5;
+    const y=Math.random()*h; g.beginPath(); g.moveTo(0,y);
+    for(let x=0;x<=w;x+=10) g.lineTo(x,y+Math.sin(x*0.11+i*7)*4+Math.sin(x*0.031+i)*6);
+    g.stroke();
+  }
+  for(let i=0;i<7;i++){                 // seep streaks (fade both ends — seam-safe)
+    const x=Math.random()*w, ww=2+Math.random()*7, y0=Math.random()*h*0.5;
+    const gr=g.createLinearGradient(0,y0,0,y0+h*0.5);
+    const a=0.06+Math.random()*0.10;
+    gr.addColorStop(0,"rgba(14,16,14,0)");
+    gr.addColorStop(0.5,`rgba(14,16,14,${a})`);
+    gr.addColorStop(1,"rgba(14,16,14,0)");
+    g.fillStyle=gr;g.fillRect(x,y0,ww,h*0.5);
+  }
+});
+/* the cave floor: packed sediment, bone-dry dust, scattered grit */
+export const texCaveFloor = makeCanvas(512,512,(g,w,h)=>{
+  g.fillStyle="#2b2723";g.fillRect(0,0,w,h);
+  for(let i=0;i<9000;i++){const v=Math.random();
+    g.fillStyle=`rgba(${v<.5?22:62},${v<.5?20:56},${v<.5?17:46},0.30)`;
+    g.fillRect(Math.random()*w,Math.random()*h,1.5,1.5);}
+  for(let i=0;i<30;i++){                // sediment fans & damp patches
+    const x=Math.random()*w,y=Math.random()*h,r=16+Math.random()*60;
+    const gr=g.createRadialGradient(x,y,2,x,y,r);
+    const dark=Math.random()<0.5;
+    gr.addColorStop(0,dark?`rgba(12,11,9,${0.12+Math.random()*0.14})`
+                         :`rgba(64,58,46,${0.08+Math.random()*0.10})`);
+    gr.addColorStop(1,"rgba(0,0,0,0)");
+    g.fillStyle=gr;g.fillRect(x-r,y-r,r*2,r*2);
+  }
+  for(let i=0;i<160;i++){               // grit and small stones
+    g.fillStyle=`rgba(${50+Math.random()*40|0},${46+Math.random()*34|0},${38+Math.random()*26|0},${0.3+Math.random()*0.4})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*3,1+Math.random()*2.5);
+  }
+});
+/* a silk sheet: layered strand fans on transparency, for wall/corner webs */
+export function makeWebTexture(){
+  const t=makeCanvas(128,128,(g,w,h)=>{
+    g.clearRect(0,0,w,h);
+    const cx=w*(0.2+Math.random()*0.6), cy=Math.random()<0.5?0:h;   // anchored at an edge
+    const n=9+Math.floor(Math.random()*7);
+    for(let i=0;i<n;i++){               // radial strands
+      const a=(i/n)*Math.PI+(cy===0?0:Math.PI), len=h*(0.55+Math.random()*0.45);
+      g.strokeStyle=`rgba(216,222,225,${0.16+Math.random()*0.22})`;
+      g.lineWidth=0.8+Math.random()*0.9;
+      g.beginPath();g.moveTo(cx,cy);
+      g.lineTo(cx+Math.cos(a)*len, cy+Math.sin(a)*len);g.stroke();
+    }
+    for(let r=10;r<h;r+=8+Math.random()*10){   // sagging cross-threads
+      g.strokeStyle=`rgba(216,222,225,${0.10+Math.random()*0.16})`;
+      g.lineWidth=0.7;
+      g.beginPath();
+      for(let a=0;a<=Math.PI;a+=0.25){
+        const aa=a+(cy===0?0:Math.PI);
+        const sag=1+Math.sin(a)*0.15;
+        const x=cx+Math.cos(aa)*r*sag, y=cy+Math.sin(aa)*r*sag;
+        if(a===0)g.moveTo(x,y);else g.lineTo(x,y);
+      }
+      g.stroke();
+    }
+    for(let i=0;i<8;i++){               // clotted dust
+      g.fillStyle=`rgba(190,196,198,${0.10+Math.random()*0.14})`;
+      g.beginPath();g.arc(Math.random()*w,Math.random()*h,1+Math.random()*2.4,0,7);g.fill();
+    }
+  });
+  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearFilter; t.generateMipmaps=false;
+  return t;
+}
+/* bioluminescent fungus veins: a wandering glow-thread decal for the rock */
+export function makeFungusTexture(){
+  const t=makeCanvas(128,64,(g,w,h)=>{
+    g.clearRect(0,0,w,h);
+    let x=0, y=h*(0.3+Math.random()*0.4);
+    while(x<w){                          // the main vein
+      const nx=x+4+Math.random()*7, ny=Math.max(4,Math.min(h-4,y+(Math.random()-0.5)*10));
+      const gr=g.createLinearGradient(x,y,nx,ny);
+      gr.addColorStop(0,"rgba(78,190,205,0.55)");gr.addColorStop(1,"rgba(64,170,190,0.5)");
+      g.strokeStyle=gr;g.lineWidth=1.4+Math.random()*1.6;
+      g.beginPath();g.moveTo(x,y);g.lineTo(nx,ny);g.stroke();
+      if(Math.random()<0.4){             // side threads
+        g.strokeStyle="rgba(70,180,196,0.35)";g.lineWidth=0.9;
+        g.beginPath();g.moveTo(nx,ny);
+        g.lineTo(nx+(Math.random()-0.5)*14, ny+(Math.random()-0.5)*18);g.stroke();
+      }
+      if(Math.random()<0.5){             // glow nodes
+        const r=1.5+Math.random()*3;
+        const ng=g.createRadialGradient(nx,ny,0.5,nx,ny,r*2.6);
+        ng.addColorStop(0,"rgba(140,235,255,0.85)");ng.addColorStop(1,"rgba(60,160,190,0)");
+        g.fillStyle=ng;g.beginPath();g.arc(nx,ny,r*2.6,0,7);g.fill();
+      }
+      x=nx; y=ny;
+    }
+  });
+  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearFilter; t.generateMipmaps=false;
+  return t;
+}

@@ -1,15 +1,16 @@
 # NOCLIP — Escape the Backrooms
 
-**Version: v2.6.0**
+**Version: v3.0.0**
 
 A browser-based survival horror game, playable at
 [danieldees.github.io](https://danieldees.github.io). Vanilla JS ES modules built
 on three.js — no build step, no dependencies to install.
 Vibe-coded with Claude Fable 5 / Claude Mythos 5.
+Per-level lore lives in [lore/](lore/).
 
 ## The game
 
-Two levels, two monsters, one way down.
+Three levels, one keeper you keep meeting again, and always another way down.
 
 **Level 0 — the backrooms.** You fell through the world into damp carpet, yellowed
 wallpaper, and the endless drone of fluorescent light. Collect 3 bottles of almond
@@ -36,6 +37,20 @@ and a half after you take the first disk, the lights burn down to embers and the
 wakes up the rest of the way. Return every disk and the librarian answers in person —
 not for you, but to open the way down. It did warn you.
 
+**THE NEST — the cave below.** You followed it home. The stair gives up into a karst
+warren lit only by veins of blue fungus: crawl-squeezes the spider can't follow you
+through, a black stream that hides your footsteps while you wade it, loud scree, a rock
+bridge over a chasm, and silk that thickens toward what it protects. On a corpse near
+the bottom you find a **hand-crank lantern**: its beam physically drives the eyeless,
+cat-sized **hatchlings** back — but cranking it is loud, and a beam held burning in open
+cave is a beacon the **matriarch** reads fluently. She tends her four egg clutches on a
+patrol; near the nests the silk-laced ground carries your footfalls to her at twice the
+range. Ignite all four clutches — a three-second channel, stationary, sparking — and
+survive what each burn wakes: a frenzy, a rockfall that reshapes the maze, and less
+fungus-light every time. When the last clutch burns she stops tending anything, ever
+again — and somewhere in the rubble a fissure opens, breathing cold air from above.
+The chimney is real: climb it yourself, tread by tread, into the pale.
+
 ## Controls
 
 | Key | Action |
@@ -44,13 +59,49 @@ not for you, but to open the way down. It did warn you.
 | `SHIFT` | sprint (drains stamina / makes noise; bottomless once adrenaline kicks in) |
 | `SPACE` | jump |
 | `C` | crouch / hide (silent in THE END; the only way past the spider). Hold by default, or switch to a toggle in the sound/options sheet |
-| `E` | interact |
+| `E` | interact (hold it to channel THE NEST's clutch burns) |
+| `F` / `R` | THE NEST only: lantern on/off / hold to crank the charge back up (loudly) |
 | `O` / `ESC` | sound mixer / pause (how to play lives on the pause sheet) |
 
 Headphones recommended — audio is positional, and both monsters are far easier to
 track by ear.
 
 ## Changelog
+
+### v3.0.0 (2026-07-17)
+- **A third level: THE NEST.** The spiral stair below the library now lands somewhere —
+  a procedurally carved karst cave (chambers, winding tunnels, crawl-squeezes, a black
+  stream, scree aprons, one rock bridge over a chasm) lit only by bioluminescent fungus
+  wired into the same flicker-radar light pool as every floor above it. Cosmetic silk
+  thickens toward the brood chambers: you navigate by reading how afraid you should be.
+- **The crank lantern.** Found on a corpse with the level's journal: the beam repels
+  the brood, the charge runs down, cranking it back up is loud, and a beam held burning
+  in open cave steers the matriarch to you. Its spotlight lives in the scene from boot
+  at intensity 0, so switching it on can never trigger a shader recompile.
+- **The hatchlings.** 5–6 eyeless, sound-hunting, photophobic skitterers with their own
+  territories. One that reaches you latches on — stamina bleed, screen-corner horror,
+  and a screech that feeds the matriarch your position until you shake it off or burn
+  it off with the lantern. At range their taps are tuned to be mistakable for dripwater.
+- **The librarian, at home.** Same spider, same gait — new life: a tending patrol
+  between the four clutches, doubled hearing through the silk-laced nest floors, duller
+  senses in open cave, a dead-run frenzy when a clutch burns, and a permanent hunt once
+  the last one goes. It cannot follow you through the squeezes; they are the tables of
+  this level.
+- **Burn the brood.** Four egg clutches, each a held three-second ignite channel —
+  stationary, sparking, maximally vulnerable. Every burn triggers a 60–90s frenzy, kills
+  the local fungus glow, and drops a rockfall that closes one corridor and opens a
+  sealed one — validated so the cave can never strand you. The fourth burn opens the
+  fissure: a real, walkable chimney (the library stair's math, inverted) climbed into a
+  pale fade-out.
+- **Cave audio.** Drip percussion with double echoes, a stream bed that masks your
+  noise, crank ratchet, striker ticks, clutch fire crackle, rockfalls, hatchling
+  hisses/screeches, and the fissure's updraft wind — all synthesized, as ever.
+- New intro and ending cinematics; new death/win copy; level-2 objectives HUD +
+  lantern charge bar; the descent from THE END now hands off seamlessly mid-black.
+- Cheat: triple-[9] drops you into THE NEST with the lantern (again from inside: burns
+  the brood down to one and stands you at the survivor).
+- `lore/` folder: parseable per-level lore documents (wiki entry + in-world found
+  document per level) — the groundwork for in-game lore pickups and a menu viewer.
 
 ### v2.6.0 (2026-07-04)
 - **A real ending for THE END.** Feeding the terminal its last disk no longer whites

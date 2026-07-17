@@ -12,6 +12,7 @@ export const AU = {
   droneGain:null,                       // level-0 drone bed (faded out in THE END)
   spiderBedGain:null, spiderBedPan:null, // the librarian's skitter, bound in spider.js
   lib:null,                             // THE END ambience handle
+  cave:null,                            // THE NEST ambience handle
 };
 export function applyVolumes(){
   if(!AU.ctx) return;
@@ -914,4 +915,258 @@ export function sfxKnock(vol,raps,pan=0){
     const g2=C.createGain();g2.gain.value=vol*0.7;
     src.connect(f);f.connect(g2);g2.connect(out);src.start(t);
   }
+}
+
+/* ================= THE NEST — the cave below ================= */
+/* the level's resting voice: a fainter, older rumble than the library's,
+   the stream's white noise (gain driven by distance in updateCave), and a
+   dripwater scheduler whose plinks echo twice, like everything down here */
+export function startCaveAmbience(){
+  if(!AU.ctx) return;
+  const C=AU.ctx, t=C.currentTime;
+  /* the library's storm dies behind you */
+  if(AU.lib){
+    if(AU.lib.rumbleGain) AU.lib.rumbleGain.gain.setTargetAtTime(0.0001,t,1.5);
+    if(AU.lib.thunderInt) clearInterval(AU.lib.thunderInt);
+    for(const o of AU.lib.subs||[]) try{o.stop(t+3);}catch(e){}
+    AU.lib=null;
+  }
+  if(AU.cave) return;
+  const cave={};
+  /* deep rumble, half the library's */
+  {
+    const len=C.sampleRate*3, buf=C.createBuffer(1,len,C.sampleRate);
+    const d=buf.getChannelData(0);
+    let v=0;
+    for(let i=0;i<len;i++){ v=(v+(Math.random()*2-1)*0.04)*0.985; d[i]=v*6; }
+    const src=C.createBufferSource(); src.buffer=buf; src.loop=true;
+    const lp=C.createBiquadFilter(); lp.type="lowpass"; lp.frequency.value=48; lp.Q.value=0.6;
+    const g=C.createGain(); g.gain.setValueAtTime(0.0001,t);
+    g.gain.linearRampToValueAtTime(0.09,t+5);
+    src.connect(lp); lp.connect(g); g.connect(AU.music); src.start(t);
+    cave.rumbleGain=g;
+  }
+  /* the stream: looped babble, silent until you near it */
+  {
+    const len=C.sampleRate*2.5, buf=C.createBuffer(1,len,C.sampleRate);
+    const d=buf.getChannelData(0);
+    for(let i=0;i<len;i++) d[i]=Math.random()*2-1;
+    const src=C.createBufferSource(); src.buffer=buf; src.loop=true;
+    const bp=C.createBiquadFilter(); bp.type="bandpass"; bp.frequency.value=1500; bp.Q.value=0.7;
+    const trem=C.createOscillator(); trem.frequency.value=2.3;
+    const tg=C.createGain(); tg.gain.value=0.35;
+    const mid=C.createGain(); mid.gain.value=0.65;
+    trem.connect(tg); tg.connect(mid.gain); trem.start();
+    const g=C.createGain(); g.gain.value=0;
+    src.connect(bp); bp.connect(mid); mid.connect(g); g.connect(AU.sfx);
+    src.start();
+    cave.streamGain=g;
+  }
+  /* one drip: a bright plink and its two fading answers from elsewhere */
+  cave.drip=()=>{
+    if(!STATE.playing||STATE.paused||STATE.level!==2) return;
+    const tt=C.currentTime, pan=rand(-0.9,0.9), f0=rand(1700,3400);
+    [[0,1,pan],[rand(0.14,0.22),0.4,-pan*0.6],[rand(0.3,0.45),0.15,pan*0.3]].forEach(([at,v,p])=>{
+      const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(f0,tt+at);
+      o.frequency.exponentialRampToValueAtTime(f0*0.6,tt+at+0.07);
+      const g=C.createGain();env(g,tt+at,0.002,0.05*v,0.24);
+      const pn=C.createStereoPanner?C.createStereoPanner():null;
+      o.connect(g);
+      if(pn){pn.pan.value=p;g.connect(pn);pn.connect(AU.sfx);}else g.connect(AU.sfx);
+      o.start(tt+at);o.stop(tt+at+0.4);
+    });
+  };
+  /* the spider's skitter bed may not exist yet (debug warps skip the library) */
+  if(!AU.spiderBedGain){
+    const len=C.sampleRate*2, buf=C.createBuffer(1,len,C.sampleRate);
+    const d=buf.getChannelData(0);
+    for(let i=0;i<len;i++) d[i]=Math.random()*2-1;
+    const src=C.createBufferSource(); src.buffer=buf; src.loop=true;
+    const bp=C.createBiquadFilter(); bp.type="bandpass"; bp.frequency.value=2500; bp.Q.value=1.4;
+    const trem=C.createOscillator(); trem.frequency.value=11;
+    const tg=C.createGain(); tg.gain.value=0.5;
+    const mid=C.createGain(); mid.gain.value=0.5;
+    trem.connect(tg); tg.connect(mid.gain); trem.start();
+    const g=AU.spiderBedGain=C.createGain(); g.gain.value=0;
+    const p=AU.spiderBedPan=C.createStereoPanner?C.createStereoPanner():null;
+    src.connect(bp); bp.connect(mid); mid.connect(g);
+    if(p){ g.connect(p); p.connect(AU.sfx); } else g.connect(AU.sfx);
+    src.start();
+  }
+  AU.cave=cave;
+}
+/* one footfall in shallow water: a slosh with a soft body */
+export function sfxWaterStep(vol=1){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  pannedNoise(t,0.16,"bandpass",rand(700,1100),1.2,vol*0.16,0,0.01);
+  pannedNoise(t+0.03,0.1,"highpass",2400,1,vol*0.05,0,0.02);
+  const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(110,t);
+  o.frequency.exponentialRampToValueAtTime(55,t+0.09);
+  const g=C.createGain();env(g,t,0.004,vol*0.07,0.12);
+  o.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+0.2);
+}
+/* scree betrayal: a grinding crunch that carries */
+export function sfxGravelStep(vol=1){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  pannedNoise(t,0.11,"bandpass",rand(1300,1900),1.4,vol*0.22,0,0.004);
+  for(let i=0;i<3;i++)
+    pannedNoise(t+0.02+i*0.025,0.02,"highpass",rand(2600,4200),1.5,vol*0.08,0,0.001);
+  const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(95,t);
+  o.frequency.exponentialRampToValueAtTime(52,t+0.08);
+  const g=C.createGain();env(g,t,0.003,vol*0.10,0.13);
+  o.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+0.2);
+}
+/* one notch of the lantern crank: a loud ratcheting grind. It CARRIES. */
+export function sfxCrankNotch(vol=1){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  for(let i=0;i<4;i++)
+    pannedNoise(t+i*0.045,0.03,"bandpass",rand(900,1400),4,vol*0.14,0,0.002);
+  const o=C.createOscillator();o.type="sawtooth";o.frequency.setValueAtTime(180,t);
+  o.frequency.linearRampToValueAtTime(260,t+0.16);
+  const bp=C.createBiquadFilter();bp.type="bandpass";bp.frequency.value=700;bp.Q.value=3;
+  const g=C.createGain();env(g,t,0.02,vol*0.09,0.2);
+  o.connect(bp);bp.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+0.3);
+}
+export function sfxLanternClick(vol=1){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  pannedNoise(t,0.02,"highpass",2800,1.4,vol*0.12,0,0.001);
+  const o=C.createOscillator();o.type="square";o.frequency.value=420;
+  const g=C.createGain();env(g,t+0.015,0.004,vol*0.05,0.06);
+  o.connect(g);g.connect(AU.sfx);o.start(t+0.015);o.stop(t+0.12);
+}
+/* the striker, sparking against the silk — the channel's heartbeat */
+export function sfxStrikerTick(vol=1){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  pannedNoise(t,0.018,"highpass",rand(3200,5200),1.2,vol*0.16,0,0.001);
+  pannedNoise(t+0.02,0.03,"bandpass",rand(1400,2100),3,vol*0.07,0,0.002);
+}
+/* the clutch catches: a fibrous whoosh over a low bloom */
+export function sfxIgnite(){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  const len=Math.floor(C.sampleRate*1.4), buf=C.createBuffer(1,len,C.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.pow(Math.sin(Math.PI*i/len),0.6);
+  const src=C.createBufferSource(); src.buffer=buf;
+  const bp=C.createBiquadFilter();bp.type="bandpass";bp.Q.value=0.8;
+  bp.frequency.setValueAtTime(500,t);
+  bp.frequency.exponentialRampToValueAtTime(2400,t+0.5);
+  bp.frequency.exponentialRampToValueAtTime(900,t+1.3);
+  const g=C.createGain();g.gain.value=0.4;
+  src.connect(bp);bp.connect(g);g.connect(AU.sfx);src.start(t);
+  const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(70,t);
+  o.frequency.exponentialRampToValueAtTime(38,t+1.1);
+  const g2=C.createGain();env(g2,t,0.15,0.3,1.2);
+  o.connect(g2);g2.connect(AU.sfx);o.start(t);o.stop(t+1.5);
+}
+/* a clutch fire: looping crackle; .set(0..1) follows the flames down */
+export function startClutchFire(){
+  if(!AU.ctx) return {set(){},stop(){}};
+  const C=AU.ctx, t=C.currentTime;
+  const len=C.sampleRate*2, buf=C.createBuffer(1,len,C.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<len;i++){
+    const pop=Math.random()<0.002? (Math.random()*2-1)*3:0;
+    d[i]=(Math.random()*2-1)*0.4+pop;
+  }
+  const src=C.createBufferSource(); src.buffer=buf; src.loop=true;
+  const bp=C.createBiquadFilter();bp.type="bandpass";bp.frequency.value=1700;bp.Q.value=0.6;
+  const g=C.createGain(); g.gain.setValueAtTime(0.0001,t);
+  g.gain.linearRampToValueAtTime(0.11,t+0.8);
+  src.connect(bp);bp.connect(g);g.connect(AU.sfx);src.start(t);
+  return {
+    set(k){ g.gain.setTargetAtTime(0.11*k, C.currentTime, 0.5); },
+    stop(){ const tt=C.currentTime; g.gain.setTargetAtTime(0.0001,tt,0.4); src.stop(tt+2); },
+  };
+}
+/* the cave answering a burn: boulders, then the long settling */
+export function sfxRockfall(){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  sfxHoleRumble(3.6);
+  for(let i=0;i<7;i++){
+    const at=t+0.15+i*rand(0.08,0.22);
+    const o=C.createOscillator();o.type="sine";
+    o.frequency.setValueAtTime(rand(90,150),at);
+    o.frequency.exponentialRampToValueAtTime(rand(40,60),at+0.16);
+    const g=C.createGain();env(g,at,0.004,rand(0.15,0.3),0.3);
+    const p=C.createStereoPanner?C.createStereoPanner():null;
+    o.connect(g);
+    if(p){p.pan.value=rand(-0.8,0.8);g.connect(p);p.connect(AU.sfx);}else g.connect(AU.sfx);
+    o.start(at);o.stop(at+0.5);
+    noiseAt(at,0.1,rand(300,600),0.2);
+  }
+}
+/* a hatchling's footfall: drier and higher than the parent's — at range,
+   honestly mistakable for a drip */
+export function sfxHatchTap(vol,pan=0){
+  if(!AU.ctx||vol<=0.003) return;
+  const C=AU.ctx,t=C.currentTime;
+  pannedNoise(t,0.014,"bandpass",rand(3200,4600),2.6,vol*0.4,pan,0.001);
+  const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(200,t);
+  o.frequency.exponentialRampToValueAtTime(110,t+0.03);
+  const g=C.createGain();env(g,t,0.001,vol*0.12,0.04);
+  const p=C.createStereoPanner?C.createStereoPanner():null;
+  o.connect(g);
+  if(p){p.pan.value=pan;g.connect(p);p.connect(AU.sfx);}else g.connect(AU.sfx);
+  o.start(t);o.stop(t+0.08);
+}
+/* recoiling from the light: a thin pressurized hiss */
+export function sfxHatchHiss(vol=1,pan=0){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  const f=pannedNoise(t,rand(0.25,0.4),"bandpass",rand(3400,4400),2.2,vol*0.14,pan,0.03);
+  f.frequency.exponentialRampToValueAtTime(2200,t+0.3);
+  for(let i=0;i<5;i++)
+    pannedNoise(t+0.04+i*0.05,0.018,"highpass",5200,1,vol*0.05*(1-i/5),pan,0.001);
+}
+/* latched and screaming for its parent — a loop; stop() when it's off */
+export function startLatchScreech(){
+  if(!AU.ctx) return {stop(){}};
+  const C=AU.ctx, t=C.currentTime;
+  const out=C.createGain(); out.gain.setValueAtTime(0.0001,t);
+  out.gain.linearRampToValueAtTime(1,t+0.15); out.connect(AU.sfx);
+  const nodes=[];
+  [[2300,0.05],[1750,0.045],[1180,0.03]].forEach(([f,v])=>{
+    const o=C.createOscillator();o.type="sawtooth";o.frequency.value=f;
+    const vib=C.createOscillator();vib.frequency.value=rand(11,14);
+    const vg=C.createGain();vg.gain.value=f*0.06;
+    vib.connect(vg);vg.connect(o.frequency);
+    const bp=C.createBiquadFilter();bp.type="bandpass";bp.frequency.value=f;bp.Q.value=2.5;
+    const g=C.createGain();g.gain.value=v;
+    o.connect(bp);bp.connect(g);g.connect(out);
+    o.start(t);vib.start(t);nodes.push(o,vib);
+  });
+  /* chitter under it */
+  const len=C.sampleRate*0.6, buf=C.createBuffer(1,len,C.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*(Math.random()<0.3?1:0.1);
+  const src=C.createBufferSource();src.buffer=buf;src.loop=true;
+  const hp=C.createBiquadFilter();hp.type="highpass";hp.frequency.value=3000;
+  const cg=C.createGain();cg.gain.value=0.05;
+  src.connect(hp);hp.connect(cg);cg.connect(out);src.start(t);nodes.push(src);
+  return { stop(){
+    const tt=C.currentTime;
+    out.gain.setTargetAtTime(0.0001,tt,0.08);
+    nodes.forEach(n=>{try{n.stop(tt+0.5);}catch(e){}});
+  }};
+}
+/* the fissure's updraft: cold air moving up old stone; returns a stop handle */
+export function startUpdraftWind(){
+  if(!AU.ctx) return {stop(){}};
+  const C=AU.ctx, t=C.currentTime;
+  const len=C.sampleRate*3, buf=C.createBuffer(1,len,C.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i]=Math.random()*2-1;
+  const src=C.createBufferSource(); src.buffer=buf; src.loop=true;
+  const bp=C.createBiquadFilter(); bp.type="bandpass"; bp.frequency.value=650; bp.Q.value=0.5;
+  const lfo=C.createOscillator(); lfo.frequency.value=0.16;
+  const lg=C.createGain(); lg.gain.value=280;
+  lfo.connect(lg); lg.connect(bp.frequency); lfo.start();
+  const g=C.createGain(); g.gain.setValueAtTime(0.0001,t);
+  g.gain.linearRampToValueAtTime(0.10,t+3);
+  src.connect(bp); bp.connect(g); g.connect(AU.music); src.start(t);
+  return { g,
+    swell(k,tc=1.5){ g.gain.setTargetAtTime(0.10+0.16*k, C.currentTime, tc); },
+    stop(fade=1){ const tt=C.currentTime;
+      g.gain.setTargetAtTime(0.0001,tt,fade/3);
+      src.stop(tt+fade+1); lfo.stop(tt+fade+1); },
+  };
 }

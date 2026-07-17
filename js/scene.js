@@ -171,12 +171,19 @@ export function setLevelEnvironment(level){
   if(level===1){
     scene.background.setHex(0x030404);
     /* linear fog, pinned at both ends: clear within 10m, ~50% at the 100m far wall.
-       three's linear fog is a smoothstep over [near,far], so 50% sits at the midpoint —
+       three's linear fog is a smoothstep over [10,190], so 50% sits at the midpoint —
        far=190 puts that midpoint at (10+190)/2 = 100m. */
     scene.fog = new THREE.Fog(0x030404, 10, 190);
     hemi.color.setHex(0xe8e2d0); hemi.groundColor.setHex(0x14161c);
     hemi.intensity=0.048;
     amb.color.setHex(0x4a5060); amb.intensity=0.03;
+  } else if(level===2){
+    /* THE NEST: close air, blue-black dark — the fog eats a tunnel in ~40m */
+    scene.background = new THREE.Color(0x020506);
+    scene.fog = new THREE.Fog(0x020506, 5, 52);
+    hemi.color.setHex(0x9fc4d2); hemi.groundColor.setHex(0x0a1114);
+    hemi.intensity=0.030;
+    amb.color.setHex(0x24404a); amb.intensity=0.026;
   }
 }
 /* one fixture record, one behavior: every light in the game — level-0

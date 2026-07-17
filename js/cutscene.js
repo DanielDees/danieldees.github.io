@@ -18,9 +18,11 @@ import { AU, panTo, sfxAlert, sfxStinger, sfxClunk, sfxPowerOn,
 import { ui, renderObjectives } from "./ui.js";
 import { monsterRushTo } from "./monster.js";
 import { exitDoor } from "./props.js";
-import { win, enterTheEnd } from "./lifecycle.js";
+import { win, enterTheEnd, enterTheNest } from "./lifecycle.js";
 import { LIB, losCells2, revealHole } from "./library.js";
+import { CAVE } from "./cave.js";
 import { spiderPose, spiderDigPose } from "./spider.js";
+import { startUpdraftWind, sfxHatchTap } from "./audio.js";
 
 export const CINE={active:false, kind:null, t:0};
 let D=null;                                   // per-cutscene working data
@@ -53,6 +55,8 @@ export function updateCinematic(dt){
   else if(CINE.kind==="libIntro") updateLibIntro(dt);
   else if(CINE.kind==="terminal") updateTerminal(dt);
   else if(CINE.kind==="descend") updateDescend(dt);
+  else if(CINE.kind==="nestIntro") updateNestIntro(dt);
+  else if(CINE.kind==="ascend") updateAscend(dt);
 }
 
 /* ================= breaker: the fuse seats itself ================= */
@@ -950,6 +954,103 @@ function updateDescend(dt){
   ui.flash.style.transition="none"; ui.flash.style.background="#000";
   ui.flash.style.opacity=seg(t,0,DE_FADE);
   if(t>=DE_END){
+    CINE.active=false; CINE.kind=null; D=null;
+    /* the stair was going somewhere after all */
+    enterTheNest();
+  }
+}
+
+/* ================= THE NEST: waking under the world ================= */
+/* The black holds a beat, then lifts on rough rock and fungus-light. You
+   look back UP at the stair you rode down — its last flight sheathed in
+   fresh silk — then find your feet and the cave finds its name. */
+const NI_LIFT=1.2, NI_STAND=4.2, NI_LEVEL=6.4, NI_TITLE=7.4,
+      NI_TITLE_OFF=11.6, NI_END=12.4;
+export function startNestIntro(){
+  CINE.active=true; CINE.kind="nestIntro"; CINE.t=0;
+  ui.prompt.classList.remove("show");
+  D={fired:new Set(),
+     eye:{x:CAVE.spawn.x, z:CAVE.spawn.z},
+     yaw0:CAVE.spawnYaw};
+  /* hold the screen black; the first cue lifts it */
+  ui.flash.style.transition="none"; ui.flash.style.background="#000";
+  ui.flash.style.opacity=1;
+}
+function updateNestIntro(dt){
+  const t=CINE.t;
+  cue("lift",NI_LIFT,()=>{
+    ui.flash.style.transition="opacity 2.8s"; ui.flash.style.opacity=0;
+  });
+  cue("settle",2.0,()=>{ sfxStoneStep(0.5); });
+  cue("drip",3.1,()=>{ if(AU.cave&&AU.cave.drip) AU.cave.drip(); });
+  /* somewhere off in the dark, something small crosses loose stone */
+  cue("skit",5.6,()=>{ for(let i=0;i<5;i++)
+    setTimeout(()=>sfxHatchTap(0.22,-0.6),i*130); });
+  cue("title",NI_TITLE,()=>{
+    const el=document.getElementById("levelTitle");
+    if(el){ el.querySelector("#ltMain").textContent="THE NEST";
+      el.querySelector("#ltSub").textContent="level 8, wrong side out";
+      el.classList.add("show"); }
+  });
+  cue("titleOff",NI_TITLE_OFF,()=>{
+    const el=document.getElementById("levelTitle");
+    if(el) el.classList.remove("show");
+  });
+  /* ---- camera: on your knees at the stair's foot, head craned up at it ---- */
+  const up=seg(t,NI_LIFT,NI_STAND);
+  const cy=lerp(0.8,1.62,up);
+  /* the stair stub is behind the spawn (+z): look back and up at it first */
+  const backYaw=D.yaw0+Math.PI;
+  const level=seg(t,NI_STAND,NI_LEVEL);
+  const yaw=angLerp(backYaw, D.yaw0, level);
+  const pitch=lerp(0.95,-0.02,Math.max(up*0.35,level));
+  /* a slow scan once upright */
+  const lp=seg(t,NI_LEVEL,NI_END-0.3);
+  const scanYaw=yaw+0.5*Math.sin(lp*Math.PI*2)*Math.sin(lp*Math.PI);
+  STATE.yaw=scanYaw; STATE.pitch=pitch;
+  setCam(D.eye.x, cy+Math.sin(t*6.5)*0.012*(1-up), D.eye.z, scanYaw, pitch);
+  if(t>=NI_END){
+    CINE.active=false; CINE.kind=null; D=null;
+    /* the tending resumes; the small ones take up their territories */
+    spider.active=true;
+    if(spider.mesh) spider.mesh.visible=true;
+    renderObjectives();
+  }
+}
+
+/* ================= THE NEST: the climb into the cold ================= */
+/* The chimney is real and yours to climb — this only takes over a few
+   turns up, where the pale light has already washed out the cave below:
+   the view drifts on upward while the white closes in, the footsteps keep
+   ringing on stone, and the updraft swallows everything. */
+const AS_FADE=2.3, AS_END=6.2;
+export function startAscentEnd(){
+  if(CINE.active) return;
+  CINE.active=true; CINE.kind="ascend"; CINE.t=0;
+  ui.prompt.classList.remove("show");
+  D={fired:new Set(), stepAcc:0.25,
+     eye:{x:camera.position.x, y:camera.position.y, z:camera.position.z},
+     yaw0:STATE.yaw, pitch0:STATE.pitch,
+     wind:startUpdraftWind()};
+  D.wind.swell(1,2);
+}
+function updateAscend(dt){
+  const t=CINE.t;
+  /* the climb carries on into the light: a slow spiral drift upward */
+  const drift=Math.min(t,AS_FADE+1.0);
+  const yaw=D.yaw0+drift*0.22;
+  const cx=D.eye.x-Math.sin(yaw)*drift*0.35;
+  const cz=D.eye.z-Math.cos(yaw)*drift*0.35;
+  const cy=D.eye.y+drift*0.55+Math.sin(t*7)*0.02;
+  const pitch=lerp(D.pitch0,0.35,seg(t,0,AS_FADE));   // eyes rising to the pale
+  setCam(cx,cy,cz,yaw,pitch);
+  D.stepAcc+=dt;
+  if(D.stepAcc>=0.46){ D.stepAcc=0; sfxStoneStep(0.7+Math.random()*0.2); }
+  /* not black this time — the cold pale of somewhere that is not this */
+  ui.flash.style.transition="none"; ui.flash.style.background="#cdd7dc";
+  ui.flash.style.opacity=seg(t,0,AS_FADE);
+  if(t>=AS_END){
+    if(D.wind) D.wind.stop(2);
     CINE.active=false; CINE.kind=null; D=null;
     win();
     setTimeout(()=>{ ui.flash.style.transition="opacity 3s";

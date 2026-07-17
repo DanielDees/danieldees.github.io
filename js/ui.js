@@ -10,6 +10,7 @@ import { startGame, respawn } from "./lifecycle.js";
 export const ui={
   hud:$("hud"), objList:$("objList"), stats:$("stats"),
   stamWrap:$("staminaWrap"), stam:$("stamina"), stamPct:$("stamPct"), stamName:$("stamName"),
+  lantWrap:$("lanternWrap"), lant:$("lantern"),
   prompt:$("prompt"), hidden:$("hiddenTag"), toast:$("toast"),
   dread:$("dread"), flash:$("flash"), staticfx:$("staticfx"), vignette:$("vignette"),
   start:$("startOverlay"), how:$("howOverlay"), pause:$("pauseOverlay"),
@@ -31,6 +32,24 @@ export function renderObjectives(){
   ui.objList.innerHTML="";
   const t=Math.floor(STATE.time);
   const clock=`TIME ${String(Math.floor(t/60)).padStart(2,"0")}:${String(t%60).padStart(2,"0")}`;
+  if(STATE.level===2){
+    /* THE NEST: light, fire, and the way up */
+    const allLit=STATE.clutchesLit>=4;
+    const rows=[
+      [`Find a light`, STATE.hasLantern, !STATE.hasLantern],
+      [`Burn the brood (${STATE.clutchesLit}/4)`, allLit, STATE.hasLantern&&!allLit],
+    ];
+    /* the fissure only exists once the cave has opened it — no spoilers */
+    if(allLit) rows.push([`Climb toward the cold air`, STATE.won, !STATE.won]);
+    rows.forEach(([txt,done,active])=>{
+      const li=document.createElement("li");
+      li.textContent=txt;
+      li.className = done? "done" : active? "active" : "";
+      ui.objList.appendChild(li);
+    });
+    ui.stats.textContent=`${clock}  ·  DEATHS ${STATE.deaths}  ·  FRENZY ${STATE.frenzyT>0?"⚠":"—"}`;
+    return;
+  }
   if(STATE.level===1){
     /* THE END: find the disks, feed the terminal */
     const total=STATE.discTotal||"?";

@@ -4,11 +4,13 @@ import { STATE, KEYS } from "./state.js";
 import { renderer } from "./scene.js";
 import { ui, setPaused, toggleSound } from "./ui.js";
 import { tryInteract } from "./interact.js";
-import { debugSkipToElevator, debugSkipToTheEnd, debugWarpToTerminal } from "./lifecycle.js";
+import { debugSkipToElevator, debugSkipToTheEnd, debugWarpToTerminal, debugWarpToNest } from "./lifecycle.js";
+import { toggleLantern } from "./lantern.js";
 
 let dbg6=0, dbg6T=0;   // hidden debug chord: [6] ×3 warps to the endgame
 let dbg7=0, dbg7T=0;   // [7] ×3 drops into THE END / pockets every disk
 let dbg8=0, dbg8T=0;   // [8] ×3 warps to the terminal, disks in hand, ready for the ending
+let dbg9=0, dbg9T=0;   // [9] ×3 drops into THE NEST, lantern in hand / burns the brood down to one
 addEventListener("keydown",e=>{
   KEYS[e.code]=true;
   if(e.code==="Space") e.preventDefault();
@@ -21,6 +23,7 @@ addEventListener("keydown",e=>{
   if(!STATE.playing||STATE.dead||STATE.won) return;
   if(e.code==="KeyO") toggleSound();
   if(e.code==="KeyE") tryInteract();
+  if(e.code==="KeyF"&&!e.repeat) toggleLantern();
   /* toggle-mode crouch: each fresh press of [C] flips the latch */
   if(e.code==="KeyC"&&!e.repeat&&STATE.crouchToggle)
     STATE.crouchLatch=!STATE.crouchLatch;
@@ -38,6 +41,11 @@ addEventListener("keydown",e=>{
     const now=performance.now();
     dbg8 = (now-dbg8T<1500)? dbg8+1 : 1; dbg8T=now;
     if(dbg8>=3){ dbg8=0; debugWarpToTerminal(); }
+  }
+  if(e.code==="Digit9"){
+    const now=performance.now();
+    dbg9 = (now-dbg9T<1500)? dbg9+1 : 1; dbg9T=now;
+    if(dbg9>=3){ dbg9=0; debugWarpToNest(); }
   }
 });
 addEventListener("keyup",e=>KEYS[e.code]=false);

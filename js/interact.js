@@ -1,13 +1,14 @@
 /* ---------------- interaction ---------------- */
-import { STATE, monster } from "./state.js";
+import { STATE, KEYS, monster } from "./state.js";
 import { scene } from "./scene.js";
 import { interactables } from "./props.js";
-import { sfxPickup, sfxClunk, sfxDiscPickup, sfxDiscInsert } from "./audio.js";
-import { ui, renderObjectives } from "./ui.js";
+import { sfxPickup, sfxClunk, sfxDiscPickup, sfxDiscInsert, sfxStrikerTick } from "./audio.js";
+import { ui, renderObjectives, toast } from "./ui.js";
 import { escalateMonster } from "./monster.js";
 import { CINE, startBreakerCine, startElevatorCine, startTerminalCine } from "./cutscene.js";
 import { spiderHearDisc } from "./spider.js";
 import { startDeadPC } from "./library.js";
+import { igniteClutch } from "./cave.js";
 
 let focusedItem=null;
 export function tryInteract(){
@@ -56,7 +57,35 @@ export function tryInteract(){
   } else if(it.kind==="deadElev"){
     sfxClunk();
   }
+  /* ---- THE NEST ---- */
+  else if(it.kind==="corpse"){
+    it.taken=true; scene.remove(it.mesh); sfxPickup();
+    STATE.hasLantern=true; STATE.lanternCharge=0.65; STATE.lanternOn=false;
+    toast("The lantern still turns. The journal is waterlogged — you take both. [F] LIGHT · [R] CRANK",6200);
+  } else if(it.kind==="clutch"){
+    /* not a press — a commitment. The channel runs in updateInteractHold. */
+    if(!STATE.hasLantern) sfxClunk();
+  }
   renderObjectives();
+}
+/* ---- the ignite channel: three seconds, stationary, sparking ---- */
+let holdT=0, tickT=0;
+export function updateInteractHold(dt){
+  const it=focusedItem;
+  const valid = STATE.level===2 && it && it.kind==="clutch" && !it.taken &&
+    STATE.hasLantern && KEYS["KeyE"] && !CINE.active && !STATE.dead &&
+    STATE.grounded && !STATE.moving;
+  if(!valid){ holdT=0; return; }
+  holdT+=dt; tickT-=dt;
+  if(tickT<=0){ tickT=0.38; sfxStrikerTick(1); }
+  const pct=Math.min(99,Math.round(holdT/3*100));
+  ui.prompt.innerHTML=`<b>[E]</b> IGNITING THE CLUTCH — ${pct}%`;
+  ui.prompt.classList.add("show");
+  if(holdT>=3){
+    holdT=0;
+    igniteClutch(it);
+    ui.prompt.classList.remove("show");
+  }
 }
 export function updateFocus(){
   focusedItem=null;
