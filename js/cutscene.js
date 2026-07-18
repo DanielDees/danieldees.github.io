@@ -1003,7 +1003,7 @@ function updateNestIntro(dt){
   const backYaw=D.yaw0+Math.PI;
   const level=seg(t,NI_STAND,NI_LEVEL);
   const yaw=angLerp(backYaw, D.yaw0, level);
-  const pitch=lerp(0.95,-0.02,Math.max(up*0.35,level));
+  const pitch=lerp(1.15,-0.02,Math.max(up*0.35,level));  // high enough to catch the bore's mouth
   /* a slow scan once upright */
   const lp=seg(t,NI_LEVEL,NI_END-0.3);
   const scanYaw=yaw+0.5*Math.sin(lp*Math.PI*2)*Math.sin(lp*Math.PI);

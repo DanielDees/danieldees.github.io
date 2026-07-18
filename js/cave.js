@@ -51,6 +51,7 @@ export const CAVE={
   fires:[],                    // active clutch fires: {x,z,T,light,handle}
   lastBurn:null,               // {x,z,idx,at} — the matriarch polls this
   fissure:null,                // {x,z,r,stair,group,lights,open}
+  stairMouth:null,             // {x,z,rCut,lip} — the arrival bore's mouth in the vault
   regionDim:[1,1,1,1],         // per-brood fungus dim targets (burns kill the local glow)
   corpse:null, entrance:null,
   approachC:null, bridgeC:[],  // the fissure doorstep + bridge cells (rockfall protects these)
@@ -950,6 +951,20 @@ export function buildCave(){
   CAVE.obstacles=[]; CAVE.fires=[]; CAVE.lastBurn=null; CAVE.regionDim=[1,1,1,1];
   CAVE.shakeT=0; CAVE.dripT=2.5;
   const {entrance,central,broods,spawnC}=genCave();
+  /* the arrival bore's mouth: where the library's shaft breaks through the
+     entrance vault. Fixed before any mesh is laid so the ceiling pass can
+     cut around it and every ceiling-hung placement can keep clear. The lip
+     hangs below the lowest local ceiling so the collar hides the cut edge. */
+  {
+    const mx=CAVE.spawn.x, mz=CAVE.spawn.z+2.6;
+    let lip=1e9;
+    for(let a=0;a<24;a++)for(const rr of[0,1.7,3.4,5.1]){
+      const th=a/24*Math.PI*2;
+      lip=Math.min(lip,ceilYAt(mx+Math.cos(th)*rr, mz+Math.sin(th)*rr));
+    }
+    CAVE.stairMouth={x:mx, z:mz, rCut:3.0, lip:lip-0.6};
+    CAVE.obstacles.push({x:mx, z:mz, r:1.9});   // the debris field at the stair's foot
+  }
   /* ---- floor, vault, walls & the pit: every surface is the shared field
      sampled per vertex — floorYAt underfoot, ceilYAt overhead, wallField
      for the lateral relief — faceted at sub-cell resolution so nothing
@@ -1010,9 +1025,12 @@ export function buildCave(){
         return [xx+F.x,h,zz+F.z];
       };
       const uv=(xx,zz)=>[xx/UVm,zz/UVm];
+      const M=CAVE.stairMouth;
       for(let j=0;j<S;j++)for(let i=0;i<S;i++){
         const x0=p.x-E+i*CELL/S, x1=x0+CELL/S;
         const z0=p.z-E+j*CELL/S, z1=z0+CELL/S;
+        /* the arrival bore cut its own mouth through this vault */
+        if(Math.hypot((x0+x1)/2-M.x,(z0+z1)/2-M.z)<M.rCut) continue;
         cAcc.tri(cq(x0,z0),cq(x1,z0),cq(x1,z1),[uv(x0,z0),uv(x1,z0),uv(x1,z1)]);
         cAcc.tri(cq(x0,z0),cq(x1,z1),cq(x0,z1),[uv(x0,z0),uv(x1,z1),uv(x0,z1)]);
       }
@@ -1110,9 +1128,12 @@ export function buildCave(){
      sheet of drapery curtains (their own DoubleSide material) ---- */
   const clearOf=(x,z,r)=>CAVE.obstacles.every(o=>Math.hypot(x-o.x,z-o.z)>=o.r+r+0.3)
     && Math.hypot(x-CAVE.spawn.x,z-CAVE.spawn.z)>2.2;
+  /* nothing hangs inside the arrival bore's mouth — the cut is open sky */
+  const inMouth=(wx,wz,pad=0.6)=>
+    Math.hypot(wx-CAVE.stairMouth.x,wz-CAVE.stairMouth.z)<CAVE.stairMouth.rCut+pad;
   const stalUp=[], stalDown=[], curtains=[];
   for(const c of CAVE.chambers){
-    const n=Math.round(c.r*2.4);
+    const n=Math.round(c.r*2.9);
     for(let t=0,placed=0;t<60&&placed<n;t++){
       const a=srand()*Math.PI*2, rr=c.r*Math.sqrt(srand())*0.9;
       const x=Math.round(c.cx+Math.cos(a)*rr), y=Math.round(c.cy+Math.sin(a)*rr);
@@ -1158,12 +1179,39 @@ export function buildCave(){
         const above=Math.random()<0.5;
         const sx2=above? px+rand(-0.3,0.3) : px+rand(-1.6,1.6);
         const sz2=above? pz+rand(-0.3,0.3) : pz+rand(-1.6,1.6);
-        const hh=rand(0.7,Math.min(4.6,vault*0.4));
-        const st=new THREE.Mesh(spireGeo(hh*rand(0.14,0.2),hh,0.06));
-        st.position.set(sx2, ceilYAt(sx2,sz2)+0.18, sz2);
+        if(!inMouth(sx2,sz2,0.9)){
+          const hh=rand(0.7,Math.min(4.6,vault*0.4));
+          const st=new THREE.Mesh(spireGeo(hh*rand(0.14,0.2),hh,0.06));
+          st.position.set(sx2, ceilYAt(sx2,sz2)+0.18, sz2);
+          st.rotation.x=Math.PI; st.rotation.y=Math.random()*7;
+          stalDown.push(st);
+        }
+      }
+    }
+    /* the domes keep their own stalactite fields besides the pairs: hanger
+       clusters with no floor partner, thickest where the vault is highest —
+       purely overhead, so they cost no floor space and no obstacles */
+    const k=Math.round(c.r*2.6);
+    for(let t=0,placed=0;t<70&&placed<k;t++){
+      const a=srand()*Math.PI*2, rr=c.r*Math.sqrt(srand())*0.92;
+      const x=Math.round(c.cx+Math.cos(a)*rr), y=Math.round(c.cy+Math.sin(a)*rr);
+      if(!inB(x,y)) continue;
+      const code=grid3[y][x];
+      if(code===1||code===2||code===5||code===7) continue;
+      const p=cellToWorld3(x,y);
+      const hx=p.x+rand(-1.4,1.4), hz=p.z+rand(-1.4,1.4);
+      if(inMouth(hx,hz,1.0)) continue;
+      const vault=Math.min(cH[y][x],cH[y][x+1],cH[y+1][x],cH[y+1][x+1]);
+      const n2=1+Math.floor(srand()*3);
+      for(let i=0;i<n2;i++){
+        const qx=hx+rand(-0.8,0.8), qz=hz+rand(-0.8,0.8);
+        const hh=rand(0.5,Math.min(4.2,vault*0.38));
+        const st=new THREE.Mesh(spireGeo(hh*rand(0.13,0.2),hh,0.06));
+        st.position.set(qx, ceilYAt(qx,qz)+0.18, qz);
         st.rotation.x=Math.PI; st.rotation.y=Math.random()*7;
         stalDown.push(st);
       }
+      placed++;
     }
   }
   /* ---- tunnel country: soda straws, wall curtains, stream-bank
@@ -1174,9 +1222,9 @@ export function buildCave(){
     const p=cellToWorld3(x,y);
     const vault=Math.min(cH[y][x],cH[y][x+1],cH[y+1][x],cH[y+1][x+1]);
     /* soda straws cluster around a shared seep point in the ceiling */
-    if((code===0||code===3)&&srand()<0.14){
+    if((code===0||code===3)&&srand()<0.21){
       const cx0=p.x+rand(-1.3,1.3), cz0=p.z+rand(-1.3,1.3);
-      const n=2+Math.floor(srand()*4);
+      const n=inMouth(cx0,cz0,1.0)? 0 : 3+Math.floor(srand()*4);
       for(let i=0;i<n;i++){
         const hh=rand(0.25,0.85);
         const sx=cx0+rand(-0.5,0.5), sz=cz0+rand(-0.5,0.5);
@@ -1186,7 +1234,7 @@ export function buildCave(){
         stalDown.push(st);
       }
       /* a patient seep gets an answering nub on the floor below */
-      if(code===0&&Math.random()<0.4&&clearOf(cx0,cz0,0.2)){
+      if(n&&code===0&&Math.random()<0.4&&clearOf(cx0,cz0,0.2)){
         const nub=new THREE.Mesh(spireGeo(rand(0.06,0.11),rand(0.12,0.3),0.05));
         nub.position.set(cx0,floorYAt(cx0,cz0),cz0);
         stalUp.push(nub);
@@ -1195,7 +1243,7 @@ export function buildCave(){
     /* drapery curtains where a wall meets a high vault — hung from the
        real ceiling edge at that face (ceilYAt at the anchor), shifted with
        the wall's own relief so the root stays against the rock */
-    if(code===0&&srand()<0.07){
+    if(code===0&&srand()<0.10){
       for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){
         if(codeAt(x+dx,y+dy)!==1) continue;
         const ax=p.x+dx*(E-0.30), az=p.z+dy*(E-0.30);
@@ -1299,7 +1347,7 @@ export function buildCave(){
         const jz=p.z+dy*(E-0.04)+(dy?0:rand(-1.2,1.2));
         /* junction fans: top edge pinned along the wall-ceiling line —
            ceilYAt at the anchor, ridden out on the wall's own relief */
-        if(!sq&&Math.random()<density*0.65){
+        if(!sq&&Math.random()<density*0.75){
           const eV=ceilYAt(jx,jz);
           const wdt=rand(0.8,2.0), hgt=rand(0.45,0.95), tilt=rand(0.5,1.0);
           const F=wallField(jx,eV-0.1,jz);
@@ -1352,7 +1400,8 @@ export function buildCave(){
       }
       /* hammocks slung under the vault on real guy-lines — each guy runs
          to the actual ceiling above its own corner */
-      if(!sq&&density>0.35&&Math.random()<(density-0.2)*0.8){
+      if(!sq&&density>0.3&&Math.random()<(density-0.18)*0.9
+         &&!inMouth(p.x,p.z,1.2)){
         const wdt=rand(1.1,2.4), dep=rand(1.0,2.2), sag=Math.min(wdt,dep)*rand(0.16,0.3);
         const hx=p.x+rand(-0.9,0.9), hz=p.z+rand(-0.9,0.9);
         const yaw=Math.random()*Math.PI, hy=ceilYAt(hx,hz)-rand(0.35,1.1);
@@ -1372,12 +1421,13 @@ export function buildCave(){
       }
       /* streamers hanging from the vault — thickest in the low tunnels */
       {
-        const pr= sq? 0.4 : density*(vault<5.4?0.75:0.45);
-        let n=(Math.random()<pr?1:0)+(Math.random()<pr*0.5?1:0)+(Math.random()<pr*0.25?1:0);
+        const pr= sq? 0.4 : density*(vault<5.4?0.75:0.6);
+        let n=(Math.random()<pr?1:0)+(Math.random()<pr*0.55?1:0)+(Math.random()<pr*0.3?1:0);
         while(n--){
           const wx2=p.x+rand(-0.9,0.9), wz2=p.z+rand(-0.9,0.9);
+          if(inMouth(wx2,wz2,0.5)) continue;
           const rootY=ceilYAt(wx2,wz2)+0.1;
-          const len=rand(0.5,Math.min(2.6,rootY*0.5)), wdt=rand(0.12,0.35);
+          const len=rand(0.5,Math.min(3.4,rootY*0.55)), wdt=rand(0.12,0.35);
           const w=new THREE.Mesh(webStreamerGeo(wdt,len));
           w.position.set(wx2, rootY-len/2, wz2);
           w.rotation.y=Math.random()*Math.PI;
@@ -1438,26 +1488,34 @@ export function buildCave(){
         pickSheet(w);
       }
     }
-    /* the way back up, silked shut: a torn lid over the stair mouth,
-       drapes down its collar, anchor lines radiating into the cave */
+    /* the way back up, silked shut: a torn lid across the bore's mouth,
+       drapes down its flowstone collar, anchor lines radiating out along
+       the vault, and guys trussing the broken flight that hangs below */
     {
-      const sx=CAVE.spawn.x, sz=CAVE.spawn.z+2.6, sh=ceilYAt(sx,sz);
-      const lid=new THREE.Mesh(webHammockGeo(3.0,3.0,0.5));
+      const M=CAVE.stairMouth, sx=M.x, sz=M.z, sh=M.lip;
+      const lid=new THREE.Mesh(webHammockGeo(4.4,4.4,0.7));
       lid.rotation.order="YXZ"; lid.rotation.y=Math.random()*Math.PI; lid.rotation.x=-Math.PI/2;
-      lid.position.set(sx,sh-0.35,sz);
+      lid.position.set(sx,sh+0.25,sz);
       tornV.push(lid);
-      for(let i=0;i<5;i++){
-        const a=i/5*Math.PI*2+rand(-0.3,0.3), len=rand(1.1,2.0);
-        const w=new THREE.Mesh(webSheetGeo(rand(0.9,1.5),len,rand(0.2,0.4)));
-        w.position.set(sx+Math.cos(a)*1.5, sh-0.3-len/2, sz+Math.sin(a)*1.5);
+      for(let i=0;i<7;i++){
+        const a=i/7*Math.PI*2+rand(-0.3,0.3), len=rand(1.4,2.6);
+        const w=new THREE.Mesh(webSheetGeo(rand(1.1,1.9),len,rand(0.2,0.45)));
+        w.position.set(sx+Math.cos(a)*2.5, sh+0.2-len/2, sz+Math.sin(a)*2.5);
         w.rotation.y=-a+Math.PI/2;
         pickSheet(w);
       }
-      for(let i=0;i<8;i++){
+      for(let i=0;i<10;i++){
         const a=Math.random()*Math.PI*2;
-        strands.push(strandMesh(sx+Math.cos(a)*0.9, sh-rand(0.1,0.5), sz+Math.sin(a)*0.9,
-          sx+Math.cos(a)*rand(2.5,4.0), rand(0.4,sh*0.7), sz+Math.sin(a)*rand(2.5,4.0),
-          rand(0.03,0.07)));
+        const ex=sx+Math.cos(a)*rand(4.0,6.5), ez=sz+Math.sin(a)*rand(4.0,6.5);
+        strands.push(strandMesh(sx+Math.cos(a)*2.3, sh+rand(0,0.4), sz+Math.sin(a)*2.3,
+          ex, ceilYAt(ex,ez)-rand(0,0.6), ez, rand(0.03,0.07)));
+      }
+      /* the collapsed flight never fell all the way — the brood hung it back */
+      for(let i=0;i<6;i++){
+        const a=Math.random()*Math.PI*2;
+        strands.push(strandMesh(sx+Math.cos(a)*2.1, rand(3.1,5.2), sz+Math.sin(a)*2.1,
+          sx+Math.cos(a)*rand(2.6,4.6), rand(0.3,1.2), sz+Math.sin(a)*rand(2.6,4.6),
+          rand(0.03,0.06)));
       }
     }
     const flush=(arr,mat)=>{ if(arr.length){ scene.add(mergeStatic(arr,mat));
@@ -1780,27 +1838,103 @@ export function buildCave(){
     l.position.set(b.center.x,1.2,b.center.z); scene.add(l);
     b.fireLight=l;
   }
-  /* ---- the arrival: a stair out of the ceiling that goes nowhere now ---- */
+  /* ---- the arrival: the library's shaft, seen from the wrong end ----
+     The bore you rode down comes THROUGH the vault: a stone throat ringed
+     in flowstone, and the same stair — same treads, same pitch, the same
+     helix you descended — winding up into a haze that swallows it (the
+     library is a long way up). Its lowest flight collapsed under ages of
+     silk: the way back reads, and refuses. */
   {
-    const p=CAVE.spawn;
-    const sx=p.x, sz=p.z+2.6;
-    const h=ceilYAt(sx,sz);
-    const stepGeo=new THREE.BoxGeometry(1.2,0.22,0.95);
-    const stepMat=new THREE.MeshPhongMaterial({map:texCaveRock, color:0xb6c2ca,
-      emissive:0x0a1014, specular:0x141a20, shininess:10});
-    const steps=[];
-    const n=Math.floor(h/0.28);
-    for(let i=0;i<n;i++){
-      const th=Math.PI/2+i*0.42;
-      const m=new THREE.Mesh(stepGeo,stepMat);
-      m.position.set(sx+Math.cos(th)*1.35, h-0.2-i*0.28, sz+Math.sin(th)*1.35);
-      m.rotation.y=-th;
-      steps.push(m);
+    const M=CAVE.stairMouth, sx=M.x, sz=M.z, yL=M.lip;
+    /* the flowstone collar: welds the vault's jagged cut edge to the bore.
+       Inner lip tucked inside the bore's foot, outer skirt carried up past
+       the surrounding ceiling — no seam can ever show from below. */
+    {
+      const SEG=26, acc=new QuadAcc();
+      const rows=[[2.55,0,0.10],[3.6,0.55,0.22],[5.05,1,0.12]]; // [radius, lift, drip jitter]
+      const cols=[];
+      for(let s=0;s<=SEG;s++){
+        const th=(s%SEG)/SEG*Math.PI*2;          // s=SEG re-samples s=0: the seam closes
+        const col=[];
+        for(const[rBase,k,dj]of rows){
+          const rr=rBase+Math.sin(th*7+rBase*3)*dj+Math.sin(th*3+rBase)*dj*0.7;
+          const px=sx+Math.cos(th)*rr, pz=sz+Math.sin(th)*rr;
+          col.push([px, lerp(yL+Math.sin(th*5+1.3)*0.14, ceilYAt(px,pz)+0.5, k), pz]);
+        }
+        cols.push(col);
+      }
+      for(let s=0;s<SEG;s++)for(let r=0;r<2;r++){
+        const a=cols[s][r], b=cols[s+1][r], c=cols[s+1][r+1], d=cols[s][r+1];
+        const u0=s/SEG*10, u1=(s+1)/SEG*10;
+        acc.tri(a,b,c,[[u0,r],[u1,r],[u1,r+1]]);
+        acc.tri(a,c,d,[[u0,r],[u1,r+1],[u0,r+1]]);
+      }
+      scene.add(acc.mesh(curtainMat));           // DoubleSide calcite, like the drapery
     }
-    scene.add(mergeStatic(steps,stepMat));
-    stepGeo.dispose();
-    /* (the silk sealing this mouth is built with the web pass above) */
-    CAVE.obstacles.push({x:sx, z:sz, r:1.5});
+    /* the bore: earth-stained stone, slightly belled at the break like the
+       library's, rising into a stacked haze that goes lightless — the dark
+       up there is the library's, not the cave's */
+    {
+      const bt=texCaveRock.clone(); bt.needsUpdate=true; bt.repeat.set(5,3);
+      const boreMat=new THREE.MeshPhongMaterial({map:bt, color:0xa6988a,
+        emissive:0x04060a, specular:0x0c0e12, shininess:8, side:THREE.BackSide});
+      const BLEN=14.5;
+      const bore=new THREE.Mesh(new THREE.CylinderGeometry(2.75,2.95,BLEN,32,1,true),boreMat);
+      bore.position.set(sx, yL-0.3+BLEN/2, sz); scene.add(bore);
+      const cap=new THREE.Mesh(new THREE.CircleGeometry(2.9,32),
+        new THREE.MeshBasicMaterial({color:0x020508}));
+      cap.rotation.x=Math.PI/2; cap.position.set(sx,yL+13.4,sz); scene.add(cap);
+      [[1.4,0.08],[3.4,0.16],[5.6,0.28],[7.8,0.45],[10.0,0.68],[12.2,0.9]]
+      .forEach(([dy,op],i,arr)=>{
+        const c=new THREE.Color(0x24404e).lerp(new THREE.Color(0x02040a),i/(arr.length-1));
+        const m=new THREE.MeshBasicMaterial({color:c, transparent:true, opacity:op,
+          depthWrite:false, side:THREE.DoubleSide});
+        const d=new THREE.Mesh(new THREE.CircleGeometry(2.72,32),m);
+        d.rotation.x=-Math.PI/2; d.position.set(sx,yL+dy,sz); scene.add(d);
+      });
+      /* one cold breath in the throat so the collar and the silk lid read */
+      const l=new THREE.PointLight(0x6e94a6,0.5,9,1.7);
+      l.position.set(sx,yL+1.4,sz); scene.add(l);
+    }
+    /* the stair: the library's own numbers (rise 4.48/turn, 16 treads,
+       radius 2.08) so it IS that stair, continued — phase locked to height
+       so the helix runs unbroken from the haze down to the break */
+    {
+      const stepMat=new THREE.MeshPhongMaterial({map:texCaveRock, color:0xb6c2ca,
+        emissive:0x0a1014, specular:0x141a20, shininess:10});
+      const stepGeo=new THREE.BoxGeometry(1.3,0.24,1.05);
+      const RISE=4.48, STEPS=16, rc=2.08;
+      const steps=[];
+      const yTop=yL+12.6, yBreak=3.3;
+      const n=Math.ceil((yTop-yBreak)/(RISE/STEPS));
+      for(let i=0;i<n;i++){
+        const yy=yBreak+i*(RISE/STEPS);
+        const th=Math.PI/2+(yTop-yy)/RISE*Math.PI*2;
+        const m=new THREE.Mesh(stepGeo,stepMat);
+        m.position.set(sx+Math.cos(th)*rc, yy, sz+Math.sin(th)*rc);
+        m.rotation.y=-th;
+        if(i<3){                       // the break: the last treads sag toward the fall
+          m.position.y-=(3-i)*0.08;
+          m.rotation.z=(Math.random()-0.5)*0.3; m.rotation.x=(Math.random()-0.5)*0.22;
+        }
+        steps.push(m);
+      }
+      /* the fallen flight, where it landed: snapped treads half-sunk at the foot */
+      for(let i=0;i<8;i++){
+        const a=Math.random()*Math.PI*2, rr=rand(0.3,1.8);
+        const m=new THREE.Mesh(stepGeo,stepMat);
+        const bx=sx+Math.cos(a)*rr, bz=sz+Math.sin(a)*rr;
+        const s=rand(0.55,1);
+        m.scale.set(s,s,s*rand(0.5,1));
+        m.position.set(bx, floorYAt(bx,bz)+rand(0.0,0.28), bz);
+        m.rotation.set(rand(-0.5,0.5),Math.random()*Math.PI*2,rand(-0.6,0.6));
+        steps.push(m);
+      }
+      scene.add(mergeStatic(steps,stepMat));
+      stepGeo.dispose();
+    }
+    /* (the silk sealing this mouth is built with the web pass above;
+       the debris obstacle was pushed with the mouth, before placement) */
   }
   /* ---- the corpse, the lantern, the journal ---- */
   {
