@@ -40,10 +40,11 @@ not for you, but to open the way down. It did warn you.
 **THE NEST — the cave below.** You followed it home. The stair gives up into a karst
 warren lit only by veins of blue fungus: crawl-squeezes the spider can't follow you
 through, a black stream that hides your footsteps while you wade it, loud scree, a rock
-bridge over a chasm, and silk that thickens toward what it protects. On a corpse near
-the bottom you find a **hand-crank lantern**: its beam physically drives the eyeless,
-cat-sized **hatchlings** back — but cranking it is loud, and a beam held burning in open
-cave is a beacon the **matriarch** reads fluently. She tends her four egg clutches on a
+bridge over a chasm, and silk that thickens toward what it protects. Beside the dead
+stair, a corpse still cradles a **hand-crank lantern**, its ember glowing faintly in
+all that blue: take it, and its warm ring of flame-light physically drives the eyeless,
+cat-sized **hatchlings** back all around you — but cranking it is loud, and a flame held
+burning in open cave is a beacon the **matriarch** reads fluently. She tends her four egg clutches on a
 patrol; near the nests the silk-laced ground carries your footfalls to her at twice the
 range. Ignite all four clutches — a three-second channel, stationary, sparking — and
 survive what each burn wakes: a frenzy, a rockfall that reshapes the maze, and less
@@ -68,16 +69,21 @@ track by ear.
 
 ## Changelog
 
-### v3.0.0 (2026-07-17)
+### v3.0.0 (2026-07-18)
 - **A third level: THE NEST.** The spiral stair below the library now lands somewhere —
   a procedurally carved karst cave (chambers, winding tunnels, crawl-squeezes, a black
   stream, scree aprons, one rock bridge over a chasm) lit only by bioluminescent fungus
   wired into the same flicker-radar light pool as every floor above it. Cosmetic silk
   thickens toward the brood chambers: you navigate by reading how afraid you should be.
-- **The crank lantern.** Found on a corpse with the level's journal: the beam repels
-  the brood, the charge runs down, cranking it back up is loud, and a beam held burning
-  in open cave steers the matriarch to you. Its spotlight lives in the scene from boot
-  at intensity 0, so switching it on can never trigger a shader recompile.
+- **The crank lantern.** Found on a corpse beside the dead stair — the dropped lantern
+  still holds a **dying ember**, a warm breathing point of light in the fungus blue that
+  marks the pickup (with the journal lying open beside it) from across the chamber. In
+  hand it is a *lantern*, not a flashlight: an all-round pool of warm orange flame-light
+  that breathes with the slow unevenness of a real mantle (plus a soft wide forward wash —
+  no cone edge on the rock). The glow repels the brood in every direction, the charge
+  runs down, cranking it back up is loud, and a flame held burning in open cave steers
+  the matriarch to you. Both of its lights live in the scene from boot at intensity 0,
+  so switching it on can never trigger a shader recompile.
 - **The hatchlings.** 5–6 eyeless, sound-hunting, photophobic skitterers with their own
   territories. One that reaches you latches on — stamina bleed, screen-corner horror,
   and a screech that feeds the matriarch your position until you shake it off or burn
@@ -104,26 +110,38 @@ track by ear.
   stand on, the rock is guaranteed to clear twice your height). Tunnels are 8m
   bores you could drive a bus through; every surface, the player's feet, the
   spiders' legs and every web/fungus/dripstone anchor sample the same terrain
-  functions, so nothing floats and nothing buries. Bump-mapped strata rock;
+  functions, so nothing floats and nothing buries. The way you came is still
+  there: the library's own descent shaft comes down **through the vault** —
+  a round stone bore ringed in flowstone, the same spiral stair (same treads,
+  same pitch, the same helix) winding up out of sight into a haze that goes
+  lightless, its lowest flight collapsed into half-sunk treads and silked
+  shut — the mirror, wrong side out, of looking down the hole behind the
+  library desk. Bump-mapped strata rock;
   real dripstone grown from lathe profiles with drip-ring bulges,
   per-vertex noise and a pale streaked calcite skin (nothing is a cone), in
   location-bred varieties — knobby spire stacks on flowstone mounds answered by
   hanging spires, full floor-to-vault columns waisted where the pair met,
   drapery curtains folded off the chamber walls, flowstone cascades spilling
-  down the stream banks, snapped stumps and toppled spires in the scree, and
-  soda straws clustered around ceiling seeps — merged to three draws total;
+  down the stream banks, snapped stumps and toppled spires in the scree,
+  soda straws clustered around ceiling seeps, and partner-less stalactite
+  fields hung thick across every chamber dome — merged to three draws total;
   a real fungus ecosystem — lathe-built
   mushrooms skinned by a procedural atlas (glowing gill undersides, banded conk
   tops, pore-speckled bulbs) in location-driven varieties: shelf conks climbing
-  the chamber walls, toadstool families on the floors, green coral fingers on
-  the stream banks, pale puffballs in the scree, all blushing violet near the
-  brood chambers — plus additive glow halos and living veins; webs that are
+  the chamber walls in size classes from palm-width juveniles to metre-wide
+  ancients mounted above head height, toadstool families on the floors, green
+  coral fingers on the stream banks, pale puffballs in the scree, all blushing
+  violet near the brood chambers — every colony trailing real **mycelium
+  cords**, thin glowing root-ribbons that follow the displaced rock point by
+  point (no painted-on decals anywhere); webs that are
   silk STRUCTURES, not wall decals — sagging corner sheets strung between wall
   faces, cobweb fans hung off the wall-ceiling line, funnel-weaver retreats
   diving into the floor junctions, hammocks slung on real guy-lines, twisting
   streamers that brush your face in the low tunnels, torn veils choking the
   squeeze mouths, old stalagmites wrapped and staked in silk, a layered canopy
-  of generations directly over every brood, and the stair you arrived by webbed
+  of generations directly over every brood, every chamber dome **rigged like
+  the den it is** — sheets slung under the vault, veils off the stalactite
+  line, lines strung vault-to-vault — and the mouth you arrived by webbed
   shut — all of it lit silk that glistens under the lantern, dense by brood
   proximity, merged to seven draws; a drifting
   caustic skin on the stream;
