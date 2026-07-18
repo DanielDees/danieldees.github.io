@@ -20,7 +20,7 @@ import { scene, camera, renderer, lights, makeLightRecord, markShared,
          mergeStatic, freezeStaticScene } from "./scene.js";
 import { makeCanvas, texCaveRock, texCaveFloor, texDripstone,
          makeWebSheetTexture, makeCobwebTexture, makeStrandTexture, makeFunnelTexture,
-         makeFungusTexture, makeFungusSkin, scaleBoxUV } from "./textures.js";
+         makeFungusSkin, scaleBoxUV } from "./textures.js";
 import { addInteractable } from "./props.js";
 import { die } from "./lifecycle.js";
 import { renderObjectives, toast } from "./ui.js";
@@ -52,6 +52,7 @@ export const CAVE={
   lastBurn:null,               // {x,z,idx,at} — the matriarch polls this
   fissure:null,                // {x,z,r,stair,group,lights,open}
   stairMouth:null,             // {x,z,rCut,lip} — the arrival bore's mouth in the vault
+  corpseP:null,                // {x,z} — fixed before placement so nothing grows through it
   regionDim:[1,1,1,1],         // per-brood fungus dim targets (burns kill the local glow)
   corpse:null, entrance:null,
   approachC:null, bridgeC:[],  // the fissure doorstep + bridge cells (rockfall protects these)
@@ -600,8 +601,6 @@ const webFunnelMat= silkMat(makeFunnelTexture());
 webStrandMat.color.set(0xa8aeb2); webStrandMat.opacity=0.75;   // guys read as silk, not wire
 const webAllMats=[...webSheetMats,webTornMat,...webFanMats,webStrandMat,webFunnelMat];
 webAllMats.forEach(m=>{markShared(m); markShared(m.map);});
-const fungusTexes=[makeFungusTexture(),makeFungusTexture(),makeFungusTexture()];
-fungusTexes.forEach(t=>markShared(t));
 /* the mushroom skin atlas (diffuse + emissive) shared by every colony */
 const FSKIN=makeFungusSkin();
 markShared(FSKIN.map,FSKIN.emit);
@@ -661,6 +660,33 @@ function puffGeo(r){
   const g=new THREE.SphereGeometry(r,8,7);
   const uv=g.attributes.uv;
   for(let i=0;i<uv.count;i++) uv.setY(i, fv(F_BULB, uv.getY(i)*0.85+0.05));
+  return g;
+}
+/* a mycelium cord: a thin tapering ribbon that follows the DISPLACED rock
+   surface point by point — real geometry, not a decal (it undulates with
+   the relief it grows over). UVs run through the glowing bulb strip, so
+   the cords light up with the colony and blush violet with it. */
+function cordGeo(pts){
+  const pos=[],nor=[],uv=[],idx=[];
+  const N=pts.length;
+  for(let i=0;i<N;i++){
+    const p=pts[i], q=pts[Math.min(i+1,N-1)], o=pts[Math.max(i-1,0)];
+    let dx=q.x-o.x, dy=q.y-o.y, dz=q.z-o.z;
+    const dl=Math.hypot(dx,dy,dz)||1; dx/=dl; dy/=dl; dz/=dl;
+    /* ribbon side = path direction × surface normal */
+    let sx=dy*p.nz-dz*p.ny, sy=dz*p.nx-dx*p.nz, sz=dx*p.ny-dy*p.nx;
+    const sl=Math.hypot(sx,sy,sz)||1, w=p.w/2;
+    sx*=w/sl; sy*=w/sl; sz*=w/sl;
+    pos.push(p.x-sx,p.y-sy,p.z-sz, p.x+sx,p.y+sy,p.z+sz);
+    nor.push(p.nx,p.ny,p.nz, p.nx,p.ny,p.nz);
+    uv.push(i*0.8, fv(F_BULB,0.12), i*0.8, fv(F_BULB,0.88));
+    if(i<N-1){ const a=i*2; idx.push(a,a+1,a+3, a,a+3,a+2); }
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute("position",new THREE.Float32BufferAttribute(pos,3));
+  g.setAttribute("normal",new THREE.Float32BufferAttribute(nor,3));
+  g.setAttribute("uv",new THREE.Float32BufferAttribute(uv,2));
+  g.setIndex(idx);
   return g;
 }
 
@@ -964,6 +990,16 @@ export function buildCave(){
     }
     CAVE.stairMouth={x:mx, z:mz, rCut:3.0, lip:lip-0.6};
     CAVE.obstacles.push({x:mx, z:mz, r:1.9});   // the debris field at the stair's foot
+    /* the corpse lies beside the dead stair (the wanderer never got far).
+       Fixed HERE, before the dripstone/web passes run, so nothing grows
+       through the body or the lantern — its obstacle is respected by
+       every later clearOf. */
+    {
+      let px=mx-3.2, pz=mz+0.6;
+      if(cellAt3(px,pz)===1){ px=mx+3.2; pz=mz-0.6; }
+      CAVE.corpseP={x:px, z:pz};
+      CAVE.obstacles.push({x:px, z:pz, r:1.0});
+    }
   }
   /* ---- floor, vault, walls & the pit: every surface is the shared field
      sampled per vertex — floorYAt underfoot, ceilYAt overhead, wallField
@@ -1133,8 +1169,8 @@ export function buildCave(){
     Math.hypot(wx-CAVE.stairMouth.x,wz-CAVE.stairMouth.z)<CAVE.stairMouth.rCut+pad;
   const stalUp=[], stalDown=[], curtains=[];
   for(const c of CAVE.chambers){
-    const n=Math.round(c.r*2.9);
-    for(let t=0,placed=0;t<60&&placed<n;t++){
+    const n=Math.round(c.r*3.6);
+    for(let t=0,placed=0;t<85&&placed<n;t++){
       const a=srand()*Math.PI*2, rr=c.r*Math.sqrt(srand())*0.9;
       const x=Math.round(c.cx+Math.cos(a)*rr), y=Math.round(c.cy+Math.sin(a)*rr);
       if(!inB(x,y)||grid3[y][x]!==0) continue;
@@ -1175,7 +1211,7 @@ export function buildCave(){
       placed++;
       CAVE.obstacles.push({x:px,z:pz,r:0.45});
       /* its answer overhead — often directly above (they grow toward each other) */
-      if(Math.random()<0.75){
+      if(Math.random()<0.9){
         const above=Math.random()<0.5;
         const sx2=above? px+rand(-0.3,0.3) : px+rand(-1.6,1.6);
         const sz2=above? pz+rand(-0.3,0.3) : pz+rand(-1.6,1.6);
@@ -1191,8 +1227,8 @@ export function buildCave(){
     /* the domes keep their own stalactite fields besides the pairs: hanger
        clusters with no floor partner, thickest where the vault is highest —
        purely overhead, so they cost no floor space and no obstacles */
-    const k=Math.round(c.r*2.6);
-    for(let t=0,placed=0;t<70&&placed<k;t++){
+    const k=Math.round(c.r*5.2);
+    for(let t=0,placed=0;t<150&&placed<k;t++){
       const a=srand()*Math.PI*2, rr=c.r*Math.sqrt(srand())*0.92;
       const x=Math.round(c.cx+Math.cos(a)*rr), y=Math.round(c.cy+Math.sin(a)*rr);
       if(!inB(x,y)) continue;
@@ -1222,9 +1258,9 @@ export function buildCave(){
     const p=cellToWorld3(x,y);
     const vault=Math.min(cH[y][x],cH[y][x+1],cH[y+1][x],cH[y+1][x+1]);
     /* soda straws cluster around a shared seep point in the ceiling */
-    if((code===0||code===3)&&srand()<0.21){
+    if((code===0||code===3)&&srand()<0.38){
       const cx0=p.x+rand(-1.3,1.3), cz0=p.z+rand(-1.3,1.3);
-      const n=inMouth(cx0,cz0,1.0)? 0 : 3+Math.floor(srand()*4);
+      const n=inMouth(cx0,cz0,1.0)? 0 : 4+Math.floor(srand()*5);
       for(let i=0;i<n;i++){
         const hh=rand(0.25,0.85);
         const sx=cx0+rand(-0.5,0.5), sz=cz0+rand(-0.5,0.5);
@@ -1488,6 +1524,55 @@ export function buildCave(){
         pickSheet(w);
       }
     }
+    /* the den reads from the CEILING: every chamber dome is rigged —
+       sheets slung under the vault, veils hanging off the stalactite
+       line, long streamers, and lines crisscrossing between vault points.
+       Heaviest over the broods, but even the entrance is webbed: this is
+       their house, all of it. */
+    for(const c of CAVE.chambers){
+      const bd=Math.min(...broods.map(b=>Math.hypot(c.cx-b.cx,c.cy-b.cy)));
+      const dens=clamp(1-bd/16,0.4,1);
+      const k=Math.round(c.r*c.r*2.1*dens);
+      for(let t=0,placed=0;t<k*3&&placed<k;t++){
+        const a=srand()*Math.PI*2, rr=c.r*Math.sqrt(srand())*0.95;
+        const x=Math.round(c.cx+Math.cos(a)*rr), y=Math.round(c.cy+Math.sin(a)*rr);
+        if(!inB(x,y)) continue;
+        const code=grid3[y][x];
+        if(code===1||code===5||code===7) continue;
+        const p=cellToWorld3(x,y);
+        const hx=p.x+rand(-1.6,1.6), hz=p.z+rand(-1.6,1.6);
+        if(inMouth(hx,hz,0.8)) continue;
+        const cv=ceilYAt(hx,hz);
+        const roll=Math.random();
+        if(roll<0.30){                     // a slung sheet under the vault
+          const wdt=rand(1.4,3.2), dep=rand(1.2,2.8);
+          const w=new THREE.Mesh(webHammockGeo(wdt,dep,Math.min(wdt,dep)*rand(0.18,0.32)));
+          w.rotation.order="YXZ"; w.rotation.y=Math.random()*Math.PI;
+          w.rotation.x=-Math.PI/2+rand(-0.22,0.22);
+          w.position.set(hx,cv-rand(0.25,0.9),hz);
+          pickSheet(w);
+        } else if(roll<0.55){              // a veil hanging off the stalactite line
+          const wdt=rand(0.8,1.9), hgt=rand(0.8,2.0);
+          const w=new THREE.Mesh(webSheetGeo(wdt,hgt,rand(0.1,0.25)));
+          w.rotation.y=Math.random()*Math.PI;
+          w.position.set(hx,cv-0.15-hgt/2,hz);
+          pickFan(w);
+        } else if(roll<0.80){              // long streamers
+          const len=rand(1.2,Math.min(4.5,cv*0.45));
+          const w=new THREE.Mesh(webStreamerGeo(rand(0.15,0.4),len));
+          w.position.set(hx,cv+0.05-len/2,hz);
+          w.rotation.y=Math.random()*Math.PI;
+          pickSheet(w);
+        } else {                           // a line strung between vault points
+          const a2=Math.random()*Math.PI*2, L2=rand(2.2,5.2);
+          const ex=hx+Math.cos(a2)*L2, ez=hz+Math.sin(a2)*L2;
+          if(!inMouth(ex,ez,0.5))
+            strands.push(strandMesh(hx,cv-rand(0.1,0.5),hz,
+              ex,ceilYAt(ex,ez)-rand(0.1,0.6),ez,rand(0.03,0.06)));
+        }
+        placed++;
+      }
+    }
     /* the way back up, silked shut: a torn lid across the bore's mouth,
        drapes down its flowstone collar, anchor lines radiating out along
        the vault, and guys trussing the broken flight that hangs below */
@@ -1603,7 +1688,8 @@ export function buildCave(){
          lantern, emissiveMap gives gill-lines/rims/pores their own glow
          while lights.js drives the emissive COLOR (so shapes keep shading) */
       const glowMat=new THREE.MeshPhongMaterial({color:0xc9d2cf, map:FSKIN.map,
-        emissive:0x081418, emissiveMap:FSKIN.emit, specular:0x2a4a50, shininess:30});
+        emissive:0x081418, emissiveMap:FSKIN.emit, specular:0x2a4a50, shininess:30,
+        side:THREE.DoubleSide});           // the mycelium cords are open ribbons
       const parts=[];
       let ax=p.x, az=p.z, hh=0.55, fdx=0, fdy=0, faceRot=0, onWall=false;
       const fy0=floorYAt(p.x,p.z);
@@ -1612,20 +1698,27 @@ export function buildCave(){
         fdx=dx; fdy=dy; onWall=true;
         const bx=p.x+dx*(E-0.10), bz=p.z+dy*(E-0.10);
         const fyc=floorYAt(bx,bz);
-        hh=fyc+rand(0.6,Math.min(2.6,ceilH[y][x]-0.6));
+        /* the colony's size class: nothing smaller than 2× the old
+           shelves, the rare ancient one a metre-plus across (heavily
+           skewed — most sit 2-4×). The big ones ride HIGH on the face,
+           above head height, like real bracket giants. */
+        const sf=2+8*Math.pow(srand(),2.6);
+        hh=fyc+rand(0.5+sf*0.22, Math.max(1.4+sf*0.22, Math.min(ceilH[y][x]-0.5, 1.6+sf*0.55)));
         faceRot = dx? (dx>0?-Math.PI/2:Math.PI/2) : (dy>0?Math.PI:0);
         ax=bx; az=bz;
         /* 1-2 shelf runs climbing the rock face, conks shrinking as they
            go — each shelf rides the wall's own relief so it stays socketed */
         const runs=1+(srand()<0.6?1:0);
+        let maxRc=0, lowY=1e9;
         for(let rI=0;rI<runs;rI++){
           const off=(srand()-0.5)*1.7;                    // slide along the wall
           const cx2=bx+(dy!==0?off:0), cz2=bz+(dx!==0?off:0);
           let yy=Math.max(fyc+0.35,hh-rand(0.3,0.8));
-          const n=3+Math.floor(srand()*3);
+          const n=sf>4? 2+Math.floor(srand()*2) : 3+Math.floor(srand()*3);
           for(let i=0;i<n;i++){
             if(yy>ceilYAt(cx2,cz2)-0.35) break;
-            const rc=rand(0.16,0.3)*(1-0.4*i/n);
+            const rc=rand(0.16,0.3)*sf*(1-0.4*i/n);
+            maxRc=Math.max(maxRc,rc); lowY=Math.min(lowY,yy);
             const F=wallField(cx2,yy,cz2);
             const m=new THREE.Mesh(conkGeo(rc));
             /* half-buried in the face: only the shelf protrudes */
@@ -1638,6 +1731,9 @@ export function buildCave(){
             yy+=rc*rand(0.9,1.6)+0.08;
           }
         }
+        /* a low shelf big enough to walk into is solid */
+        if(maxRc>0.5&&lowY<fyc+2.25)
+          CAVE.obstacles.push({x:ax-dx*0.3, z:az-dy*0.3, r:Math.min(1.3,maxRc*0.8)});
         /* juveniles sprouting from the floor at the wall's foot */
         const nb=1+Math.floor(srand()*3);
         for(let i=0;i<nb;i++){
@@ -1695,40 +1791,63 @@ export function buildCave(){
         }
         hh=fy0+0.35;
       }
+      /* mycelium cords crawling out of the colony — geometry, not paint:
+         thin tapering ribbons that ride the displaced surface they grow
+         over (wall cords run DOWN the face and pool at its foot; floor
+         cords wander outward through the litter) */
+      {
+        const nCord=2+Math.floor(srand()*3);
+        for(let cI=0;cI<nCord;cI++){
+          const pts=[];
+          const segs=6+Math.floor(srand()*4);
+          if(onWall){
+            const uX=(fdy!==0)?1:0, uZ=(fdx!==0)?1:0;    // wall-parallel axis
+            let drift=(srand()<0.5?-1:1)*rand(0.10,0.30);
+            let u=rand(-0.4,0.4), yy=hh+rand(-0.3,0.2);
+            for(let i=0;i<=segs;i++){
+              const wx2=ax+uX*u, wz2=az+uZ*u;
+              const fyW=floorYAt(wx2,wz2);
+              const wy=Math.max(fyW+0.05, yy);
+              const F=wallField(wx2,wy,wz2);
+              pts.push({x:wx2+F.x-fdx*0.03, y:wy, z:wz2+F.z-fdy*0.03,
+                        nx:-fdx, ny:0, nz:-fdy,
+                        w:rand(0.05,0.10)*(1-i/segs*0.6)});
+              u+=drift*rand(0.6,1.4); drift+=(srand()-0.5)*0.12;
+              yy-=rand(0.25,0.6)*(hh-0.2)/segs*2;
+            }
+          } else {
+            let aa=Math.random()*Math.PI*2, rr=0.15;
+            for(let i=0;i<=segs;i++){
+              const mx=ax+Math.cos(aa)*rr, mz=az+Math.sin(aa)*rr;
+              pts.push({x:mx, y:floorYAt(mx,mz)+0.03, z:mz,
+                        nx:0, ny:1, nz:0,
+                        w:rand(0.05,0.10)*(1-i/segs*0.6)});
+              rr+=rand(0.14,0.30); aa+=(srand()-0.5)*0.55;
+            }
+          }
+          parts.push(new THREE.Mesh(cordGeo(pts)));
+        }
+      }
       g.add(mergeStatic(parts,glowMat));
       for(const m of parts) m.geometry.dispose();
-      /* the halo: additive light pooled on the rock (wall) or floor */
-      const haloMat=new THREE.MeshBasicMaterial({map:HALO_TEX, color:haloCol,
-        transparent:true, opacity:0.25, blending:THREE.AdditiveBlending, depthWrite:false});
-      const halo=new THREE.Mesh(new THREE.PlaneGeometry(rand(1.3,2.1),rand(1.3,2.1)),haloMat);
-      /* a vein decal wandering out of the colony — additive, alive */
-      const vt=fungusTexes[Math.floor(Math.random()*3)];
-      const vm=new THREE.Mesh(new THREE.PlaneGeometry(rand(1.4,2.6),rand(0.7,1.3)),
-        new THREE.MeshBasicMaterial({map:vt, transparent:true, depthWrite:false,
-          opacity:0.8, blending:THREE.AdditiveBlending}));
-      vm.material.color.copy(haloCol).lerp(new THREE.Color(0xffffff),0.35);
-      if(onWall){
-        /* off the DISPLACED face, not the nominal plane */
-        const Fh=wallField(ax,hh,az);
-        halo.position.set(ax+Fh.x+fdx*0.06, hh, az+Fh.z+fdy*0.06);
-        halo.rotation.y=faceRot;
-        vm.position.set(ax+Fh.x+fdx*0.03, hh, az+Fh.z+fdy*0.03);
-        vm.rotation.y=faceRot;
-      } else {
-        const fyh=floorYAt(ax,az);
+      /* the glow on the ground: a small soft pool under floor colonies
+         only — wall shelves rely on their own emissive faces + the bound
+         pool light (no painted blobs on the rock anymore) */
+      let haloMat=null;
+      if(!onWall){
+        haloMat=new THREE.MeshBasicMaterial({map:HALO_TEX, color:haloCol,
+          transparent:true, opacity:0.16, blending:THREE.AdditiveBlending, depthWrite:false});
+        const halo=new THREE.Mesh(new THREE.PlaneGeometry(rand(0.8,1.3),rand(0.8,1.3)),haloMat);
         halo.rotation.x=-Math.PI/2;
-        halo.position.set(ax,fyh+0.06,az);
-        vm.rotation.x=-Math.PI/2; vm.rotation.z=Math.random()*Math.PI*2;
-        vm.position.set(ax+rand(-0.4,0.4),fyh+0.055,az+rand(-0.4,0.4));
+        halo.position.set(ax,floorYAt(ax,az)+0.05,az);
+        g.add(halo);
       }
-      g.add(halo); g.add(vm);
       scene.add(g);
       const rec=makeLightRecord(glowMat,glowMat,x,y,{x:ax,y:0,z:az},
         {warm:false, bright:bright, dimDen:0.5, flickery:Math.random()<0.35, fixY:hh});
       rec.cold=true; rec.buzz=false; rec.mul2=1;
       rec.tint=eTint; rec.poolCol=poolCol;
-      rec.veinMat=vm.material;
-      rec.haloMat=haloMat;
+      rec.haloMat=haloMat;                       // may be null: wall colonies keep no decal
       rec.region = best<9? region : -1;
       lights.push(rec);
       placedCells.add(K(x,y));
@@ -1936,11 +2055,12 @@ export function buildCave(){
     /* (the silk sealing this mouth is built with the web pass above;
        the debris obstacle was pushed with the mouth, before placement) */
   }
-  /* ---- the corpse, the lantern, the journal ---- */
+  /* ---- the corpse, the lantern, the journal ----
+     Beside the dead stair, and it announces itself: the dropped lantern
+     still holds a dying ember — a faint warm breath in all the fungus
+     blue — with the journal lying open where it slid. */
   {
-    const c={cx:spawnC.cx-2, cy:spawnC.cy-2};
-    let p=cellToWorld3(c.cx,c.cy);
-    if(cellAt3(p.x,p.z)===1){ p=cellToWorld3(spawnC.cx-1,spawnC.cy-1); }
+    const p=CAVE.corpseP;
     const body=makeCorpse();
     body.position.set(p.x+0.4,floorYAt(p.x+0.4,p.z),p.z);
     body.rotation.y=rand(0,Math.PI*2);
@@ -1950,10 +2070,30 @@ export function buildCave(){
     lant.rotation.z=1.35;                          // knocked over where it was dropped
     lant.rotation.y=rand(0,7);
     lant.userData.animated=true;
+    /* the ember: the mantle still glows inside the glass */
+    const ember=new THREE.Mesh(new THREE.SphereGeometry(0.045,7,6),
+      new THREE.MeshBasicMaterial({color:0xffc06a}));
+    ember.position.y=0.13; lant.add(ember);
     scene.add(lant);
-    CAVE.corpse={body,lant};
-    CAVE.obstacles.push({x:body.position.x, z:body.position.z, r:0.5});
-    addInteractable({kind:"corpse", mesh:lant,
+    /* the journal, fallen open beside it */
+    const jr=new THREE.Group();
+    const cover=new THREE.Mesh(new THREE.BoxGeometry(0.27,0.045,0.35),
+      new THREE.MeshPhongMaterial({color:0x4a3826, specular:0x1a140c, shininess:8}));
+    cover.position.y=0.022; jr.add(cover);
+    const pages=new THREE.Mesh(new THREE.BoxGeometry(0.23,0.03,0.30),
+      new THREE.MeshPhongMaterial({color:0xb9ac8e, specular:0x111111, shininess:4}));
+    pages.position.y=0.052; pages.rotation.y=0.06; jr.add(pages);
+    const jx=p.x-0.15, jz=p.z+0.75;
+    jr.position.set(jx,floorYAt(jx,jz),jz);
+    jr.rotation.y=rand(0,7); jr.rotation.z=0.05;
+    scene.add(jr);
+    /* the ember's light — warm, small, breathing (updateCave flickers it);
+       killed (not removed: light count) when the lantern is taken */
+    const glowL=new THREE.PointLight(0xffb46a,0.8,7,1.7);
+    glowL.position.set(lant.position.x,lant.position.y+0.35,lant.position.z);
+    scene.add(glowL);
+    CAVE.corpse={body,lant,journal:jr,glowL};
+    addInteractable({kind:"corpse", mesh:lant, journal:jr, glowL,
       label:()=>"TAKE THE LANTERN & JOURNAL", taken:false});
   }
   /* ---- the clutches ---- */
@@ -2093,6 +2233,11 @@ export function updateCave(dt){
   }
   /* the frenzy clock */
   if(STATE.frenzyT>0) STATE.frenzyT=Math.max(0,STATE.frenzyT-dt);
+  /* the dropped lantern's ember breathes until it's taken */
+  if(CAVE.corpse&&CAVE.corpse.glowL&&!STATE.hasLantern){
+    CAVE.corpse.glowL.intensity=
+      0.75+0.16*Math.sin(tN*1.7+Math.sin(tN*0.6)*1.3)+0.14*hash(Math.floor(tN*6)*0.31);
+  }
   /* fungus regions dim after their clutch burns (mul2 feeds lights.js's v,
      which owns the halo/vein opacity — one pipeline, no fighting) */
   for(const L of lights){

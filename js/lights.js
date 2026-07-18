@@ -156,8 +156,7 @@ export function updateLights(dt,t){
            components run >1 because the emissive map averages under white */
         const t=L.tint||[0.28,0.85,0.95];
         L.glowMat.emissive.setRGB(vb*t[0], vb*t[1], vb*t[2]);
-        if(L.haloMat) L.haloMat.opacity=0.20*Math.min(1,vb);
-        if(L.veinMat) L.veinMat.opacity=0.85*Math.min(1,vb*1.3);
+        if(L.haloMat) L.haloMat.opacity=0.13*Math.min(1,vb);
       }
     } else
     if(Math.abs(v-L.on)>0.04 || Math.abs(warmth-L.warmth)>0.02){

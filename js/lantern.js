@@ -1,7 +1,10 @@
 /* ---------------- the hand-crank lantern ----------------
-   THE NEST's core resource. [F] toggles the beam; holding [R] cranks the
-   charge back up — loudly. The beam physically repels the hatchlings
-   (hatchling.js runs the cone test via inBeam); a beam held burning in
+   THE NEST's core resource. [F] toggles the flame; holding [R] cranks the
+   charge back up — loudly. This is a LANTERN, not a flashlight: an
+   all-round pool of warm orange flame-light centred on your hands, with
+   the slow uneven breathing of a real mantle, plus a soft wide forward
+   wash (no tunnel beam). The glow physically repels the hatchlings
+   (hatchling.js runs the radius test via inBeam); a flame held burning in
    open cave is a beacon the matriarch reads fluently (spider.js).
 
    Both of its lights are created at module init and live in the scene from
@@ -19,14 +22,15 @@ export const LANT={
   spot:null, target:null, point:null,
   crankPhase:0, flick:1,
 };
-/* the beam */
-LANT.spot=new THREE.SpotLight(0xffdfae, 0, 24, 0.62, 0.55, 1.3);
+/* a soft, very wide forward wash — enough that the way you face reads a
+   little further, never a cone edge on the rock */
+LANT.spot=new THREE.SpotLight(0xffb26a, 0, 20, 1.08, 0.95, 1.6);
 LANT.target=new THREE.Object3D();
 LANT.spot.target=LANT.target;
 LANT.spot.userData.persist=true; LANT.target.userData.persist=true;
 scene.add(LANT.spot); scene.add(LANT.target);
-/* the spill: a warm pool around your hands */
-LANT.point=new THREE.PointLight(0xffd9a0, 0, 7, 1.9);
+/* the flame itself: the dominant light, an all-round warm pool */
+LANT.point=new THREE.PointLight(0xffa257, 0, 14, 1.5);
 LANT.point.userData.persist=true;
 scene.add(LANT.point);
 
@@ -61,17 +65,23 @@ export function updateLantern(dt){
   /* drive the lights from the camera (called after updatePlayer set it) */
   const on=STATE.lanternOn? 1:0;
   const low=STATE.lanternCharge<0.18;
-  LANT.flick = low? (hash(Math.floor(performance.now()*0.02))<0.25? 0.25:0.9) : 1;
+  /* a real flame breathes: two slow incommensurate waves under everything,
+     and a hard gutter only when the charge is nearly gone */
+  const t=performance.now()*0.001;
+  const breathe=0.90+0.055*Math.sin(t*1.9+Math.sin(t*0.73)*1.4)
+                    +0.045*Math.sin(t*3.17+1.7)
+                    +0.03*(hash(Math.floor(t*5)*0.47)-0.5);
+  LANT.flick = low? (hash(Math.floor(performance.now()*0.02))<0.25? 0.25:0.9)*breathe : breathe;
   const I=on*(0.55+0.85*Math.pow(STATE.lanternCharge,0.45))*LANT.flick;
-  LANT.spot.intensity=I*1.5;
-  LANT.point.intensity=I*0.42;
+  LANT.point.intensity=I*1.35;
+  LANT.spot.intensity=I*0.5;
   LANT.spot.position.copy(camera.position);
   LANT.spot.position.y-=0.18;
   const fx=-Math.sin(STATE.yaw)*Math.cos(STATE.pitch),
         fy=Math.sin(STATE.pitch),
         fz=-Math.cos(STATE.yaw)*Math.cos(STATE.pitch);
   LANT.target.position.set(camera.position.x+fx*8, camera.position.y-0.18+fy*8, camera.position.z+fz*8);
-  LANT.point.position.set(STATE.pos.x+fx*0.5, STATE.y+1.1, STATE.pos.z+fz*0.5);
+  LANT.point.position.set(STATE.pos.x+fx*0.25, STATE.y+1.15, STATE.pos.z+fz*0.25);
   /* HUD: the charge bar */
   if(ui.lantWrap){
     ui.lantWrap.classList.toggle("show", true);
@@ -81,16 +91,12 @@ export function updateLantern(dt){
     if(ui.lant.style.width!==pct) ui.lant.style.width=pct;
   }
 }
-/* is a world point inside the beam right now? (the hatchlings' sun) */
+/* is a world point inside the flame's glow right now? (the hatchlings'
+   sun). AOE, not a cone: the lantern pushes them back all around you, as
+   long as the rock doesn't shadow them. */
 export function inBeam(x,y,z){
   if(!STATE.lanternOn) return false;
-  const dx=x-camera.position.x, dy=(y-camera.position.y), dz=z-camera.position.z;
-  const d=Math.hypot(dx,dy,dz);
-  if(d>10||d<0.01) return false;
-  const fx=-Math.sin(STATE.yaw)*Math.cos(STATE.pitch),
-        fy=Math.sin(STATE.pitch),
-        fz=-Math.cos(STATE.yaw)*Math.cos(STATE.pitch);
-  const dot=(dx*fx+dy*fy+dz*fz)/d;
-  if(dot<Math.cos(0.62)) return false;
+  const d=Math.hypot(x-camera.position.x,y-camera.position.y,z-camera.position.z);
+  if(d>9||d<0.01) return false;
   return losCells3(camera.position.x,camera.position.z,x,z);
 }

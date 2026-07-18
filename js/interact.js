@@ -60,6 +60,8 @@ export function tryInteract(){
   /* ---- THE NEST ---- */
   else if(it.kind==="corpse"){
     it.taken=true; scene.remove(it.mesh); sfxPickup();
+    if(it.journal) scene.remove(it.journal);
+    if(it.glowL) it.glowL.intensity=0;          // the ember comes with you (never remove: light count)
     STATE.hasLantern=true; STATE.lanternCharge=0.65; STATE.lanternOn=false;
     toast("The lantern still turns. The journal is waterlogged — you take both. [F] LIGHT · [R] CRANK",6200);
   } else if(it.kind==="clutch"){
