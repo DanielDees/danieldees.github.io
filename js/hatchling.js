@@ -8,7 +8,8 @@ import { clamp, lerp, rand } from "./utils.js";
 import { STATE, spider } from "./state.js";
 import { CELL } from "./map.js";
 import { scene, markShared } from "./scene.js";
-import { CAVE, cellAt3, hatchBlocked, worldToCell3, cellToWorld3, surfaceNoiseGain } from "./cave.js";
+import { CAVE, cellAt3, hatchBlocked, worldToCell3, cellToWorld3, surfaceNoiseGain,
+         floorYAt } from "./cave.js";
 import { inBeam } from "./lantern.js";
 import { AU, panTo, sfxHatchTap, sfxHatchHiss, startLatchScreech } from "./audio.js";
 
@@ -103,7 +104,7 @@ export function updateHatchlings(dt){
     h.hissCD-=dt;
     const dx=px-h.pos.x, dz=pz-h.pos.z, d=Math.hypot(dx,dz);
     /* the beam is the sun and they hate it */
-    const beamed = h.state!=="latched" && inBeam(h.pos.x,0.25,h.pos.z);
+    const beamed = h.state!=="latched" && inBeam(h.pos.x,floorYAt(h.pos.x,h.pos.z)+0.25,h.pos.z);
     /* fire is a wall */
     let fireDx=0, fireDz=0, inFire=false;
     for(const f of CAVE.fires){
@@ -116,7 +117,7 @@ export function updateHatchlings(dt){
         h.wanderT-=dt;
         if(h.wanderT<=0){
           h.wanderT=rand(1.5,4.5);
-          const a=Math.random()*Math.PI*2, rr=rand(0,6);
+          const a=Math.random()*Math.PI*2, rr=rand(0,8.5);   // wider chambers, wider rounds
           h.tgt={x:h.home.x+Math.cos(a)*rr, z:h.home.z+Math.sin(a)*rr};
         }
         if(h.tgt){
@@ -130,7 +131,7 @@ export function updateHatchlings(dt){
         const spd=(frenzy?4.6:3.3);
         hatchMove(h,dx,dz,dt,spd); movedSpd=spd;
         /* lost you: too quiet, too far, or too far from home */
-        const leash=frenzy? 999 : 24;
+        const leash=frenzy? 999 : 30;
         if((d>hearR+6&&d>7) || Math.hypot(h.pos.x-h.home.x,h.pos.z-h.home.z)>leash){
           h.state="flee";
         }
@@ -204,7 +205,7 @@ export function updateHatchlings(dt){
       h.mesh.rotation.set(rand(-0.1,0.1), ry+Math.PI+Math.sin(h.anim*2)*0.2, 0.4);
     } else {
       const bob=Math.abs(Math.sin(h.anim*2))*0.02*clamp(movedSpd/2,0,1);
-      h.mesh.position.set(h.pos.x, bob + (h.state==="stun"?0:0), h.pos.z);
+      h.mesh.position.set(h.pos.x, floorYAt(h.pos.x,h.pos.z)+bob, h.pos.z);
       h.mesh.rotation.set(h.state==="stun"? 2.8:0, h.faceAng, 0);
     }
     /* skitters: at distance, indistinguishable from dripwater */

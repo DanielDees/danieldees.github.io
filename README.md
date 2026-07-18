@@ -96,9 +96,16 @@ track by ear.
 - **Cave audio.** Drip percussion with double echoes, a stream bed that masks your
   noise, crank ratchet, striker ticks, clutch fire crackle, rockfalls, hatchling
   hisses/screeches, and the fissure's updraft wind — all synthesized, as ever.
-- **The look.** Bump-mapped strata rock; a corner-shared faceted vault instead of a
-  flat ceiling (chambers slope into their tunnel mouths, tunnels pinch into the
-  squeezes); real dripstone grown from lathe profiles with drip-ring bulges,
+- **The look.** A cave that is actually cave-shaped: no boxes, no flat panels
+  anywhere — the floor rolls, the walls are displaced faceted rock that leans
+  into overhangs near the vault, and the ceiling is a craggy corner-shared
+  surface that domes to 18m over the central chamber and pinches into the
+  crawls (their mouths ramp down inside the squeeze — over any ground you can
+  stand on, the rock is guaranteed to clear twice your height). Tunnels are 8m
+  bores you could drive a bus through; every surface, the player's feet, the
+  spiders' legs and every web/fungus/dripstone anchor sample the same terrain
+  functions, so nothing floats and nothing buries. Bump-mapped strata rock;
+  real dripstone grown from lathe profiles with drip-ring bulges,
   per-vertex noise and a pale streaked calcite skin (nothing is a cone), in
   location-bred varieties — knobby spire stacks on flowstone mounds answered by
   hanging spires, full floor-to-vault columns waisted where the pair met,

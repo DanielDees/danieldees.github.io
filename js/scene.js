@@ -178,9 +178,11 @@ export function setLevelEnvironment(level){
     hemi.intensity=0.048;
     amb.color.setHex(0x4a5060); amb.intensity=0.03;
   } else if(level===2){
-    /* THE NEST: close air, blue-black dark — the fog eats a tunnel in ~40m */
+    /* THE NEST: close air, blue-black dark — the fog eats a tunnel in ~50m
+       (stretched with the caverns: the far side of the central vault is a
+       silhouette, not a wall of black at arm's length) */
     scene.background = new THREE.Color(0x020506);
-    scene.fog = new THREE.Fog(0x020506, 5, 52);
+    scene.fog = new THREE.Fog(0x020506, 6, 66);
     hemi.color.setHex(0x9fc4d2); hemi.groundColor.setHex(0x0a1114);
     hemi.intensity=0.030;
     amb.color.setHex(0x24404a); amb.intensity=0.026;

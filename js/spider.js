@@ -1063,7 +1063,8 @@ export function resetSpider(farFromX,farFromZ,minDist=33){
    Burn a clutch and it comes at a dead run — and once the last one burns,
    it never goes back to tending anything. */
 import { CAVE, cellToWorld3, worldToCell3, isBlockedSpider3, bfsPath3, losCells3,
-         cellAt3, randomReachCell3, surfaceNoiseGain, silkGainAt, CAVE_SPAN } from "./cave.js";
+         cellAt3, randomReachCell3, surfaceNoiseGain, silkGainAt, CAVE_SPAN,
+         floorYAt } from "./cave.js";
 import { anyLatched } from "./hatchling.js";
 
 const inSqueeze=()=>cellAt3(STATE.pos.x,STATE.pos.z)===2;
@@ -1324,12 +1325,14 @@ export function updateSpiderCave(dt){
 
   /* ---- speed ---- */
   let tgt=0;
-  if(s.state==="tend") tgt=4.6;
+  /* the warren is half again as wide now: the unhurried gaits cover more
+     ground so the tending rounds and hunts keep their old pacing */
+  if(s.state==="tend") tgt=5.6;
   else if(s.state==="seek") tgt=s.seekRun? RUN_BASE*(frenzy?1.15:allBurned?1.05:1) : SPD.mildSeek;
   else if(s.state==="chase") tgt=RUN_BASE*(frenzy?1.15:1.05);
   else if(s.state==="frenzy") tgt=RUN_BASE*1.15;
-  else if(s.state==="rampage") tgt=6.2;
-  else if(s.state==="hunt") tgt=6.6;
+  else if(s.state==="rampage") tgt=6.8;
+  else if(s.state==="hunt") tgt=7.2;
   const rate = tgt>s.curSpeed? 6:11;
   s.curSpeed += clamp(tgt-s.curSpeed, -rate*dt, rate*dt);
 
@@ -1412,7 +1415,7 @@ export function updateSpiderCave(dt){
   const aggressive=s.state==="chase"||s.state==="frenzy"||s.state==="hunt"||s.state==="rampage";
   u.eyeMat.emissive.setHex(aggressive? 0x8a1410:0x3a0805);
   const bob=Math.abs(Math.sin(s.anim*2))*0.07*sp01;
-  s.mesh.position.set(s.pos.x,bob,s.pos.z);
+  s.mesh.position.set(s.pos.x,floorYAt(s.pos.x,s.pos.z)+bob,s.pos.z);
   s.mesh.quaternion.setFromEuler(new THREE.Euler(0,s.faceAng,0));
 
   /* ---- dread & the skitter bed ---- */
@@ -1429,7 +1432,8 @@ export function updateSpiderCave(dt){
 /* drop it at its rounds, far from a point (the arrival / a respawn) */
 export function resetSpiderCave(farFromX,farFromZ,minDist=30){
   const s=spider;
-  let p=cellToWorld3(16,15);
+  const ctr=CAVE.chambers[1]||CAVE.chambers[0];
+  let p=ctr? cellToWorld3(ctr.cx,ctr.cy) : {x:0,z:0};
   for(let t=0;t<400;t++){
     const c=randomReachCell3(), q=cellToWorld3(c.cx,c.cy);
     if(Math.hypot(q.x-farFromX,q.z-farFromZ)>minDist){ p=q; break; }
@@ -1442,7 +1446,7 @@ export function resetSpiderCave(farFromX,farFromZ,minDist=30){
   s.glowT=0; s.glowCD=0; s.burnSeen=CAVE.lastBurn? CAVE.lastBurn.at : null;
   s.huntT=rand(8,14);
   if(s.mesh){
-    s.mesh.position.set(p.x,0,p.z); s.mesh.quaternion.identity();
+    s.mesh.position.set(p.x,floorYAt(p.x,p.z),p.z); s.mesh.quaternion.identity();
     const u=s.mesh.userData;
     u.abdTilt=0; u.sniffAnim=0; u.abd.rotation.x=0; u.abd.position.set(0,u.BODY_Y+0.12,-0.95);
   }

@@ -26,10 +26,13 @@ import { die } from "./lifecycle.js";
 import { renderObjectives, toast } from "./ui.js";
 import { AU, sfxRockfall, sfxIgnite, startClutchFire } from "./audio.js";
 
-export const CW=33, CH=33, CAVE_H_MAX=9.5;
+export const CW=47, CH=47, CAVE_H_MAX=20;
 export const CAVE_SPAN=CW*CELL;
 export let grid3=null;
-let ceilH=null;                               // per-cell ceiling height
+let ceilH=null;                               // per-cell nominal ceiling height
+let cH=null;                                  // corner-shared ceiling heights (CH+1 × CW+1)
+let fH=null;                                  // corner-shared floor heights
+let fW=null;                                  // per-corner floor-detail weight (0 = locked flat)
 export const cellToWorld3=(cx,cy)=>({x:(cx-CW/2+0.5)*CELL, z:(cy-CH/2+0.5)*CELL});
 export const worldToCell3=(x,z)=>({cx:Math.floor(x/CELL+CW/2), cy:Math.floor(z/CELL+CH/2)});
 const K=(cx,cy)=>cy*CW+cx;
@@ -50,6 +53,7 @@ export const CAVE={
   fissure:null,                // {x,z,r,stair,group,lights,open}
   regionDim:[1,1,1,1],         // per-brood fungus dim targets (burns kill the local glow)
   corpse:null, entrance:null,
+  approachC:null, bridgeC:[],  // the fissure doorstep + bridge cells (rockfall protects these)
   streamCells:[], dripT:2.5, waterMat:null,
   shakeT:0,
 };
@@ -108,6 +112,64 @@ export function caveCollide(px,pz,r,crouched){
   }
   return {x:nx,z:nz};
 }
+/* ---------------- the surface fields ----------------
+   The cave's floor, ceiling and wall relief are deterministic functions of
+   world position, shared by EVERYTHING: the meshes sample them per vertex,
+   the player/AI stand on them, and every web/fungus/dripstone anchor asks
+   them where the rock actually is. One source of truth — geometry and
+   placement cannot drift apart. */
+/* bilinear over a corner grid (fH or cH) */
+function cornerLerp(G,wx,wz){
+  const fx=clamp(wx/CELL+CW/2,0,CW-0.001), fz=clamp(wz/CELL+CH/2,0,CH-0.001);
+  const i=Math.floor(fx), j=Math.floor(fz), u=fx-i, v=fz-j;
+  return lerp(lerp(G[j][i],G[j][i+1],u), lerp(G[j+1][i],G[j+1][i+1],u), v);
+}
+/* the floor: rolling corner noise + fine ripple, damped to dead flat where
+   gameplay needs it (spawn, brood pads, stream bed, bridge, squeezes) */
+export function floorYAt(wx,wz){
+  if(!fH) return 0;
+  const h=cornerLerp(fH,wx,wz), w=cornerLerp(fW,wx,wz);
+  return h + w*(Math.sin(wx*1.31+wz*0.97)*0.07+Math.sin(wx*2.53-wz*1.71)*0.05
+               +Math.sin(wx*0.53+wz*0.61)*0.08);
+}
+/* the ceiling: corner vault + crag detail. The hard rule lives here — over
+   any cell you can stand in, the rock never dips below twice your height
+   (3.62m over the local floor); only the squeezes crawl, and their mouths
+   ramp down INSIDE the squeeze cell so an upright head never hits stone. */
+export function ceilYAt(wx,wz){
+  if(!cH) return 4;
+  let h=cornerLerp(cH,wx,wz);
+  const d=Math.sin(wx*1.13+wz*0.87)*0.16+Math.sin(wx*2.71-wz*2.03)*0.10
+         +Math.sin(wx*0.47-wz*0.55)*0.14;
+  const c=worldToCell3(wx,wz);
+  if(codeAt(c.cx,c.cy)===2){
+    /* the crawl: past a short mouth ramp the bore closes to ~1.5m */
+    const p=cellToWorld3(c.cx,c.cy);
+    let de=1e9;
+    for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){
+      const n=codeAt(c.cx+dx,c.cy+dy);
+      if(n===1||n===7||n===2) continue;               // only true mouths ramp
+      de=Math.min(de, CELL/2-(dx? (wx-p.x)*dx : (wz-p.z)*dy));
+    }
+    const lint=1.5+d*0.2;
+    return de>=1e9? lint : lerp(Math.max(h+d,3.62), lint, clamp(de/1.3,0,1));
+  }
+  return Math.max(h+d, floorYAt(wx,wz)+3.62);
+}
+/* lateral rock relief for walls (and crag jitter for the ceiling): a smooth
+   3D vector field, zero at the floor line (so wall feet weld to the floor
+   mesh), modest through the body band (the camera can never clip in), and
+   swelling toward the vault into real overhangs. */
+export function wallField(x,y,z){
+  const a=0.26*clamp((y-floorYAt(x,z))/1.1,0,1) * (1+1.9*clamp((y-2.6)/3.6,0,1));
+  return {
+    x:a*(Math.sin(x*0.83+z*0.61+y*0.53)*0.55+Math.sin(x*2.09-z*1.67+y*1.31)*0.30
+        +Math.sin(x*4.13+z*3.71-y*2.47)*0.15),
+    z:a*(Math.sin(x*0.71-z*0.89+y*0.47+2.1)*0.55+Math.sin(x*1.87+z*2.23-y*1.13+1.3)*0.30
+        +Math.sin(x*3.79-z*4.31+y*2.11+0.7)*0.15),
+  };
+}
+
 /* ground height. The stream is a shallow wade; the chasm is nothing at all;
    the opened fissure's chimney treads spiral UP (the mirror of the library's
    stair — the lap is still disambiguated by the player's own height). */
@@ -136,8 +198,8 @@ export function caveGroundY(x,z,curY){
   }
   const t=cellAt3(x,z);
   if(t===5) return -999;
-  if(t===3) return -0.14;
-  return 0;
+  if(t===3) return -0.14;                       // wading the flat black water
+  return floorYAt(x,z);
 }
 /* the chimney's bore is the only wall above the alcove ceiling */
 export function caveShaftClamp(x,z,py,pr){
@@ -202,24 +264,32 @@ function carveBlob(cx,cy,r){
       if(d<=r-0.4 || (d<=r+0.4&&srand()<0.55)) grid3[y][x]=0;
     }
 }
-/* a winding width-1 corridor biased toward its goal; returns the cells it
-   NEWLY opened (so alternate routes can be re-sealed as rubble) */
-function carveTunnel(ax,ay,bx,by,wobble=0.42){
+/* a winding corridor biased toward its goal; `wide` carves it two cells
+   across (8m — you could drive a bus through it) with occasional 3-cell
+   bulges. Returns the cells it NEWLY opened (so alternate routes can be
+   re-sealed as rubble). */
+function carveTunnel(ax,ay,bx,by,wobble=0.42,wide=true){
   const opened=[];
-  let x=ax, y=ay, guard=400;
+  const open=(x,y)=>{ if(inB(x,y)&&grid3[y][x]===1){ grid3[y][x]=0; opened.push({x,y}); } };
+  let x=ax, y=ay, guard=700, ldx=0, ldy=1;
   while((x!==bx||y!==by)&&guard-->0){
-    if(grid3[y][x]===1&&inB(x,y)){ grid3[y][x]=0; opened.push({x,y}); }
+    open(x,y);
+    if(wide){
+      open(x-ldy,y+ldx);                       // one perpendicular neighbor: 2 wide
+      if(srand()<0.18) open(x+ldy,y-ldx);      // and the odd 3-wide bulge
+    }
     let dx=Math.sign(bx-x), dy=Math.sign(by-y);
     if(srand()<wobble){                        // drift sideways
       if(srand()<0.5&&dx!==0) dy=(srand()<0.5?1:-1);
       else if(dy!==0) dx=(srand()<0.5?1:-1);
     }
     if(dx!==0&&dy!==0){ if(srand()<0.5)dy=0; else dx=0; }
-    const nx=clamp(x+dx,1,CW-2), ny=clamp(y+dy,1,CH-2);
-    x=nx; y=ny;
-    if(srand()<0.14&&inB(x+1,y)&&grid3[y][x+1]===1){ grid3[y][x+1]=0; opened.push({x:x+1,y}); }
+    if(dx||dy){ ldx=dx; ldy=dy; }
+    x=clamp(x+dx,1,CW-2); y=clamp(y+dy,1,CH-2);
+    if(srand()<0.14) open(x+1,y);
   }
-  if(inB(x,y)&&grid3[y][x]===1){ grid3[y][x]=0; opened.push({x,y}); }
+  open(x,y);
+  if(wide) open(x-ldy,y+ldx);
   return opened;
 }
 function flood(startX,startY,blocked){
@@ -241,63 +311,71 @@ const crouchBlocked=(cx,cy)=>playerBlocked(cx,cy,true);
 
 function genCave(){
   grid3=Array.from({length:CH},()=>Array(CW).fill(1));
-  /* the rooms of the warren */
-  const entrance={cx:16,cy:27,r:2.8,h:6.5};
-  const central ={cx:16,cy:15,r:4.6,h:9.0};
+  /* the rooms of the warren — scaled to cave, not corridor: the central
+     vault is ~50m across under an 18m dome, the brood chambers 30m+, and
+     every tending route is two cells (8m) wide */
+  const entrance={cx:23,cy:39,r:4.0,h:9.0};
+  const central ={cx:23,cy:21,r:6.5,h:18.0};
   const broods=[
-    {cx:6, cy:6, r:3.2,h:7.0},
-    {cx:26,cy:6, r:3.2,h:7.0},
-    {cx:5, cy:20,r:2.8,h:6.5},
-    {cx:27,cy:21,r:2.8,h:6.5},
+    {cx:9, cy:9, r:4.5,h:13.0},
+    {cx:37,cy:9, r:4.5,h:13.0},
+    {cx:7, cy:29,r:4.0,h:12.0},
+    {cx:39,cy:30,r:4.0,h:12.0},
   ];
   CAVE.chambers=[entrance,central,...broods];
   for(const c of CAVE.chambers) carveBlob(c.cx,c.cy,c.r);
-  /* main spokes (the matriarch's tending routes — never squeezed) */
+  /* main spokes (the matriarch's tending routes — wide, never squeezed) */
   carveTunnel(entrance.cx,entrance.cy,central.cx,central.cy,0.3);
   for(const b of broods) carveTunnel(central.cx,central.cy,b.cx,b.cy,0.42);
-  /* the north approach: central → the fissure's doorstep */
-  carveTunnel(central.cx,central.cy-3,16,5,0.2);
+  /* the north approach: central → the fissure's doorstep (single file) */
+  carveTunnel(central.cx,central.cy-4,23,5,0.12,false);
   /* loops (player shortcuts; these are where the squeezes live) */
   const loops=[
     carveTunnel(broods[0].cx,broods[0].cy,broods[1].cx,broods[1].cy,0.5),
-    carveTunnel(broods[2].cx,broods[2].cy,entrance.cx-3,entrance.cy,0.5),
-    carveTunnel(broods[3].cx,broods[3].cy,entrance.cx+3,entrance.cy,0.5),
+    carveTunnel(broods[2].cx,broods[2].cy,entrance.cx-5,entrance.cy,0.5),
+    carveTunnel(broods[3].cx,broods[3].cy,entrance.cx+5,entrance.cy,0.5),
   ];
   for(const cells of loops){
-    if(cells.length<5) continue;
-    const mid=cells[Math.floor(cells.length/2)];
-    grid3[mid.y][mid.x]=2;                       // one tight crawl per loop
-    if(srand()<0.5&&cells.length>7){
-      const m2=cells[Math.floor(cells.length/2)+1];
-      grid3[m2.y][m2.x]=2;
+    if(cells.length<8) continue;
+    /* the crawl seals the loop's whole cross-section: a 3×3 stamp around a
+       mid cell, so the widened bore can't be walked around upright */
+    let mid=null;
+    for(let k=0;k<cells.length&&!mid;k++){
+      const c=cells[Math.floor(cells.length/2)+((k%2)? k:-k)/2|0];
+      if(c&&grid3[c.y][c.x]===0) mid=c;
+    }
+    if(!mid) continue;
+    for(let oy=-1;oy<=1;oy++)for(let ox=-1;ox<=1;ox++){
+      const xx=mid.x+ox, yy=mid.y+oy;
+      if(inB(xx,yy)&&(grid3[yy][xx]===0||grid3[yy][xx]===4)) grid3[yy][xx]=2;
     }
   }
   /* the chasm: a strip across the north exit of the central chamber, with
      one rock bridge carrying the fissure approach over it */
-  for(let y=11;y<=12;y++)for(let x=14;x<=18;x++)
+  for(let y=12;y<=14;y++)for(let x=17;x<=29;x++)
     if(inB(x,y)) grid3[y][x]=5;
-  grid3[11][16]=6; grid3[12][16]=6;
+  for(let y=12;y<=14;y++) grid3[y][23]=6;
   /* make sure the approach lines up with the bridge */
-  for(const y of[9,10,13]) if(grid3[y][16]===1) grid3[y][16]=0;
+  for(const y of[9,10,11,15,16]) if(grid3[y][23]===1) grid3[y][23]=0;
   /* the stream: west edge → under the central chamber's south half → east */
   {
-    const way=[[1,17],[6,18],[11,17],[16,18],[21,17],[26,18],[31,17]];
+    const way=[[1,25],[8,26],[15,24],[23,26],[30,24],[38,26],[45,25]];
     for(let i=0;i<way.length-1;i++){
       let [x,y]=way[i]; const [bx,by]=way[i+1];
-      let guard=90;
+      let guard=140;
       while((x!==bx||y!==by)&&guard-->0){
         if(x>0&&y>0&&x<CW-1&&y<CH-1&&grid3[y][x]!==5&&grid3[y][x]!==6) grid3[y][x]=3;
         const dx=Math.sign(bx-x), dy=Math.sign(by-y);
         if(dx!==0&&dy!==0){ if(srand()<0.5)x+=dx; else y+=dy; }
         else { x+=dx; y+=dy; }
-        if(srand()<0.20&&y+1<CH-1&&grid3[y+1][x]===1) grid3[y+1][x]=3;
+        if(srand()<0.22&&y+1<CH-1&&grid3[y+1][x]===1) grid3[y+1][x]=3;
       }
     }
   }
   /* scree: loud gravel aprons along the chamber rims */
   for(const c of CAVE.chambers){
-    let n=4+Math.floor(srand()*4);
-    for(let t=0;t<30&&n>0;t++){
+    let n=Math.round(c.r*1.6)+Math.floor(srand()*4);
+    for(let t=0;t<60&&n>0;t++){
       const a=srand()*Math.PI*2, rr=c.r*(0.55+srand()*0.45);
       const x=Math.round(c.cx+Math.cos(a)*rr), y=Math.round(c.cy+Math.sin(a)*rr);
       if(inB(x,y)&&grid3[y][x]===0){ grid3[y][x]=4; n--; }
@@ -314,20 +392,23 @@ function genCave(){
     return sealed;
   };
   const altWays=[
-    carveTunnel(broods[0].cx+1,broods[0].cy+2, 11,13, 0.55),
-    carveTunnel(broods[1].cx-1,broods[1].cy+2, 21,13, 0.55),
-    carveTunnel(broods[2].cx+1,broods[2].cy-2, 12,17, 0.55),
-    carveTunnel(broods[3].cx-1,broods[3].cy-2, 22,17, 0.55),
+    carveTunnel(broods[0].cx+1,broods[0].cy+3, 16,17, 0.55, false),
+    carveTunnel(broods[1].cx-1,broods[1].cy+3, 30,17, 0.55, false),
+    carveTunnel(broods[2].cx+1,broods[2].cy-3, 16,24, 0.55, false),
+    carveTunnel(broods[3].cx-1,broods[3].cy-3, 30,24, 0.55, false),
   ];
   for(const w of altWays) CAVE.events.push({openCells:seal(w), pile:null, closed:null});
   /* the fissure pocket: two cells behind a rubble choke at the very north */
-  for(const y of[2,3]) grid3[y][16]=0;
-  grid3[4][16]=7;
-  CAVE.fissurePocket={cx:16,cy:2};
-  CAVE.fissureChoke={cx:16,cy:4};
+  for(const y of[2,3]) grid3[y][23]=0;
+  grid3[4][23]=7;
+  for(const y of[5,6]) if(grid3[y][23]===1) grid3[y][23]=0;
+  CAVE.fissurePocket={cx:23,cy:2};
+  CAVE.fissureChoke={cx:23,cy:4};
+  CAVE.approachC={cx:23,cy:6};
+  CAVE.bridgeC=[{cx:23,cy:12},{cx:23,cy:13},{cx:23,cy:14}];
   /* ---- connectivity repair (crouched player, from the spawn) ---- */
   const spawnC={cx:entrance.cx, cy:entrance.cy+1};
-  for(let iter=0;iter<80;iter++){
+  for(let iter=0;iter<160;iter++){
     const seen=flood(spawnC.cx,spawnC.cy,crouchBlocked);
     let fixed=false;
     outer:
@@ -354,21 +435,75 @@ function genCave(){
     for(let y=1;y<CH-1&&!mOK();y++)for(let x=1;x<CW-1&&!mOK();x++)
       if(grid3[y][x]===2) grid3[y][x]=0;
   }
-  /* ceiling heights */
-  ceilH=Array.from({length:CH},()=>Array(CW).fill(2.9));
+  /* ceiling heights: tunnels vary 4.8–6.6m, chambers dome to their h */
+  ceilH=Array.from({length:CH},()=>Array(CW).fill(5.0));
   for(let y=0;y<CH;y++)for(let x=0;x<CW;x++){
     if(grid3[y][x]===2){ ceilH[y][x]=1.35; continue; }
-    ceilH[y][x]=2.8+hash(x*31.7+y*17.3)*0.35;
+    ceilH[y][x]=4.8+hash(x*31.7+y*17.3)*1.8;
     for(const c of CAVE.chambers){
       const d=Math.hypot(x-c.cx,y-c.cy);
-      if(d<=c.r+0.6) ceilH[y][x]=Math.max(ceilH[y][x], lerp(c.h,c.h*0.72,clamp(d/(c.r+0.6),0,1)));
+      if(d<=c.r+0.6) ceilH[y][x]=Math.max(ceilH[y][x], lerp(c.h,c.h*0.5,clamp(d/(c.r+0.6),0,1)));
+    }
+  }
+  /* ---- the corner grids the surface fields sample ----
+     Ceiling corners take the MIN of their adjacent open cells (chambers
+     slope into tunnel mouths) plus jitter — then the hard clamp: any
+     corner touching a cell you can stand in never dips below 3.95m, so
+     with worst-case crag detail the vault still clears twice a standing
+     player. Corners buried in all-squeeze stay at crawl height. */
+  cH=[];
+  for(let cy=0;cy<=CH;cy++){
+    cH[cy]=[];
+    for(let cx=0;cx<=CW;cx++){
+      let mn=1e9, any=false, sqOnly=true;
+      for(const[ox,oy]of[[-1,-1],[0,-1],[-1,0],[0,0]]){
+        const x=cx+ox, y=cy+oy;
+        if(x<0||y<0||x>=CW||y>=CH||grid3[y][x]===1) continue;
+        any=true; mn=Math.min(mn,ceilH[y][x]);
+        if(grid3[y][x]!==2) sqOnly=false;
+      }
+      if(!any){ cH[cy][cx]=0; continue; }
+      const h=mn+(hash(cx*13.37+cy*7.77)-0.5)*0.9;
+      cH[cy][cx]= sqOnly? clamp(h,1.3,1.6) : Math.max(h,3.95);
+    }
+  }
+  /* floor corners: rolling stone, damped flat where gameplay stands on the
+     numbers — stream bed, bridge & chasm lips, squeezes, the spawn (and
+     the corpse beside it), the brood pads, the fissure's alcove floor */
+  fH=[]; fW=[];
+  const fissureFlats=[{cx:23,cy:2},{cx:23,cy:3},{cx:23,cy:4},{cx:23,cy:5},{cx:23,cy:6}];
+  for(let cy=0;cy<=CH;cy++){
+    fH[cy]=[]; fW[cy]=[];
+    for(let cx=0;cx<=CW;cx++){
+      let allRock=true, nearStream=false, nearFlat=false;
+      for(const[ox,oy]of[[-1,-1],[0,-1],[-1,0],[0,0]]){
+        const x=cx+ox, y=cy+oy;
+        const t=(x<0||y<0||x>=CW||y>=CH)? 1 : grid3[y][x];
+        if(t!==1) allRock=false;
+        if(t===3) nearStream=true;
+        if(t===5||t===6||t===2) nearFlat=true;
+      }
+      if(allRock){ fH[cy][cx]=0; fW[cy][cx]=0; continue; }
+      if(nearStream){ fH[cy][cx]=-0.25; fW[cy][cx]=0; continue; }
+      if(nearFlat){ fH[cy][cx]=0; fW[cy][cx]=0; continue; }
+      let h=(hash(cx*9.13+cy*5.71)-0.5)*0.62+(hash(cx*2.11+cy*3.07)-0.5)*0.5;
+      let w=1;
+      /* radial flats: k=0 dead center, 1 at the rim */
+      const flat=(bx,by,r)=>{
+        const k=clamp(Math.hypot(cx-0.5-bx,cy-0.5-by)/r,0,1);
+        h*=k*k; w=Math.min(w,k);
+      };
+      flat(spawnC.cx,spawnC.cy,3.4);
+      for(const b of broods) flat(b.cx,b.cy,2.6);
+      for(const f of fissureFlats) flat(f.cx,f.cy,1.8);
+      fH[cy][cx]=h; fW[cy][cx]=w;
     }
   }
   /* silk-laced floors around the nests */
   CAVE.silk.clear();
   for(const b of broods)
-    for(let y=b.cy-2;y<=b.cy+2;y++)for(let x=b.cx-2;x<=b.cx+2;x++)
-      if(inB(x,y)&&Math.hypot(x-b.cx,y-b.cy)<=2.3) CAVE.silk.add(K(x,y));
+    for(let y=b.cy-3;y<=b.cy+3;y++)for(let x=b.cx-3;x<=b.cx+3;x++)
+      if(inB(x,y)&&Math.hypot(x-b.cx,y-b.cy)<=3.3) CAVE.silk.add(K(x,y));
   /* reach caches */
   const seen=flood(spawnC.cx,spawnC.cy,crouchBlocked);
   CAVE.reach=seen;
@@ -385,6 +520,18 @@ function genCave(){
   CAVE.streamCells=[];
   for(let y=0;y<CH;y++)for(let x=0;x<CW;x++)
     if(grid3[y][x]===3) CAVE.streamCells.push(cellToWorld3(x,y));
+  /* the clearance audit: the fields guarantee ≥2× player height over every
+     upright-walkable cell by construction — this tripwire only fires if a
+     future edit breaks that invariant */
+  let low=0;
+  for(let y=1;y<CH-1;y++)for(let x=1;x<CW-1;x++){
+    const t=grid3[y][x];
+    if(t!==0&&t!==3&&t!==4&&t!==6) continue;
+    const p=cellToWorld3(x,y);
+    for(const[ox,oz]of[[0,0],[-1.4,0],[1.4,0],[0,-1.4],[0,1.4]])
+      if(ceilYAt(p.x+ox,p.z+oz)-floorYAt(p.x+ox,p.z+oz)<3.55) low++;
+  }
+  if(low) console.warn(`[cave] ${low} low-clearance samples slipped the clamp`);
   return {entrance, central, broods, spawnC};
 }
 
@@ -803,46 +950,29 @@ export function buildCave(){
   CAVE.obstacles=[]; CAVE.fires=[]; CAVE.lastBurn=null; CAVE.regionDim=[1,1,1,1];
   CAVE.shakeT=0; CAVE.dripT=2.5;
   const {entrance,central,broods,spawnC}=genCave();
-  const openish=t=>t!==1;                        // every non-rock cell gets floor & ceiling
-  /* ---- floor & ceiling & the pit ---- */
+  /* ---- floor, vault, walls & the pit: every surface is the shared field
+     sampled per vertex — floorYAt underfoot, ceilYAt overhead, wallField
+     for the lateral relief — faceted at sub-cell resolution so nothing
+     planes off flat and nothing can drift from where gameplay thinks the
+     rock is. Wall feet weld to the floor (the field is zero at the floor
+     line) and wall crowns weld to the vault (same nominal points, same
+     field), so the skin is watertight without a single box. ---- */
   const fAcc=new QuadAcc(), cAcc=new QuadAcc(), pAcc=new QuadAcc(), wAcc=new QuadAcc();
   const E=CELL/2, UVm=4;
-  /* ---- the vault: corner-shared ceiling heights, so the rock flows ----
-     Each grid corner takes the MIN of its adjacent open cells' ceilings
-     (chambers slope naturally down into their tunnel mouths, tunnels pinch
-     into the squeezes), clamped so a standing head never pokes through
-     near a squeeze mouth, plus per-corner jitter so it never planes off.
-     Shared corners make the surface continuous — no more panel skirts. */
-  const cH=[];
-  for(let cy=0;cy<=CH;cy++){
-    cH[cy]=[];
-    for(let cx=0;cx<=CW;cx++){
-      let mn=1e9, mx=0;
-      for(const[ox,oy]of[[-1,-1],[0,-1],[-1,0],[0,0]]){
-        const x=cx+ox, y=cy+oy;
-        if(x<0||y<0||x>=CW||y>=CH||grid3[y][x]===1) continue;
-        mn=Math.min(mn,ceilH[y][x]); mx=Math.max(mx,ceilH[y][x]);
-      }
-      if(mn===1e9){ cH[cy][cx]=0; continue; }
-      let h=mn;
-      if(mn<1.9&&mx>2.2) h=1.9;                  // squeeze mouths dip INSIDE the squeeze
-      h+=(hash(cx*13.37+cy*7.77)-0.5)*0.45;
-      cH[cy][cx]=Math.max(h,1.15);
-    }
-  }
+  const fpc=CAVE.fissurePocket;
   for(let y=0;y<CH;y++)for(let x=0;x<CW;x++){
     const t=grid3[y][x];
     if(t===1) continue;
     const p=cellToWorld3(x,y);
-    const u0=(p.x-E)/UVm, u1=(p.x+E)/UVm, v0=(p.z-E)/UVm, v1=(p.z+E)/UVm;
     if(t===5){
-      /* the chasm: a floor far below, walls falling to it */
+      /* the chasm: a floor far below, walls falling to it (the rim floor
+         corners are locked to 0, so the lip meets the ground exactly) */
+      const u0=(p.x-E)/UVm, u1=(p.x+E)/UVm, v0=(p.z-E)/UVm, v1=(p.z+E)/UVm;
       pAcc.quad([p.x-E,-14,p.z+E],[p.x+E,-14,p.z+E],[p.x+E,-14,p.z-E],[p.x-E,-14,p.z-E],
         [0,1,0],[[u0,v1],[u1,v1],[u1,v0],[u0,v0]]);
       for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){
         const nt=codeAt(x+dx,y+dy);
         if(nt===5) continue;
-        /* a dark wall on the chasm side of the seam, from floor level down */
         const sx=p.x+dx*E, sz=p.z+dy*E;
         const ax=dy!==0? p.x-E : sx, az=dx!==0? p.z-E : sz;
         const bx=dy!==0? p.x+E : sx, bz=dx!==0? p.z+E : sz;
@@ -850,9 +980,17 @@ export function buildCave(){
           [-dx,0,-dy],[[0,0],[1,0],[1,3.5],[0,3.5]]);
       }
     } else {
-      const fy = t===3? -0.22 : 0;
-      fAcc.quad([p.x-E,fy,p.z+E],[p.x+E,fy,p.z+E],[p.x+E,fy,p.z-E],[p.x-E,fy,p.z-E],
-        [0,1,0],[[u0,v1],[u1,v1],[u1,v0],[u0,v0]]);
+      /* the floor: 3×3 faceted sub-quads riding floorYAt (fine enough that
+         the mesh and the exact ground function never visibly disagree) */
+      const S=3;
+      for(let j=0;j<S;j++)for(let i=0;i<S;i++){
+        const x0=p.x-E+i*CELL/S, x1=x0+CELL/S;
+        const z0=p.z-E+j*CELL/S, z1=z0+CELL/S;
+        const q=(xx,zz)=>[xx,floorYAt(xx,zz),zz];
+        const uv=(xx,zz)=>[xx/UVm,zz/UVm];
+        fAcc.tri(q(x0,z1),q(x1,z1),q(x1,z0),[uv(x0,z1),uv(x1,z1),uv(x1,z0)]);
+        fAcc.tri(q(x0,z1),q(x1,z0),q(x0,z0),[uv(x0,z1),uv(x1,z0),uv(x0,z0)]);
+      }
       if(t===6){
         /* low stone lips so the bridge reads as a bridge */
         for(const sx of[-1,1]){
@@ -862,45 +1000,61 @@ export function buildCave(){
         }
       }
     }
-    /* the vault over this cell: two faceted triangles on the shared
-       corner heights. (The fissure pocket's cell stays open — its bore
-       runs up through where a ceiling would be.) */
-    if(!(CAVE.fissurePocket&&x===CAVE.fissurePocket.cx&&y===CAVE.fissurePocket.cy)){
-      const h00=cH[y][x],   h10=cH[y][x+1],
-            h01=cH[y+1][x], h11=cH[y+1][x+1];
-      cAcc.tri([p.x-E,h00,p.z-E],[p.x+E,h10,p.z-E],[p.x+E,h11,p.z+E],
-        [[u0,v0],[u1,v0],[u1,v1]]);
-      cAcc.tri([p.x-E,h00,p.z-E],[p.x+E,h11,p.z+E],[p.x-E,h01,p.z+E],
-        [[u0,v0],[u1,v1],[u0,v1]]);
+    /* the vault over this cell: faceted sub-tris on ceilYAt, crag-jittered
+       laterally by the same field the walls use so the crowns weld. (The
+       fissure pocket's cell stays open — its bore runs up through here.) */
+    if(!(fpc&&x===fpc.cx&&y===fpc.cy)){
+      const S=t===2? 4:3;
+      const cq=(xx,zz)=>{
+        const h=ceilYAt(xx,zz), F=wallField(xx,h,zz);
+        return [xx+F.x,h,zz+F.z];
+      };
+      const uv=(xx,zz)=>[xx/UVm,zz/UVm];
+      for(let j=0;j<S;j++)for(let i=0;i<S;i++){
+        const x0=p.x-E+i*CELL/S, x1=x0+CELL/S;
+        const z0=p.z-E+j*CELL/S, z1=z0+CELL/S;
+        cAcc.tri(cq(x0,z0),cq(x1,z0),cq(x1,z1),[uv(x0,z0),uv(x1,z0),uv(x1,z1)]);
+        cAcc.tri(cq(x0,z0),cq(x1,z1),cq(x0,z1),[uv(x0,z0),uv(x1,z1),uv(x0,z1)]);
+      }
+    }
+    /* rock walls: one displaced faceted sheet per exposed face, floor to
+       vault. Vertices are functions of world position alone, so faces
+       meeting at a corner column agree vertex for vertex. */
+    for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){
+      if(codeAt(x+dx,y+dy)!==1) continue;
+      const rx=-dy, rz=dx;                       // traverse dir: normal faces the room
+      const COLS=4;
+      const pts=[];
+      let span=0;
+      for(let i=0;i<=COLS;i++){
+        const tt=i/COLS*2-1;
+        const px=p.x+dx*E+rx*E*tt, pz=p.z+dy*E+rz*E*tt;
+        const yb=floorYAt(px,pz), yt=ceilYAt(px,pz);
+        span=Math.max(span,yt-yb);
+        pts.push({px,pz,yb,yt});
+      }
+      const ROWS=Math.max(3,Math.ceil(span/1.1));
+      const V=[];
+      for(let r=0;r<=ROWS;r++){
+        V[r]=[];
+        for(let i=0;i<=COLS;i++){
+          const q=pts[i], yy=lerp(q.yb,q.yt,r/ROWS);
+          const F=wallField(q.px,yy,q.pz);
+          V[r][i]=[q.px+F.x,yy,q.pz+F.z];
+        }
+      }
+      for(let r=0;r<ROWS;r++)for(let i=0;i<COLS;i++){
+        const p00=V[r][i], p10=V[r][i+1], p11=V[r+1][i+1], p01=V[r+1][i];
+        const u=(pt)=>((rx? pt[0]:pt[2]))/UVm;
+        wAcc.tri(p00,p10,p11,[[u(p00),p00[1]/UVm],[u(p10),p10[1]/UVm],[u(p11),p11[1]/UVm]]);
+        wAcc.tri(p00,p11,p01,[[u(p00),p00[1]/UVm],[u(p11),p11[1]/UVm],[u(p01),p01[1]/UVm]]);
+      }
     }
   }
   const floor=fAcc.mesh(floorMat); scene.add(floor);
   const ceil=cAcc.mesh(rockMat); scene.add(ceil);
   const pit=pAcc.mesh(pitMat); scene.add(pit);
-  const skirts=wAcc.mesh(rockMat); scene.add(skirts);
-  /* ---- rock walls: boxes as tall as the tallest neighbouring ceiling ---- */
-  {
-    const geoCache=new Map(), boxes=[];
-    for(let y=0;y<CH;y++)for(let x=0;x<CW;x++){
-      if(grid3[y][x]!==1) continue;
-      let hMax=0;
-      for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){
-        const nx=x+dx, ny=y+dy;
-        if(nx<0||ny<0||nx>=CW||ny>=CH) continue;
-        if(grid3[ny][nx]!==1) hMax=Math.max(hMax, ceilH[ny][nx]);
-      }
-      if(hMax<=0) continue;                       // fully enclosed
-      const h=Math.ceil((hMax+0.6)*2)/2;
-      let geo=geoCache.get(h);
-      if(!geo){ geo=scaleBoxUV(new THREE.BoxGeometry(CELL,h,CELL),CELL,h,CELL,UVm); geoCache.set(h,geo); }
-      const m=new THREE.Mesh(geo,rockMat);
-      const p=cellToWorld3(x,y);
-      m.position.set(p.x,h/2,p.z);
-      boxes.push(m);
-    }
-    scene.add(mergeStatic(boxes,rockMat));
-    for(const g of geoCache.values()) g.dispose();
-  }
+  const walls=wAcc.mesh(rockMat); scene.add(walls);
   /* ---- the stream's water ---- */
   {
     const wq=new QuadAcc();
@@ -935,15 +1089,19 @@ export function buildCave(){
         opacity:op, depthWrite:false, side:THREE.DoubleSide})));
     }
   }
-  /* ---- silk floor sheets around the nests ---- */
+  /* ---- silk floor sheets around the nests: a skin over the real floor ---- */
   {
     const sq=new QuadAcc();
     for(const k of CAVE.silk){
       const x=k%CW, y=(k/CW)|0;
       if(grid3[y][x]===1||grid3[y][x]===5) continue;
       const p=cellToWorld3(x,y);
-      sq.quad([p.x-E,0.02,p.z+E],[p.x+E,0.02,p.z+E],[p.x+E,0.02,p.z-E],[p.x-E,0.02,p.z-E],
-        [0,1,0],[[0,1],[1,1],[1,0],[0,0]]);
+      const q=(xx,zz)=>[xx,floorYAt(xx,zz)+0.04,zz];
+      for(let j=0;j<3;j++)for(let i=0;i<3;i++){
+        const x0=p.x-E+i*CELL/3, x1=x0+CELL/3, z0=p.z-E+j*CELL/3, z1=z0+CELL/3;
+        sq.tri(q(x0,z1),q(x1,z1),q(x1,z0),[[0,1],[1,1],[1,0]]);
+        sq.tri(q(x0,z1),q(x1,z0),q(x0,z0),[[0,1],[1,0],[0,0]]);
+      }
     }
     scene.add(sq.mesh(silkFloorMat));
   }
@@ -955,7 +1113,7 @@ export function buildCave(){
   const stalUp=[], stalDown=[], curtains=[];
   for(const c of CAVE.chambers){
     const n=Math.round(c.r*2.4);
-    for(let t=0,placed=0;t<44&&placed<n;t++){
+    for(let t=0,placed=0;t<60&&placed<n;t++){
       const a=srand()*Math.PI*2, rr=c.r*Math.sqrt(srand())*0.9;
       const x=Math.round(c.cx+Math.cos(a)*rr), y=Math.round(c.cy+Math.sin(a)*rr);
       if(!inB(x,y)||grid3[y][x]!==0) continue;
@@ -963,28 +1121,33 @@ export function buildCave(){
       const px=p.x+rand(-1.2,1.2), pz=p.z+rand(-1.2,1.2);
       if(!clearOf(px,pz,0.5)) continue;
       const vault=Math.min(cH[y][x],cH[y][x+1],cH[y+1][x],cH[y+1][x+1]);
+      const fy=floorYAt(px,pz);
       /* some pairs have had the ages they needed to meet: a full column,
-         girth scaled to the height it had to bridge */
+         girth scaled to the height it had to bridge — under a chamber dome
+         these are pillars you shelter behind, not furniture */
       if(srand()<0.16){
-        const col=new THREE.Mesh(columnGeo(vault*rand(0.07,0.11),vault+0.2));
-        col.position.set(px,-0.05,pz); col.rotation.y=Math.random()*7;
+        const cv=ceilYAt(px,pz);
+        const rCol=Math.min(1.6,(cv-fy)*rand(0.07,0.11));
+        const col=new THREE.Mesh(columnGeo(rCol,cv-fy+0.3));
+        col.position.set(px,fy-0.05,pz); col.rotation.y=Math.random()*7;
         stalUp.push(col);
         placed++;
-        CAVE.obstacles.push({x:px,z:pz,r:0.55});
+        CAVE.obstacles.push({x:px,z:pz,r:Math.max(0.55,rCol*0.85)});
         continue;
       }
-      const h=rand(0.9,Math.min(2.8,vault*0.5));
+      const h=rand(0.9,Math.min(5.5,vault*0.42));
       /* a flowstone stack: noisy mound base, drip-ringed spire, a lean child */
       const base=new THREE.Mesh(moundGeo(h*0.36,0.34));
-      base.position.set(px,-0.02,pz); base.rotation.y=Math.random()*7;
+      base.position.set(px,fy-0.02,pz); base.rotation.y=Math.random()*7;
       stalUp.push(base);
       const spire=new THREE.Mesh(spireGeo(h*rand(0.17,0.24),h));
-      spire.position.set(px,0,pz); spire.rotation.y=Math.random()*7;
+      spire.position.set(px,fy,pz); spire.rotation.y=Math.random()*7;
       stalUp.push(spire);
       if(Math.random()<0.6){
         const h2=h*rand(0.35,0.6);
+        const kx=px+rand(-0.55,0.55), kz=pz+rand(-0.55,0.55);
         const kid=new THREE.Mesh(spireGeo(h2*rand(0.2,0.26),h2,0.16));
-        kid.position.set(px+rand(-0.55,0.55),0,pz+rand(-0.55,0.55));
+        kid.position.set(kx,floorYAt(kx,kz),kz);
         kid.rotation.y=Math.random()*7;
         stalUp.push(kid);
       }
@@ -995,9 +1158,9 @@ export function buildCave(){
         const above=Math.random()<0.5;
         const sx2=above? px+rand(-0.3,0.3) : px+rand(-1.6,1.6);
         const sz2=above? pz+rand(-0.3,0.3) : pz+rand(-1.6,1.6);
-        const hh=rand(0.7,Math.min(2.4,vault*0.45));
+        const hh=rand(0.7,Math.min(4.6,vault*0.4));
         const st=new THREE.Mesh(spireGeo(hh*rand(0.14,0.2),hh,0.06));
-        st.position.set(sx2, vault+0.18, sz2);
+        st.position.set(sx2, ceilYAt(sx2,sz2)+0.18, sz2);
         st.rotation.x=Math.PI; st.rotation.y=Math.random()*7;
         stalDown.push(st);
       }
@@ -1011,36 +1174,36 @@ export function buildCave(){
     const p=cellToWorld3(x,y);
     const vault=Math.min(cH[y][x],cH[y][x+1],cH[y+1][x],cH[y+1][x+1]);
     /* soda straws cluster around a shared seep point in the ceiling */
-    if((code===0||code===3)&&srand()<0.14&&vault>=2.2){
+    if((code===0||code===3)&&srand()<0.14){
       const cx0=p.x+rand(-1.3,1.3), cz0=p.z+rand(-1.3,1.3);
       const n=2+Math.floor(srand()*4);
       for(let i=0;i<n;i++){
         const hh=rand(0.25,0.85);
+        const sx=cx0+rand(-0.5,0.5), sz=cz0+rand(-0.5,0.5);
         const st=new THREE.Mesh(new THREE.ConeGeometry(rand(0.03,0.07),hh,5));
-        st.position.set(cx0+rand(-0.5,0.5), vault-hh/2+0.12, cz0+rand(-0.5,0.5));
+        st.position.set(sx, ceilYAt(sx,sz)+0.12-hh/2, sz);
         st.rotation.x=Math.PI; st.rotation.z=(Math.random()-0.5)*0.06;
         stalDown.push(st);
       }
       /* a patient seep gets an answering nub on the floor below */
       if(code===0&&Math.random()<0.4&&clearOf(cx0,cz0,0.2)){
         const nub=new THREE.Mesh(spireGeo(rand(0.06,0.11),rand(0.12,0.3),0.05));
-        nub.position.set(cx0,0,cz0);
+        nub.position.set(cx0,floorYAt(cx0,cz0),cz0);
         stalUp.push(nub);
       }
     }
     /* drapery curtains where a wall meets a high vault — hung from the
-       ceiling line at THAT wall face (its two edge corners), not the
-       cell's lowest corner, so no bare wall shows above the root */
-    if(code===0&&vault>=2.7&&srand()<0.06){
+       real ceiling edge at that face (ceilYAt at the anchor), shifted with
+       the wall's own relief so the root stays against the rock */
+    if(code===0&&srand()<0.07){
       for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){
         if(codeAt(x+dx,y+dy)!==1) continue;
-        const eV = dx>0? Math.min(cH[y][x+1],cH[y+1][x+1])
-                 : dx<0? Math.min(cH[y][x],cH[y+1][x])
-                 : dy>0? Math.min(cH[y+1][x],cH[y+1][x+1])
-                 :       Math.min(cH[y][x],cH[y][x+1]);
-        const hgt=rand(0.8,Math.min(2.0,eV*0.55));
-        const ct=new THREE.Mesh(curtainGeo(rand(1.1,2.4),hgt));
-        ct.position.set(p.x+dx*(E-0.30), eV+0.22-hgt/2, p.z+dy*(E-0.30));
+        const ax=p.x+dx*(E-0.30), az=p.z+dy*(E-0.30);
+        const eV=ceilYAt(ax,az);
+        const hgt=rand(1.0,Math.min(2.8,eV*0.5));
+        const ct=new THREE.Mesh(curtainGeo(rand(1.1,2.6),hgt));
+        const F=wallField(ax,eV-hgt*0.3,az);
+        ct.position.set(ax+F.x*0.7, eV+0.22-hgt/2, az+F.z*0.7);
         ct.rotation.y = dx? (dx>0?-Math.PI/2:Math.PI/2) : (dy>0?Math.PI:0);
         curtains.push(ct);
         break;
@@ -1055,8 +1218,9 @@ export function buildCave(){
         const n=2+Math.floor(Math.random()*3);
         for(let i=0;i<n;i++){
           const f=i/n;
+          const mx=bx+sdx*(f*1.5+rand(-0.2,0.2)), mz=bz+sdy*(f*1.5+rand(-0.2,0.2));
           const m=new THREE.Mesh(moundGeo(rand(0.28,0.5)*(1-f*0.4),rand(0.4,0.6)));
-          m.position.set(bx+sdx*(f*1.5+rand(-0.2,0.2)), 0.02-f*0.16, bz+sdy*(f*1.5+rand(-0.2,0.2)));
+          m.position.set(mx, floorYAt(mx,mz)+0.02-f*0.16, mz);
           m.rotation.y=Math.random()*7;
           stalUp.push(m);
         }
@@ -1068,14 +1232,15 @@ export function buildCave(){
       if(clearOf(sx,sz,0.4)){
         const h=rand(0.3,0.9);
         const st=new THREE.Mesh(stumpGeo(rand(0.14,0.28),h));
-        st.position.set(sx,0,sz);
+        st.position.set(sx,floorYAt(sx,sz),sz);
         st.rotation.y=Math.random()*7; st.rotation.z=(Math.random()-0.5)*0.2;
         stalUp.push(st);
         if(h>0.5) CAVE.obstacles.push({x:sx,z:sz,r:0.35});
         if(Math.random()<0.5){         // its top half, lying where it fell
-          const frag=new THREE.Mesh(spireGeo(rand(0.09,0.15),rand(0.4,0.9),0.02));
           const fa=Math.random()*7;
-          frag.position.set(sx+Math.cos(fa)*rand(0.5,1.1), 0.10, sz+Math.sin(fa)*rand(0.5,1.1));
+          const fx=sx+Math.cos(fa)*rand(0.5,1.1), fz=sz+Math.sin(fa)*rand(0.5,1.1);
+          const frag=new THREE.Mesh(spireGeo(rand(0.09,0.15),rand(0.4,0.9),0.02));
+          frag.position.set(fx, floorYAt(fx,fz)+0.10, fz);
           frag.rotation.z=Math.PI/2+rand(-0.2,0.2); frag.rotation.y=fa;
           stalUp.push(frag);
         }
@@ -1098,10 +1263,6 @@ export function buildCave(){
     const pickFan=m=>fans[Math.floor(Math.random()*2)].push(m);
     const broodDist=(x,y)=>Math.min(...broods.map(b=>Math.hypot(x-b.cx,y-b.cy)));
     const solid=c=>c===1||c===7;
-    const faceV=(x,y,dx,dy)=> dx>0? Math.min(cH[y][x+1],cH[y+1][x+1])
-             : dx<0? Math.min(cH[y][x],cH[y+1][x])
-             : dy>0? Math.min(cH[y+1][x],cH[y+1][x+1])
-             :       Math.min(cH[y][x],cH[y][x+1]);
     const faceYaw=(dx,dy)=> dx? (dx>0?-Math.PI/2:Math.PI/2) : (dy>0?Math.PI:0);
     for(let y=1;y<CH-1;y++)for(let x=1;x<CW-1;x++){
       const code=grid3[y][x];
@@ -1111,19 +1272,23 @@ export function buildCave(){
       const density=clamp(1-broodDist(x,y)/16,0.12,1);
       const sq=code===2;                       // squeeze interiors: light silk only
       /* corner sheets: strung across the chord where two wall faces meet,
-         pinned at both walls, bellying out into the room */
+         pinned at both walls, bellying out into the room. The corner's own
+         wall relief carries the pins with the rock. */
       for(const[dx,dy]of[[1,1],[1,-1],[-1,1],[-1,-1]]){
         if(!solid(codeAt(x+dx,y))||!solid(codeAt(x,y+dy))) continue;
         if(Math.random()>density*(sq?0.5:0.85)) continue;
         const cV=cH[y+(dy>0?1:0)][x+(dx>0?1:0)];
         const cx0=p.x+dx*(E-0.05), cz0=p.z+dy*(E-0.05);
+        const fy=floorYAt(cx0,cz0);
         const n=1+(Math.random()<density*0.5?1:0);
         for(let i=0;i<n;i++){
           const d=rand(0.5,1.3);
           const hgt=rand(0.35,0.8);
-          const hh=i===0? cV-rand(0.1,0.5) : rand(0.7,1.5);
+          const hh=i===0? cV-rand(0.1,0.5) : fy+rand(0.7,1.5);
+          const yy=Math.min(hh,cV-0.15)-hgt/2;
+          const F=wallField(cx0,yy,cz0);
           const w=new THREE.Mesh(webSheetGeo(d*1.41,hgt,d*rand(0.12,0.28)));
-          w.position.set(cx0-dx*d/2, Math.min(hh,cV-0.15)-hgt/2, cz0-dy*d/2);
+          w.position.set(cx0-dx*d/2+F.x*0.8, yy, cz0-dy*d/2+F.z*0.8);
           w.rotation.y=Math.atan2(-dx,-dy);
           (i===0?pickFan:pickSheet)(w);
         }
@@ -1132,33 +1297,37 @@ export function buildCave(){
         if(!solid(codeAt(x+dx,y+dy))) continue;
         const jx=p.x+dx*(E-0.04)+(dx?0:rand(-1.2,1.2));
         const jz=p.z+dy*(E-0.04)+(dy?0:rand(-1.2,1.2));
-        /* junction fans: top edge pinned along the wall-ceiling line,
-           the panel sagging down and out into the room */
+        /* junction fans: top edge pinned along the wall-ceiling line —
+           ceilYAt at the anchor, ridden out on the wall's own relief */
         if(!sq&&Math.random()<density*0.65){
-          const eV=faceV(x,y,dx,dy);
+          const eV=ceilYAt(jx,jz);
           const wdt=rand(0.8,2.0), hgt=rand(0.45,0.95), tilt=rand(0.5,1.0);
+          const F=wallField(jx,eV-0.1,jz);
           const w=new THREE.Mesh(webSheetGeo(wdt,hgt,rand(0.08,0.18)));
           w.rotation.order="YXZ"; w.rotation.y=faceYaw(dx,dy); w.rotation.x=-tilt;
-          w.position.set(jx-dx*Math.sin(tilt)*hgt/2, eV-0.03-Math.cos(tilt)*hgt/2,
-                         jz-dy*Math.sin(tilt)*hgt/2);
+          w.position.set(jx+F.x-dx*Math.sin(tilt)*hgt/2, eV-0.03-Math.cos(tilt)*hgt/2,
+                         jz+F.z-dy*Math.sin(tilt)*hgt/2);
           pickFan(w);
         }
         /* floor skirts: rooted low on the wall, radiating onto the floor */
         if(!sq&&code!==3&&Math.random()<density*0.35){
+          const fy0=floorYAt(jx,jz);
           const h0=rand(0.25,0.6), tilt=rand(0.75,1.15);
           const hgt=Math.min(1.2,h0/Math.cos(tilt)), wdt=rand(0.6,1.4);
+          const F=wallField(jx,fy0+h0,jz);
           const w=new THREE.Mesh(webSheetGeo(wdt,hgt,rand(0.05,0.12)));
           w.rotation.order="YXZ"; w.rotation.y=faceYaw(dx,dy); w.rotation.x=-tilt;
-          w.position.set(jx-dx*Math.sin(tilt)*hgt/2, h0-Math.cos(tilt)*hgt/2,
-                         jz-dy*Math.sin(tilt)*hgt/2);
+          w.position.set(jx+F.x-dx*Math.sin(tilt)*hgt/2, fy0+h0-Math.cos(tilt)*hgt/2,
+                         jz+F.z-dy*Math.sin(tilt)*hgt/2);
           pickFan(w);
         }
         /* funnel retreats diving into the wall-floor junction */
-        if(!sq&&code!==3&&funnels.length<90&&Math.random()<density*0.3){
+        if(!sq&&code!==3&&funnels.length<140&&Math.random()<density*0.3){
           const r=rand(0.25,0.5), dep=rand(0.28,0.55);
+          const fx0=p.x+dx*(E-0.15-r*0.5)+(dx?0:rand(-1.2,1.2));
+          const fz0=p.z+dy*(E-0.15-r*0.5)+(dy?0:rand(-1.2,1.2));
           const f=new THREE.Mesh(funnelWebGeo(r,dep));
-          f.position.set(p.x+dx*(E-0.15-r*0.5)+(dx?0:rand(-1.2,1.2)), 0.02,
-                         p.z+dy*(E-0.15-r*0.5)+(dy?0:rand(-1.2,1.2)));
+          f.position.set(fx0, floorYAt(fx0,fz0)+0.02, fz0);
           f.rotation.x=dy*0.3; f.rotation.z=-dx*0.3;      // throat leans into the wall
           funnels.push(f);
         }
@@ -1167,10 +1336,11 @@ export function buildCave(){
          (Separate scan: the loop above only visits SOLID neighbors.) */
       if(!sq) for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){
         if(codeAt(x+dx,y+dy)!==2||Math.random()>0.55) continue;
-        const eV=faceV(x,y,dx,dy);
-        const hgt=rand(0.55,Math.max(0.6,eV*0.62)), wdt=rand(2.0,3.1);
+        const vx=p.x+dx*(E-0.10), vz=p.z+dy*(E-0.10);
+        const eV=ceilYAt(vx-dx*0.25,vz-dy*0.25);
+        const hgt=rand(1.2,Math.max(1.3,eV*0.62)), wdt=rand(2.0,3.1);
         const w=new THREE.Mesh(webSheetGeo(wdt,hgt,rand(0.15,0.3)));
-        w.position.set(p.x+dx*(E-0.10), eV-0.02-hgt/2, p.z+dy*(E-0.10));
+        w.position.set(vx, eV-0.02-hgt/2, vz);
         w.rotation.y=faceYaw(dx,dy);
         tornV.push(w);
         const ax_=dx?0:1, az_=dx?1:0;                     // wall-parallel axis
@@ -1180,32 +1350,36 @@ export function buildCave(){
             p.x+dx*(E-0.1)+ax_*rand(1.0,1.7), rand(0.25,1.1), p.z+dy*(E-0.1)+az_*rand(1.0,1.7),
             rand(0.03,0.06)));
       }
-      /* hammocks slung under the vault on real guy-lines */
+      /* hammocks slung under the vault on real guy-lines — each guy runs
+         to the actual ceiling above its own corner */
       if(!sq&&density>0.35&&Math.random()<(density-0.2)*0.8){
         const wdt=rand(1.1,2.4), dep=rand(1.0,2.2), sag=Math.min(wdt,dep)*rand(0.16,0.3);
-        const yaw=Math.random()*Math.PI, hy=vault-rand(0.35,0.95);
         const hx=p.x+rand(-0.9,0.9), hz=p.z+rand(-0.9,0.9);
+        const yaw=Math.random()*Math.PI, hy=ceilYAt(hx,hz)-rand(0.35,1.1);
         const w=new THREE.Mesh(webHammockGeo(wdt,dep,sag));
         w.rotation.order="YXZ"; w.rotation.y=yaw; w.rotation.x=-Math.PI/2;
         w.position.set(hx,hy,hz);
         pickSheet(w);
         const cs=Math.cos(yaw), sn=Math.sin(yaw);
-        for(const[lx,ly]of[[wdt/2,dep/2],[wdt/2,-dep/2],[-wdt/2,dep/2],[-wdt/2,-dep/2]])
+        for(const[lx,ly]of[[wdt/2,dep/2],[wdt/2,-dep/2],[-wdt/2,dep/2],[-wdt/2,-dep/2]]){
+          const gx=hx+lx*cs-ly*sn+rand(-0.4,0.4), gz=hz-lx*sn-ly*cs+rand(-0.4,0.4);
           strands.push(strandMesh(hx+lx*cs-ly*sn, hy, hz-lx*sn-ly*cs,
-            hx+lx*cs-ly*sn+rand(-0.4,0.4), vault+0.05, hz-lx*sn-ly*cs+rand(-0.4,0.4),
-            rand(0.03,0.06)));
+            gx, Math.max(ceilYAt(gx,gz)+0.05,hy+0.25), gz, rand(0.03,0.06)));
+        }
         if(Math.random()<0.4)
           strands.push(strandMesh(hx,hy-sag,hz, hx+rand(-0.2,0.2), hy-sag-rand(0.4,1.1),
             hz+rand(-0.2,0.2), 0.04));
       }
       /* streamers hanging from the vault — thickest in the low tunnels */
       {
-        const pr= sq? 0.4 : density*(vault<3.4?0.75:0.45);
+        const pr= sq? 0.4 : density*(vault<5.4?0.75:0.45);
         let n=(Math.random()<pr?1:0)+(Math.random()<pr*0.5?1:0)+(Math.random()<pr*0.25?1:0);
         while(n--){
-          const len=rand(0.5,Math.min(2.2,vault*0.55)), wdt=rand(0.12,0.35);
+          const wx2=p.x+rand(-0.9,0.9), wz2=p.z+rand(-0.9,0.9);
+          const rootY=ceilYAt(wx2,wz2)+0.1;
+          const len=rand(0.5,Math.min(2.6,rootY*0.5)), wdt=rand(0.12,0.35);
           const w=new THREE.Mesh(webStreamerGeo(wdt,len));
-          w.position.set(p.x+rand(-0.9,0.9), vault+0.1-len/2, p.z+rand(-0.9,0.9));
+          w.position.set(wx2, rootY-len/2, wz2);
           w.rotation.y=Math.random()*Math.PI;
           pickSheet(w);
         }
@@ -1217,44 +1391,47 @@ export function buildCave(){
       const c=worldToCell3(o.x,o.z);
       if(broodDist(c.cx,c.cy)>9||Math.random()>0.30) continue;
       const hgt=rand(0.5,1.0);
+      const fyW=floorYAt(o.x,o.z);
       const w=new THREE.Mesh(webWrapGeo(o.r+0.16,hgt));
-      w.position.set(o.x,0.02,o.z); w.rotation.y=Math.random()*7;
+      w.position.set(o.x,fyW+0.02,o.z); w.rotation.y=Math.random()*7;
       pickSheet(w);
       for(let i=2+Math.floor(Math.random()*2);i--;){
         const a=Math.random()*Math.PI*2;
-        strands.push(strandMesh(o.x+Math.cos(a)*o.r*0.7, hgt*rand(0.7,1.0), o.z+Math.sin(a)*o.r*0.7,
-          o.x+Math.cos(a)*(o.r+rand(0.7,1.3)), 0.02, o.z+Math.sin(a)*(o.r+rand(0.7,1.3)),
-          rand(0.03,0.05)));
+        const ex=o.x+Math.cos(a)*(o.r+rand(0.7,1.3)), ez=o.z+Math.sin(a)*(o.r+rand(0.7,1.3));
+        strands.push(strandMesh(o.x+Math.cos(a)*o.r*0.7, fyW+hgt*rand(0.7,1.0), o.z+Math.sin(a)*o.r*0.7,
+          ex, floorYAt(ex,ez)+0.02, ez, rand(0.03,0.05)));
       }
     }
     /* the canopy: directly over every brood, generations of layered
-       hammocks and long streamer tails — the nest has a ceiling of silk */
-    const vaultAt=(cx,cy)=>Math.min(cH[cy][cx],cH[cy][cx+1],cH[cy+1][cx],cH[cy+1][cx+1]);
+       hammocks and long streamer tails. The brood vaults are 12m domes
+       now, so the layers hang DEEP — sheets down to two-thirds height on
+       long guys, tails reaching for the clutch — a hanging city of silk. */
     for(const b of broods){
       const bp=cellToWorld3(b.cx,b.cy);
-      for(let i=0;i<6;i++){
-        const hx=bp.x+rand(-4.5,4.5), hz=bp.z+rand(-4.5,4.5);
+      for(let i=0;i<8;i++){
+        const hx=bp.x+rand(-6,6), hz=bp.z+rand(-6,6);
         const c=worldToCell3(hx,hz), cc=codeAt(c.cx,c.cy);
         if(cc===1||cc===5||cc===7) continue;
-        const lv=vaultAt(c.cx,c.cy);
-        const wdt=rand(1.6,3.2), dep=rand(1.4,2.8), sag=Math.min(wdt,dep)*rand(0.2,0.34);
-        const yaw=Math.random()*Math.PI, hy=lv-rand(0.25,1.4);
+        const lv=ceilYAt(hx,hz);
+        const wdt=rand(1.6,3.4), dep=rand(1.4,3.0), sag=Math.min(wdt,dep)*rand(0.2,0.34);
+        const yaw=Math.random()*Math.PI, hy=lv-rand(0.3,lv*0.4);
         const w=new THREE.Mesh(webHammockGeo(wdt,dep,sag));
         w.rotation.order="YXZ"; w.rotation.y=yaw; w.rotation.x=-Math.PI/2;
         w.position.set(hx,hy,hz);
         pickSheet(w);
         const cs=Math.cos(yaw), sn=Math.sin(yaw);
-        for(const[lx,ly]of[[wdt/2,dep/2],[wdt/2,-dep/2],[-wdt/2,dep/2],[-wdt/2,-dep/2]])
+        for(const[lx,ly]of[[wdt/2,dep/2],[wdt/2,-dep/2],[-wdt/2,dep/2],[-wdt/2,-dep/2]]){
+          const gx=hx+lx*cs-ly*sn+rand(-0.5,0.5), gz=hz-lx*sn-ly*cs+rand(-0.5,0.5);
           strands.push(strandMesh(hx+lx*cs-ly*sn, hy, hz-lx*sn-ly*cs,
-            hx+lx*cs-ly*sn+rand(-0.5,0.5), lv+0.05, hz-lx*sn-ly*cs+rand(-0.5,0.5),
-            rand(0.03,0.06)));
+            gx, Math.max(ceilYAt(gx,gz)+0.05,hy+0.3), gz, rand(0.03,0.06)));
+        }
       }
-      for(let i=0;i<9;i++){
-        const hx=bp.x+rand(-4,4), hz=bp.z+rand(-4,4);
+      for(let i=0;i<12;i++){
+        const hx=bp.x+rand(-5.5,5.5), hz=bp.z+rand(-5.5,5.5);
         const c=worldToCell3(hx,hz), cc=codeAt(c.cx,c.cy);
         if(cc===1||cc===5||cc===7) continue;
-        const lv=vaultAt(c.cx,c.cy);
-        const len=rand(0.9,Math.min(3.0,lv*0.6));
+        const lv=ceilYAt(hx,hz);
+        const len=rand(1.2,Math.min(5.5,lv*0.55));
         const w=new THREE.Mesh(webStreamerGeo(rand(0.15,0.4),len));
         w.position.set(hx, lv+0.1-len/2, hz);
         w.rotation.y=Math.random()*Math.PI;
@@ -1264,7 +1441,7 @@ export function buildCave(){
     /* the way back up, silked shut: a torn lid over the stair mouth,
        drapes down its collar, anchor lines radiating into the cave */
     {
-      const sx=CAVE.spawn.x, sz=CAVE.spawn.z+2.6, sh=ceilH[spawnC.cy][spawnC.cx];
+      const sx=CAVE.spawn.x, sz=CAVE.spawn.z+2.6, sh=ceilYAt(sx,sz);
       const lid=new THREE.Mesh(webHammockGeo(3.0,3.0,0.5));
       lid.rotation.order="YXZ"; lid.rotation.y=Math.random()*Math.PI; lid.rotation.x=-Math.PI/2;
       lid.position.set(sx,sh-0.35,sz);
@@ -1301,8 +1478,9 @@ export function buildCave(){
         const px=p.x+rand(-5,5), pz=p.z+rand(-5,5);
         if(cellAt3(px,pz)===1||!clearOf(px,pz,0.4)) continue;
         const co=makeCocoon();
-        if(Math.random()<0.5){ co.position.set(px,rand(0.4,1.6),pz); }
-        else { co.position.set(px,0.45,pz); CAVE.obstacles.push({x:px,z:pz,r:0.38}); }
+        const fy=floorYAt(px,pz);
+        if(Math.random()<0.5){ co.position.set(px,fy+rand(0.4,1.8),pz); }
+        else { co.position.set(px,fy+0.45,pz); CAVE.obstacles.push({x:px,z:pz,r:0.38}); }
         cocoons.push(co);
       }
     }
@@ -1370,28 +1548,32 @@ export function buildCave(){
         emissive:0x081418, emissiveMap:FSKIN.emit, specular:0x2a4a50, shininess:30});
       const parts=[];
       let ax=p.x, az=p.z, hh=0.55, fdx=0, fdy=0, faceRot=0, onWall=false;
+      const fy0=floorYAt(p.x,p.z);
       if(kind==="conk"){
         const [dx,dy]=faces[Math.floor(srand()*faces.length)];
         fdx=dx; fdy=dy; onWall=true;
-        hh=rand(0.6,Math.min(2.6,ceilH[y][x]-0.6));
         const bx=p.x+dx*(E-0.10), bz=p.z+dy*(E-0.10);
+        const fyc=floorYAt(bx,bz);
+        hh=fyc+rand(0.6,Math.min(2.6,ceilH[y][x]-0.6));
         faceRot = dx? (dx>0?-Math.PI/2:Math.PI/2) : (dy>0?Math.PI:0);
         ax=bx; az=bz;
-        /* 1-2 shelf runs climbing the rock face, conks shrinking as they go */
+        /* 1-2 shelf runs climbing the rock face, conks shrinking as they
+           go — each shelf rides the wall's own relief so it stays socketed */
         const runs=1+(srand()<0.6?1:0);
         for(let rI=0;rI<runs;rI++){
           const off=(srand()-0.5)*1.7;                    // slide along the wall
           const cx2=bx+(dy!==0?off:0), cz2=bz+(dx!==0?off:0);
-          let yy=Math.max(0.35,hh-rand(0.3,0.8));
+          let yy=Math.max(fyc+0.35,hh-rand(0.3,0.8));
           const n=3+Math.floor(srand()*3);
           for(let i=0;i<n;i++){
-            if(yy>ceilH[y][x]-0.35) break;
+            if(yy>ceilYAt(cx2,cz2)-0.35) break;
             const rc=rand(0.16,0.3)*(1-0.4*i/n);
+            const F=wallField(cx2,yy,cz2);
             const m=new THREE.Mesh(conkGeo(rc));
             /* half-buried in the face: only the shelf protrudes */
-            m.position.set(cx2+dx*rand(0.02,0.16)+(dy!==0?rand(-0.12,0.12):0),
+            m.position.set(cx2+F.x+dx*rand(0.02,0.16)+(dy!==0?rand(-0.12,0.12):0),
                            yy,
-                           cz2+dy*rand(0.02,0.16)+(dx!==0?rand(-0.12,0.12):0));
+                           cz2+F.z+dy*rand(0.02,0.16)+(dx!==0?rand(-0.12,0.12):0));
             m.rotation.set(rand(-0.14,0.14),Math.random()*Math.PI*2,rand(-0.14,0.14));
             m.scale.y=rand(0.6,0.85);
             parts.push(m);
@@ -1402,9 +1584,10 @@ export function buildCave(){
         const nb=1+Math.floor(srand()*3);
         for(let i=0;i<nb;i++){
           const rc=rand(0.05,0.1);
+          const jx=bx-dx*rand(0.25,0.7)+(dy!==0?rand(-0.5,0.5):0);
+          const jz=bz-dy*rand(0.25,0.7)+(dx!==0?rand(-0.5,0.5):0);
           const m=new THREE.Mesh(toadstoolGeo(rc,rc*0.32,rand(0.05,0.14),rc*rand(0.6,1)));
-          m.position.set(bx-dx*rand(0.25,0.7)+(dy!==0?rand(-0.5,0.5):0), 0,
-                         bz-dy*rand(0.25,0.7)+(dx!==0?rand(-0.5,0.5):0));
+          m.position.set(jx, floorYAt(jx,jz), jz);
           m.rotation.y=Math.random()*Math.PI*2;
           parts.push(m);
         }
@@ -1417,10 +1600,12 @@ export function buildCave(){
           const hs=big?rand(0.2,0.42):rand(0.07,0.18);
           const m=new THREE.Mesh(toadstoolGeo(rc,rc*rand(0.24,0.36),hs,rc*rand(0.55,1.35)));
           const a=Math.random()*Math.PI*2, rr=big?Math.random()*0.35:0.3+Math.random()*0.75;
-          m.position.set(p.x+Math.cos(a)*rr,0,p.z+Math.sin(a)*rr);
+          const mx=p.x+Math.cos(a)*rr, mz=p.z+Math.sin(a)*rr;
+          m.position.set(mx,floorYAt(mx,mz),mz);
           m.rotation.set(rand(-0.09,0.09),Math.random()*Math.PI*2,rand(-0.09,0.09));
           parts.push(m);
         }
+        hh=fy0+0.55;
       } else if(kind==="finger"){
         /* coral clumps: spindles leaning outward, tips alight */
         const clumps=2+(srand()<0.5?1:0);
@@ -1429,26 +1614,28 @@ export function buildCave(){
           const cx2=p.x+Math.cos(a0)*rr, cz2=p.z+Math.sin(a0)*rr;
           const n=5+Math.floor(Math.random()*5);
           for(let i=0;i<n;i++){
-            const m=new THREE.Mesh(fingerGeo(rand(0.02,0.045),rand(0.14,0.42)));
             const fa=Math.random()*Math.PI*2, fr=Math.random()*0.16;
-            m.position.set(cx2+Math.cos(fa)*fr,0,cz2+Math.sin(fa)*fr);
+            const mx=cx2+Math.cos(fa)*fr, mz=cz2+Math.sin(fa)*fr;
+            const m=new THREE.Mesh(fingerGeo(rand(0.02,0.045),rand(0.14,0.42)));
+            m.position.set(mx,floorYAt(mx,mz),mz);
             m.rotation.set(Math.sin(fa)*rand(0.05,0.35),0,-Math.cos(fa)*rand(0.05,0.35));
             parts.push(m);
           }
         }
-        hh=0.4;
+        hh=fy0+0.4;
       } else {
         /* puffballs half-sunk in the grit */
         const n=5+Math.floor(srand()*5);
         for(let i=0;i<n;i++){
           const r=rand(0.05,0.15);
-          const m=new THREE.Mesh(puffGeo(r));
           const a=Math.random()*Math.PI*2, rr=Math.random()*0.85;
-          m.position.set(p.x+Math.cos(a)*rr, r*0.72, p.z+Math.sin(a)*rr);
+          const mx=p.x+Math.cos(a)*rr, mz=p.z+Math.sin(a)*rr;
+          const m=new THREE.Mesh(puffGeo(r));
+          m.position.set(mx, floorYAt(mx,mz)+r*0.72, mz);
           m.scale.y=0.85; m.rotation.y=Math.random()*Math.PI*2;
           parts.push(m);
         }
-        hh=0.35;
+        hh=fy0+0.35;
       }
       g.add(mergeStatic(parts,glowMat));
       for(const m of parts) m.geometry.dispose();
@@ -1463,15 +1650,18 @@ export function buildCave(){
           opacity:0.8, blending:THREE.AdditiveBlending}));
       vm.material.color.copy(haloCol).lerp(new THREE.Color(0xffffff),0.35);
       if(onWall){
-        halo.position.set(ax+fdx*0.06, hh, az+fdy*0.06);
+        /* off the DISPLACED face, not the nominal plane */
+        const Fh=wallField(ax,hh,az);
+        halo.position.set(ax+Fh.x+fdx*0.06, hh, az+Fh.z+fdy*0.06);
         halo.rotation.y=faceRot;
-        vm.position.set(ax+fdx*0.03, hh, az+fdy*0.03);
+        vm.position.set(ax+Fh.x+fdx*0.03, hh, az+Fh.z+fdy*0.03);
         vm.rotation.y=faceRot;
       } else {
+        const fyh=floorYAt(ax,az);
         halo.rotation.x=-Math.PI/2;
-        halo.position.set(ax,0.05,az);
+        halo.position.set(ax,fyh+0.06,az);
         vm.rotation.x=-Math.PI/2; vm.rotation.z=Math.random()*Math.PI*2;
-        vm.position.set(ax+rand(-0.4,0.4),0.045,az+rand(-0.4,0.4));
+        vm.position.set(ax+rand(-0.4,0.4),fyh+0.055,az+rand(-0.4,0.4));
       }
       g.add(halo); g.add(vm);
       scene.add(g);
@@ -1491,11 +1681,13 @@ export function buildCave(){
       const nearWater=streamNear(x,y);
       const inChamber=CAVE.chambers.some(c=>Math.hypot(x-c.cx,y-c.cy)<=c.r);
       let kind, pp;
-      if(code===3){ pp=0.10; kind="conk"; }                       // wall growth over the water
-      else if(nearWater){ pp=0.30; kind=srand()<0.55?"finger":"shroom"; }
-      else if(code===4){ pp=0.16; kind="puff"; }                  // scree fields
-      else if(inChamber){ pp=0.22; kind=srand()<0.5?"conk":"shroom"; }
-      else { pp=0.10; kind=srand()<0.65?"conk":"puff"; }          // tunnels
+      /* the map has ~2× the open cells now — per-cell odds come down so the
+         colony count (and its light records) stays in the same band */
+      if(code===3){ pp=0.07; kind="conk"; }                       // wall growth over the water
+      else if(nearWater){ pp=0.20; kind=srand()<0.55?"finger":"shroom"; }
+      else if(code===4){ pp=0.11; kind="puff"; }                  // scree fields
+      else if(inChamber){ pp=0.15; kind=srand()<0.5?"conk":"shroom"; }
+      else { pp=0.07; kind=srand()<0.65?"conk":"puff"; }          // tunnels
       if(srand()<pp) tryFungus(x,y, nearWater? rand(0.85,1):rand(0.6,0.9), kind);
     }
     /* the spawn is never pitch black: one dependable colony over the wreck
@@ -1508,14 +1700,18 @@ export function buildCave(){
   const makePile=(cells)=>{
     const g=new THREE.Group();
     for(const c of cells){
-      const p=cellToWorld3(c.x!==undefined?c.x:c.cx, c.y!==undefined?c.y:c.cy);
-      const core=new THREE.Mesh(scaleBoxUV(new THREE.BoxGeometry(CELL*0.98,2.5,CELL*0.98),CELL,2.5,CELL,UVm),rockMat);
-      core.position.set(p.x,1.25,p.z); g.add(core);
+      const cx=c.x!==undefined?c.x:c.cx, cy=c.y!==undefined?c.y:c.cy;
+      const p=cellToWorld3(cx,cy);
+      /* the core reaches the local vault — a collapse seals its tunnel */
+      const hC=Math.min(cH[cy][cx],cH[cy][cx+1],cH[cy+1][cx],cH[cy+1][cx+1])+0.6;
+      const core=new THREE.Mesh(scaleBoxUV(new THREE.BoxGeometry(CELL*0.98,hC,CELL*0.98),CELL,hC,CELL,UVm),rockMat);
+      core.position.set(p.x,hC/2-0.4,p.z); g.add(core);
       for(let i=0;i<7;i++){
         const b=new THREE.Mesh(boulderGeo,rockMat);
         const s=rand(0.3,0.85);
+        const bx=p.x+rand(-2.1,2.1), bz=p.z+rand(-2.1,2.1);
         b.scale.set(s,s*rand(0.6,0.9),s*rand(0.7,1.2));
-        b.position.set(p.x+rand(-2.1,2.1), s*0.4, p.z+rand(-2.1,2.1));
+        b.position.set(bx, floorYAt(bx,bz)+s*0.4, bz);
         b.rotation.set(Math.random()*7,Math.random()*7,Math.random()*7);
         g.add(b);
       }
@@ -1588,7 +1784,7 @@ export function buildCave(){
   {
     const p=CAVE.spawn;
     const sx=p.x, sz=p.z+2.6;
-    const h=ceilH[spawnC.cy][spawnC.cx];
+    const h=ceilYAt(sx,sz);
     const stepGeo=new THREE.BoxGeometry(1.2,0.22,0.95);
     const stepMat=new THREE.MeshPhongMaterial({map:texCaveRock, color:0xb6c2ca,
       emissive:0x0a1014, specular:0x141a20, shininess:10});
@@ -1612,11 +1808,11 @@ export function buildCave(){
     let p=cellToWorld3(c.cx,c.cy);
     if(cellAt3(p.x,p.z)===1){ p=cellToWorld3(spawnC.cx-1,spawnC.cy-1); }
     const body=makeCorpse();
-    body.position.set(p.x+0.4,0,p.z);
+    body.position.set(p.x+0.4,floorYAt(p.x+0.4,p.z),p.z);
     body.rotation.y=rand(0,Math.PI*2);
     scene.add(body);
     const lant=makeLanternProp();
-    lant.position.set(p.x-0.55,0,p.z+0.3);
+    lant.position.set(p.x-0.55,floorYAt(p.x-0.55,p.z+0.3)+0.06,p.z+0.3);
     lant.rotation.z=1.35;                          // knocked over where it was dropped
     lant.rotation.y=rand(0,7);
     lant.userData.animated=true;
@@ -1681,7 +1877,8 @@ function rockfall(evIdx){
   const mark=(cx,cy,r)=>{ for(let y=cy-r;y<=cy+r;y++)for(let x=cx-r;x<=cx+r;x++) protect.add(K(x,y)); };
   for(const b of CAVE.broods) if(!b.burned) mark(b.cx,b.cy,2);
   mark(CAVE.entrance.cx,CAVE.entrance.cy,2);
-  mark(16,5,2); mark(16,11,1); mark(16,12,1);     // the fissure approach & the bridge
+  mark(CAVE.approachC.cx,CAVE.approachC.cy,2);    // the fissure approach…
+  for(const b of CAVE.bridgeC) mark(b.cx,b.cy,1); // …and the bridge
   const pc=worldToCell3(STATE.pos.x,STATE.pos.z);
   mark(pc.cx,pc.cy,2);
   const cands=[];
@@ -1698,7 +1895,7 @@ function rockfall(evIdx){
   }
   const targets=[
     {cx:CAVE.entrance.cx, cy:CAVE.entrance.cy},
-    {cx:16,cy:5},
+    CAVE.approachC,
     ...CAVE.broods.filter(b=>!b.burned).map(b=>({cx:b.cx,cy:b.cy})),
   ];
   for(const c of cands){
@@ -1721,15 +1918,16 @@ function rockfall(evIdx){
 function makeRubbleAt(cx,cy){
   const g=new THREE.Group();
   const p=cellToWorld3(cx,cy);
-  const h=Math.min(ceilH[cy][cx],3.2);
+  const h=Math.min(cH[cy][cx],cH[cy][cx+1],cH[cy+1][cx],cH[cy+1][cx+1])+0.6;
   const core=new THREE.Mesh(scaleBoxUV(new THREE.BoxGeometry(CELL*0.96,h,CELL*0.96),CELL,h,CELL,4),rockMat);
-  core.position.set(p.x,h/2,p.z); g.add(core);
+  core.position.set(p.x,h/2-0.4,p.z); g.add(core);
   const bg=new THREE.SphereGeometry(1,7,6);
   for(let i=0;i<8;i++){
     const b=new THREE.Mesh(bg,rockMat);
     const s=rand(0.3,0.9);
+    const bx=p.x+rand(-2.2,2.2), bz=p.z+rand(-2.2,2.2);
     b.scale.set(s,s*rand(0.55,0.85),s*rand(0.7,1.2));
-    b.position.set(p.x+rand(-2.2,2.2), s*0.38, p.z+rand(-2.2,2.2));
+    b.position.set(bx, floorYAt(bx,bz)+s*0.38, bz);
     b.rotation.set(Math.random()*7,Math.random()*7,Math.random()*7);
     g.add(b);
   }
