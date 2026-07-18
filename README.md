@@ -110,7 +110,15 @@ track by ear.
   tops, pore-speckled bulbs) in location-driven varieties: shelf conks climbing
   the chamber walls, toadstool families on the floors, green coral fingers on
   the stream banks, pale puffballs in the scree, all blushing violet near the
-  brood chambers — plus additive glow halos and living veins; a drifting
+  brood chambers — plus additive glow halos and living veins; webs that are
+  silk STRUCTURES, not wall decals — sagging corner sheets strung between wall
+  faces, cobweb fans hung off the wall-ceiling line, funnel-weaver retreats
+  diving into the floor junctions, hammocks slung on real guy-lines, twisting
+  streamers that brush your face in the low tunnels, torn veils choking the
+  squeeze mouths, old stalagmites wrapped and staked in silk, a layered canopy
+  of generations directly over every brood, and the stair you arrived by webbed
+  shut — all of it lit silk that glistens under the lantern, dense by brood
+  proximity, merged to seven draws; a drifting
   caustic skin on the stream;
   layered cold haze in the chasm; nest-glow pooled under the clutches that turns
   fire-orange as they burn.

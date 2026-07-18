@@ -1111,37 +1111,167 @@ export const texDripstone = makeCanvas(128,256,(g,w,h)=>{
     g.fillRect(Math.random()*w,Math.random()*h,1,1);
   }
 });
-/* a silk sheet: layered strand fans on transparency, for wall/corner webs */
-export function makeWebTexture(){
-  const t=makeCanvas(128,128,(g,w,h)=>{
+/* ---- the silk family: four textures for THE NEST's web system ----
+   All alpha-on-transparency; the geometry they dress is 3D (sagging
+   sheets, fans, funnels, strands), so these only carry the weave. */
+const silkClamp=t=>{
+  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearFilter;
+  t.generateMipmaps=false; return t;
+};
+/* a woven silk sheet: layered crossing strands, milky where the weave is
+   thickest, bitten ragged at the border. torn=true punches the big hole
+   something left when it went through — the squeeze-mouth veils. */
+export function makeWebSheetTexture(torn){
+  return silkClamp(makeCanvas(128,128,(g,w,h)=>{
     g.clearRect(0,0,w,h);
-    const cx=w*(0.2+Math.random()*0.6), cy=Math.random()<0.5?0:h;   // anchored at an edge
-    const n=9+Math.floor(Math.random()*7);
-    for(let i=0;i<n;i++){               // radial strands
-      const a=(i/n)*Math.PI+(cy===0?0:Math.PI), len=h*(0.55+Math.random()*0.45);
-      g.strokeStyle=`rgba(216,222,225,${0.16+Math.random()*0.22})`;
-      g.lineWidth=0.8+Math.random()*0.9;
-      g.beginPath();g.moveTo(cx,cy);
-      g.lineTo(cx+Math.cos(a)*len, cy+Math.sin(a)*len);g.stroke();
-    }
-    for(let r=10;r<h;r+=8+Math.random()*10){   // sagging cross-threads
-      g.strokeStyle=`rgba(216,222,225,${0.10+Math.random()*0.16})`;
-      g.lineWidth=0.7;
-      g.beginPath();
-      for(let a=0;a<=Math.PI;a+=0.25){
-        const aa=a+(cy===0?0:Math.PI);
-        const sag=1+Math.sin(a)*0.15;
-        const x=cx+Math.cos(aa)*r*sag, y=cy+Math.sin(aa)*r*sag;
-        if(a===0)g.moveTo(x,y);else g.lineTo(x,y);
+    for(let L=0;L<3;L++){                // three strand families, two aligned
+      const baseA=Math.random()*Math.PI;
+      const n=14+Math.floor(Math.random()*8);
+      for(let i=0;i<n;i++){
+        const a=L===2? Math.random()*Math.PI : baseA+(Math.random()-0.5)*0.5;
+        const cx=Math.random()*w, cy=Math.random()*h, len=w*(0.5+Math.random()*0.7);
+        const bow=(Math.random()-0.5)*16;
+        g.strokeStyle=`rgba(214,220,224,${0.07+Math.random()*0.13})`;
+        g.lineWidth=0.6+Math.random()*0.8;
+        g.beginPath();
+        g.moveTo(cx-Math.cos(a)*len/2, cy-Math.sin(a)*len/2);
+        g.quadraticCurveTo(cx+Math.cos(a+Math.PI/2)*bow, cy+Math.sin(a+Math.PI/2)*bow,
+                           cx+Math.cos(a)*len/2, cy+Math.sin(a)*len/2);
+        g.stroke();
       }
+    }
+    for(let i=0;i<7;i++){                // milky sheen blotches
+      const x=w*(0.2+Math.random()*0.6), y=h*(0.2+Math.random()*0.6), r=8+Math.random()*22;
+      const gr=g.createRadialGradient(x,y,1,x,y,r);
+      gr.addColorStop(0,`rgba(222,226,229,${0.10+Math.random()*0.12})`);
+      gr.addColorStop(1,"rgba(222,226,229,0)");
+      g.fillStyle=gr; g.beginPath(); g.arc(x,y,r,0,7); g.fill();
+    }
+    for(let i=0;i<12;i++){               // dust clots caught in the weave
+      g.fillStyle=`rgba(168,172,170,${0.10+Math.random()*0.16})`;
+      g.beginPath();g.arc(Math.random()*w,Math.random()*h,0.8+Math.random()*2.2,0,7);g.fill();
+    }
+    g.globalCompositeOperation="destination-out";
+    const bite=(x,y,r)=>{const gr=g.createRadialGradient(x,y,r*0.2,x,y,r);
+      gr.addColorStop(0,"rgba(0,0,0,0.95)");gr.addColorStop(1,"rgba(0,0,0,0)");
+      g.fillStyle=gr;g.beginPath();g.arc(x,y,r,0,7);g.fill();};
+    for(let i=0;i<14;i++){               // border tatters
+      const e=Math.floor(Math.random()*4);
+      bite(e<2?(e?w:0):Math.random()*w, e<2?Math.random()*h:(e===2?0:h), 5+Math.random()*14);
+    }
+    for(let i=0;i<(torn?3:5);i++) bite(Math.random()*w,Math.random()*h,3+Math.random()*8);
+    let hx=0,hy=0;
+    if(torn){                            // the big ragged pass-through
+      hx=w*(0.35+Math.random()*0.3); hy=h*(0.35+Math.random()*0.3);
+      for(let i=0;i<9;i++) bite(hx+(Math.random()-0.5)*30, hy+(Math.random()-0.5)*26, 10+Math.random()*15);
+    }
+    g.globalCompositeOperation="source-over";
+    if(torn) for(let i=0;i<8;i++){       // frayed threads waving into the hole
+      const a=Math.random()*Math.PI*2, r0=26+Math.random()*10;
+      g.strokeStyle="rgba(216,222,226,0.30)"; g.lineWidth=0.7;
+      g.beginPath();
+      g.moveTo(hx+Math.cos(a)*r0, hy+Math.sin(a)*r0);
+      g.lineTo(hx+Math.cos(a)*(r0-9-Math.random()*8)+(Math.random()-0.5)*6,
+               hy+Math.sin(a)*(r0-9-Math.random()*8)+(Math.random()-0.5)*6);
       g.stroke();
     }
-    for(let i=0;i<8;i++){               // clotted dust
-      g.fillStyle=`rgba(190,196,198,${0.10+Math.random()*0.14})`;
-      g.beginPath();g.arc(Math.random()*w,Math.random()*h,1+Math.random()*2.4,0,7);g.fill();
+  }));
+}
+/* a corner cobweb fan: anchored along the TOP edge, radial anchor threads
+   dropping into sagging capture rows — the geometry pins that edge into a
+   wall/ceiling junction, so the fan genuinely hangs off it. */
+export function makeCobwebTexture(){
+  return silkClamp(makeCanvas(128,128,(g,w,h)=>{
+    g.clearRect(0,0,w,h);
+    const cx=w*(0.35+Math.random()*0.3), cy=0;
+    const n=8+Math.floor(Math.random()*5), angs=[];
+    for(let i=0;i<n;i++) angs.push((i+0.5)/n*Math.PI*0.94+0.03*Math.PI+(Math.random()-0.5)*0.12);
+    const maxR=h*(0.8+Math.random()*0.25);
+    for(const a of angs){                // radial anchor threads
+      const len=maxR*(0.75+Math.random()*0.35);
+      g.strokeStyle=`rgba(218,224,227,${0.16+Math.random()*0.18})`;
+      g.lineWidth=0.8+Math.random()*0.7;
+      g.beginPath();g.moveTo(cx,cy);
+      g.quadraticCurveTo(cx+Math.cos(a)*len*0.5+(Math.random()-0.5)*6, cy+Math.sin(a)*len*0.5,
+                         cx+Math.cos(a)*len, cy+Math.sin(a)*len);
+      g.stroke();
     }
+    for(let r=8;r<maxR;r+=5+Math.random()*7+r*0.06){  // sagging capture rows
+      for(let i=0;i<angs.length-1;i++){
+        if(Math.random()<0.18) continue; // gaps where rows broke
+        const x0=cx+Math.cos(angs[i])*r,   y0=cy+Math.sin(angs[i])*r;
+        const x1=cx+Math.cos(angs[i+1])*r, y1=cy+Math.sin(angs[i+1])*r;
+        g.strokeStyle=`rgba(214,220,224,${0.09+Math.random()*0.13})`;
+        g.lineWidth=0.6;
+        g.beginPath();g.moveTo(x0,y0);
+        g.quadraticCurveTo((x0+x1)/2,(y0+y1)/2+r*0.12,x1,y1);g.stroke();
+      }
+    }
+    for(let i=0;i<6;i++){                // broken threads curling off the rim
+      const a=angs[Math.floor(Math.random()*angs.length)];
+      const r=maxR*(0.75+Math.random()*0.3);
+      const x=cx+Math.cos(a)*r, y=cy+Math.sin(a)*r;
+      g.strokeStyle="rgba(210,216,220,0.16)"; g.lineWidth=0.6;
+      g.beginPath();g.moveTo(x,y);
+      g.quadraticCurveTo(x+(Math.random()-0.5)*8, y+6, x+(Math.random()-0.5)*12, y+10+Math.random()*8);
+      g.stroke();
+    }
+    for(let i=0;i<9;i++){                // dust
+      g.fillStyle=`rgba(180,184,182,${0.10+Math.random()*0.14})`;
+      g.beginPath();g.arc(cx+(Math.random()-0.5)*w*0.8, Math.random()*h*0.7, 0.8+Math.random()*2,0,7);g.fill();
+    }
+  }));
+}
+/* guy-line strands: a couple of wavering threads with silk-wrapped beads,
+   drawn tall for thin quads strung point-to-point in 3D */
+export function makeStrandTexture(){
+  return silkClamp(makeCanvas(32,128,(g,w,h)=>{
+    g.clearRect(0,0,w,h);
+    const n=2+Math.floor(Math.random()*2);
+    for(let i=0;i<n;i++){
+      const x0=w*(0.35+Math.random()*0.3);
+      g.strokeStyle=`rgba(220,226,229,${0.34+Math.random()*0.26})`;
+      g.lineWidth=1.5+Math.random();
+      g.beginPath();g.moveTo(x0,0);
+      for(let y=10;y<=h;y+=10) g.lineTo(x0+Math.sin(y*0.06+i*3)*2.2,y);
+      g.stroke();
+    }
+    for(let i=0;i<5;i++){                // beads of wrapped debris
+      g.fillStyle=`rgba(210,214,214,${0.25+Math.random()*0.25})`;
+      g.beginPath();g.arc(w*0.5+(Math.random()-0.5)*6,Math.random()*h,0.8+Math.random()*1.6,0,7);g.fill();
+    }
+  }));
+}
+/* the funnel weave: wraps a lathe (u repeats around it), dense circular
+   rows at the throat (v=0, canvas bottom) fraying apart toward the rim */
+export function makeFunnelTexture(){
+  const t=makeCanvas(128,64,(g,w,h)=>{
+    g.clearRect(0,0,w,h);
+    for(let i=0;i<46;i++){               // circular rows, throat-dense
+      const y0=h-Math.pow(Math.random(),1.7)*h;
+      const dens=y0/h;
+      g.strokeStyle=`rgba(216,222,225,${0.04+dens*(0.10+Math.random()*0.16)})`;
+      g.lineWidth=0.6+Math.random()*0.7;
+      g.beginPath();g.moveTo(0,y0+Math.sin(i)*1.6);
+      for(let x=8;x<=w;x+=8) g.lineTo(x, y0+Math.sin(x*(Math.PI*4/w)+i)*1.6);
+      g.stroke();
+    }
+    for(let i=0;i<12;i++){               // radial support strands (wrap-safe)
+      const x0=Math.random()*w, drift=(Math.random()-0.5)*10;
+      g.strokeStyle="rgba(214,220,224,0.16)"; g.lineWidth=0.7;
+      for(const off of[0,-w,w]){
+        g.beginPath();g.moveTo(x0+off,h);g.lineTo(x0+off+drift,0);g.stroke();
+      }
+    }
+    g.globalCompositeOperation="destination-out";
+    for(let i=0;i<10;i++){               // ragged rim
+      g.fillStyle="rgba(0,0,0,0.9)";
+      g.beginPath();g.arc(Math.random()*w,-2,5+Math.random()*8,0,7);g.fill();
+    }
+    g.globalCompositeOperation="source-over";
   });
-  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearFilter; t.generateMipmaps=false;
+  t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearFilter;
+  t.generateMipmaps=false;               // wrapS stays repeating for the lathe
   return t;
 }
 /* bioluminescent fungus veins: a wandering glow-thread decal for the rock */

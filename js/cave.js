@@ -18,7 +18,8 @@ import { CELL } from "./map.js";
 import { STATE } from "./state.js";
 import { scene, camera, renderer, lights, makeLightRecord, markShared,
          mergeStatic, freezeStaticScene } from "./scene.js";
-import { makeCanvas, texCaveRock, texCaveFloor, texDripstone, makeWebTexture,
+import { makeCanvas, texCaveRock, texCaveFloor, texDripstone,
+         makeWebSheetTexture, makeCobwebTexture, makeStrandTexture, makeFunnelTexture,
          makeFungusTexture, makeFungusSkin, scaleBoxUV } from "./textures.js";
 import { addInteractable } from "./props.js";
 import { die } from "./lifecycle.js";
@@ -438,10 +439,19 @@ const clothMat=new THREE.MeshPhongMaterial({color:0x2c2a26, specular:0x0c0b0a, s
 const brassMat=new THREE.MeshPhongMaterial({color:0x6e5a2e, specular:0x8a7340, shininess:55});
 markShared(rockMat,floorMat,pitMat,silkFloorMat,cocoonMat,boneMat,clothMat,brassMat,
            texCaveRock,texCaveFloor);
-const webTexes=[makeWebTexture(),makeWebTexture(),makeWebTexture(),makeWebTexture()];
-const webMats=webTexes.map(t=>new THREE.MeshBasicMaterial({map:t, transparent:true,
-  depthWrite:false, side:THREE.DoubleSide, opacity:0.85}));
-webTexes.forEach(t=>markShared(t)); webMats.forEach(m=>markShared(m));
+/* silk is LIT now (Phong, not Basic): it glistens where the lantern rakes
+   it and takes the fungus tint near the broods, instead of glowing flat
+   white in the dark. A faint emissive keeps it readable at the threshold. */
+const silkMat=t=>new THREE.MeshPhongMaterial({map:t, transparent:true, depthWrite:false,
+  side:THREE.DoubleSide, color:0xc8ccce, emissive:0x131517, specular:0x8a929a, shininess:34});
+const webSheetMats=[silkMat(makeWebSheetTexture(false)),silkMat(makeWebSheetTexture(false))];
+const webTornMat  = silkMat(makeWebSheetTexture(true));
+const webFanMats  =[silkMat(makeCobwebTexture()),silkMat(makeCobwebTexture())];
+const webStrandMat= silkMat(makeStrandTexture());
+const webFunnelMat= silkMat(makeFunnelTexture());
+webStrandMat.color.set(0xa8aeb2); webStrandMat.opacity=0.75;   // guys read as silk, not wire
+const webAllMats=[...webSheetMats,webTornMat,...webFanMats,webStrandMat,webFunnelMat];
+webAllMats.forEach(m=>{markShared(m); markShared(m.map);});
 const fungusTexes=[makeFungusTexture(),makeFungusTexture(),makeFungusTexture()];
 fungusTexes.forEach(t=>markShared(t));
 /* the mushroom skin atlas (diffuse + emissive) shared by every colony */
@@ -584,6 +594,89 @@ function curtainGeo(wdt,hgt){
   }
   g.computeVertexNormals();
   return g;
+}
+
+/* ---------------- silk geometry: webs are structures, not decals ----------------
+   Every web is a displaced surface strung between real anchor points —
+   sheets sag off the edge they're pinned to, funnels dive into the floor
+   junctions, strands are quads strung point-to-point in 3D. Nothing sits
+   flat against a wall. All planes are built in XY, top edge at +hgt/2. */
+/* a sagging sheet: top edge and both sides pinned, belly bulging +z and
+   drooping under its own weight — the corner webs and junction fans */
+function webSheetGeo(wdt,hgt,sag){
+  const g=new THREE.PlaneGeometry(wdt,hgt,6,4);
+  const pos=g.attributes.position, seed=Math.random()*9;
+  for(let i=0;i<pos.count;i++){
+    const x=pos.getX(i), y=pos.getY(i);
+    const u=x/wdt+0.5, v=y/hgt+0.5;
+    const belly=Math.sin(u*Math.PI)*Math.sin((1-v)*Math.PI*0.62);
+    pos.setZ(i, belly*sag*(1+0.3*Math.sin(u*7+seed)));
+    pos.setY(i, y-belly*sag*0.8);
+    pos.setX(i, x+0.05*sag*Math.sin(v*9+seed));
+  }
+  g.computeVertexNormals();
+  return g;
+}
+/* a hammock: corners pinned to its guy-lines, everything else drooping.
+   Laid flat by rotation.x=-π/2, so local -z is down. */
+function webHammockGeo(wdt,dep,sag){
+  const g=new THREE.PlaneGeometry(wdt,dep,6,4);
+  const pos=g.attributes.position, seed=Math.random()*9;
+  for(let i=0;i<pos.count;i++){
+    const u=pos.getX(i)/wdt+0.5, v=pos.getY(i)/dep+0.5;
+    pos.setZ(i, -Math.sin(u*Math.PI)*Math.sin(v*Math.PI)*sag*(1+0.25*Math.sin(u*6+v*5+seed)));
+  }
+  g.computeVertexNormals();
+  return g;
+}
+/* a funnel-weaver's retreat: ragged sheet rim sloping into a throat that
+   dives toward the wall/floor junction. Rim up; throat at y=0. */
+function funnelWebGeo(r,dep){
+  const N=7, seed=Math.random()*10, pts=[];
+  for(let i=0;i<N;i++){
+    const t=i/(N-1);
+    const rad=r*(0.12+0.88*Math.pow(t,1.7))*(1+0.15*Math.sin(t*9+seed));
+    pts.push(new THREE.Vector2(Math.max(rad,0.02), dep*t));
+  }
+  return dripNoise(new THREE.LatheGeometry(pts,9),seed,0.22);
+}
+/* an old silk skirt wrapped around a stalagmite's base — flared at the
+   floor, cinched where the wrapping gave out */
+function webWrapGeo(r,hgt){
+  const N=5, seed=Math.random()*10, pts=[];
+  for(let i=0;i<N;i++){
+    const t=i/(N-1);
+    pts.push(new THREE.Vector2(r*(1.25-0.55*t)*(1+0.1*Math.sin(t*7+seed)), hgt*t));
+  }
+  return dripNoise(new THREE.LatheGeometry(pts,8),seed,0.05);
+}
+/* a hanging streamer: tall narrow strip, rooted at the top, tapering and
+   twisting as it falls — the thing that brushes your face in a tunnel */
+function webStreamerGeo(wdt,len){
+  const g=new THREE.PlaneGeometry(wdt,len,2,6);
+  const pos=g.attributes.position, seed=Math.random()*9;
+  const tw=rand(-1.6,1.6);
+  for(let i=0;i<pos.count;i++){
+    const x=pos.getX(i), v=pos.getY(i)/len+0.5;      // 1 = root at the ceiling
+    const a=tw*(1-v);
+    const xx=x*(0.35+0.65*v);                        // taper toward the tail
+    pos.setX(i, xx*Math.cos(a)+Math.sin(v*9+seed)*0.05*(1-v));
+    pos.setZ(i, xx*Math.sin(a)+Math.sin(v*6+seed*2)*0.04*(1-v));
+  }
+  g.computeVertexNormals();
+  return g;
+}
+/* a guy-line: one thin quad strung between two world points, randomly
+   rolled about its own axis so merged strands never share a plane */
+const _sUP=new THREE.Vector3(0,1,0), _sDir=new THREE.Vector3();
+function strandMesh(ax,ay,az,bx,by,bz,wdt){
+  _sDir.set(bx-ax,by-ay,bz-az);
+  const L=_sDir.length();
+  const m=new THREE.Mesh(new THREE.PlaneGeometry(wdt,L,1,1));
+  m.position.set((ax+bx)/2,(ay+by)/2,(az+bz)/2);
+  m.quaternion.setFromUnitVectors(_sUP,_sDir.normalize());
+  m.rotateY(Math.random()*Math.PI);
+  return m;
 }
 
 /* one quad accumulator (positions/uv/normals) merged into a single mesh */
@@ -992,39 +1085,210 @@ export function buildCave(){
   if(stalUp.length){ scene.add(mergeStatic(stalUp,wetMat)); for(const m of stalUp) m.geometry.dispose(); }
   if(stalDown.length){ scene.add(mergeStatic(stalDown,wetMat)); for(const m of stalDown) m.geometry.dispose(); }
   if(curtains.length){ scene.add(mergeStatic(curtains,curtainMat)); for(const m of curtains) m.geometry.dispose(); }
-  /* ---- the webs: thicker the closer you get to a nest ---- */
+  /* ---- the webs: generations of brood have silked every junction ----
+     No flat pasted quads. Corner sheets bridge two wall faces, junction
+     fans hang off the wall-ceiling line, floor skirts slope from the wall
+     base onto the floor, funnels dive into the junctions, hammocks hang
+     from real guy-lines, streamers brush your face in low tunnels, torn
+     veils choke the squeeze mouths, and the oldest stalagmites are
+     wrapped. Density is still the wayfinding: it thickens toward broods. */
   {
-    const webMeshes=[[],[],[],[]];
+    const sheets=[[],[]], fans=[[],[]], tornV=[], strands=[], funnels=[];
+    const pickSheet=m=>sheets[Math.floor(Math.random()*2)].push(m);
+    const pickFan=m=>fans[Math.floor(Math.random()*2)].push(m);
     const broodDist=(x,y)=>Math.min(...broods.map(b=>Math.hypot(x-b.cx,y-b.cy)));
+    const solid=c=>c===1||c===7;
+    const faceV=(x,y,dx,dy)=> dx>0? Math.min(cH[y][x+1],cH[y+1][x+1])
+             : dx<0? Math.min(cH[y][x],cH[y+1][x])
+             : dy>0? Math.min(cH[y+1][x],cH[y+1][x+1])
+             :       Math.min(cH[y][x],cH[y][x+1]);
+    const faceYaw=(dx,dy)=> dx? (dx>0?-Math.PI/2:Math.PI/2) : (dy>0?Math.PI:0);
     for(let y=1;y<CH-1;y++)for(let x=1;x<CW-1;x++){
-      if(grid3[y][x]===1||grid3[y][x]===5) continue;
+      const code=grid3[y][x];
+      if(code===1||code===5||code===7) continue;
       const p=cellToWorld3(x,y);
-      const density=clamp(1-broodDist(x,y)/13,0.06,0.9);
-      for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){
-        if(codeAt(x+dx,y+dy)!==1) continue;
-        if(Math.random()>density*0.55) continue;
-        const wI=Math.floor(Math.random()*4);
-        const s=rand(0.9,2.3);
-        const w=new THREE.Mesh(new THREE.PlaneGeometry(s,s),webMats[wI]);
-        const hh=Math.min(ceilH[y][x]-0.4, rand(0.6,3.2));
-        w.position.set(p.x+dx*(E-0.06), hh, p.z+dy*(E-0.06));
-        w.rotation.y = dx? (dx>0?-Math.PI/2:Math.PI/2) : (dy>0?Math.PI:0);
-        w.rotation.z = Math.random()*Math.PI*2;
-        webMeshes[wI].push(w);
+      const vault=Math.min(cH[y][x],cH[y][x+1],cH[y+1][x],cH[y+1][x+1]);
+      const density=clamp(1-broodDist(x,y)/16,0.12,1);
+      const sq=code===2;                       // squeeze interiors: light silk only
+      /* corner sheets: strung across the chord where two wall faces meet,
+         pinned at both walls, bellying out into the room */
+      for(const[dx,dy]of[[1,1],[1,-1],[-1,1],[-1,-1]]){
+        if(!solid(codeAt(x+dx,y))||!solid(codeAt(x,y+dy))) continue;
+        if(Math.random()>density*(sq?0.5:0.85)) continue;
+        const cV=cH[y+(dy>0?1:0)][x+(dx>0?1:0)];
+        const cx0=p.x+dx*(E-0.05), cz0=p.z+dy*(E-0.05);
+        const n=1+(Math.random()<density*0.5?1:0);
+        for(let i=0;i<n;i++){
+          const d=rand(0.5,1.3);
+          const hgt=rand(0.35,0.8);
+          const hh=i===0? cV-rand(0.1,0.5) : rand(0.7,1.5);
+          const w=new THREE.Mesh(webSheetGeo(d*1.41,hgt,d*rand(0.12,0.28)));
+          w.position.set(cx0-dx*d/2, Math.min(hh,cV-0.15)-hgt/2, cz0-dy*d/2);
+          w.rotation.y=Math.atan2(-dx,-dy);
+          (i===0?pickFan:pickSheet)(w);
+        }
       }
-      /* ceiling hammocks deep in nest country */
-      if(density>0.55&&Math.random()<0.30){
-        const wI=Math.floor(Math.random()*4);
-        const s=rand(1.4,3.0);
-        const w=new THREE.Mesh(new THREE.PlaneGeometry(s,s),webMats[wI]);
-        w.position.set(p.x+rand(-1,1), ceilH[y][x]-rand(0.1,0.5), p.z+rand(-1,1));
-        w.rotation.x=Math.PI/2+rand(-0.25,0.25); w.rotation.z=Math.random()*7;
-        webMeshes[wI].push(w);
+      for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){
+        if(!solid(codeAt(x+dx,y+dy))) continue;
+        const jx=p.x+dx*(E-0.04)+(dx?0:rand(-1.2,1.2));
+        const jz=p.z+dy*(E-0.04)+(dy?0:rand(-1.2,1.2));
+        /* junction fans: top edge pinned along the wall-ceiling line,
+           the panel sagging down and out into the room */
+        if(!sq&&Math.random()<density*0.65){
+          const eV=faceV(x,y,dx,dy);
+          const wdt=rand(0.8,2.0), hgt=rand(0.45,0.95), tilt=rand(0.5,1.0);
+          const w=new THREE.Mesh(webSheetGeo(wdt,hgt,rand(0.08,0.18)));
+          w.rotation.order="YXZ"; w.rotation.y=faceYaw(dx,dy); w.rotation.x=-tilt;
+          w.position.set(jx-dx*Math.sin(tilt)*hgt/2, eV-0.03-Math.cos(tilt)*hgt/2,
+                         jz-dy*Math.sin(tilt)*hgt/2);
+          pickFan(w);
+        }
+        /* floor skirts: rooted low on the wall, radiating onto the floor */
+        if(!sq&&code!==3&&Math.random()<density*0.35){
+          const h0=rand(0.25,0.6), tilt=rand(0.75,1.15);
+          const hgt=Math.min(1.2,h0/Math.cos(tilt)), wdt=rand(0.6,1.4);
+          const w=new THREE.Mesh(webSheetGeo(wdt,hgt,rand(0.05,0.12)));
+          w.rotation.order="YXZ"; w.rotation.y=faceYaw(dx,dy); w.rotation.x=-tilt;
+          w.position.set(jx-dx*Math.sin(tilt)*hgt/2, h0-Math.cos(tilt)*hgt/2,
+                         jz-dy*Math.sin(tilt)*hgt/2);
+          pickFan(w);
+        }
+        /* funnel retreats diving into the wall-floor junction */
+        if(!sq&&code!==3&&funnels.length<90&&Math.random()<density*0.3){
+          const r=rand(0.25,0.5), dep=rand(0.28,0.55);
+          const f=new THREE.Mesh(funnelWebGeo(r,dep));
+          f.position.set(p.x+dx*(E-0.15-r*0.5)+(dx?0:rand(-1.2,1.2)), 0.02,
+                         p.z+dy*(E-0.15-r*0.5)+(dy?0:rand(-1.2,1.2)));
+          f.rotation.x=dy*0.3; f.rotation.z=-dx*0.3;      // throat leans into the wall
+          funnels.push(f);
+        }
+      }
+      /* torn veils choking the squeeze mouths — the brood's doors.
+         (Separate scan: the loop above only visits SOLID neighbors.) */
+      if(!sq) for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){
+        if(codeAt(x+dx,y+dy)!==2||Math.random()>0.55) continue;
+        const eV=faceV(x,y,dx,dy);
+        const hgt=rand(0.55,Math.max(0.6,eV*0.62)), wdt=rand(2.0,3.1);
+        const w=new THREE.Mesh(webSheetGeo(wdt,hgt,rand(0.15,0.3)));
+        w.position.set(p.x+dx*(E-0.10), eV-0.02-hgt/2, p.z+dy*(E-0.10));
+        w.rotation.y=faceYaw(dx,dy);
+        tornV.push(w);
+        const ax_=dx?0:1, az_=dx?1:0;                     // wall-parallel axis
+        for(let i=2+Math.floor(Math.random()*3);i--;)
+          strands.push(strandMesh(
+            p.x+dx*(E-0.1)-ax_*rand(1.0,1.7), rand(0.25,1.1), p.z+dy*(E-0.1)-az_*rand(1.0,1.7),
+            p.x+dx*(E-0.1)+ax_*rand(1.0,1.7), rand(0.25,1.1), p.z+dy*(E-0.1)+az_*rand(1.0,1.7),
+            rand(0.03,0.06)));
+      }
+      /* hammocks slung under the vault on real guy-lines */
+      if(!sq&&density>0.35&&Math.random()<(density-0.2)*0.8){
+        const wdt=rand(1.1,2.4), dep=rand(1.0,2.2), sag=Math.min(wdt,dep)*rand(0.16,0.3);
+        const yaw=Math.random()*Math.PI, hy=vault-rand(0.35,0.95);
+        const hx=p.x+rand(-0.9,0.9), hz=p.z+rand(-0.9,0.9);
+        const w=new THREE.Mesh(webHammockGeo(wdt,dep,sag));
+        w.rotation.order="YXZ"; w.rotation.y=yaw; w.rotation.x=-Math.PI/2;
+        w.position.set(hx,hy,hz);
+        pickSheet(w);
+        const cs=Math.cos(yaw), sn=Math.sin(yaw);
+        for(const[lx,ly]of[[wdt/2,dep/2],[wdt/2,-dep/2],[-wdt/2,dep/2],[-wdt/2,-dep/2]])
+          strands.push(strandMesh(hx+lx*cs-ly*sn, hy, hz-lx*sn-ly*cs,
+            hx+lx*cs-ly*sn+rand(-0.4,0.4), vault+0.05, hz-lx*sn-ly*cs+rand(-0.4,0.4),
+            rand(0.03,0.06)));
+        if(Math.random()<0.4)
+          strands.push(strandMesh(hx,hy-sag,hz, hx+rand(-0.2,0.2), hy-sag-rand(0.4,1.1),
+            hz+rand(-0.2,0.2), 0.04));
+      }
+      /* streamers hanging from the vault — thickest in the low tunnels */
+      {
+        const pr= sq? 0.4 : density*(vault<3.4?0.75:0.45);
+        let n=(Math.random()<pr?1:0)+(Math.random()<pr*0.5?1:0)+(Math.random()<pr*0.25?1:0);
+        while(n--){
+          const len=rand(0.5,Math.min(2.2,vault*0.55)), wdt=rand(0.12,0.35);
+          const w=new THREE.Mesh(webStreamerGeo(wdt,len));
+          w.position.set(p.x+rand(-0.9,0.9), vault+0.1-len/2, p.z+rand(-0.9,0.9));
+          w.rotation.y=Math.random()*Math.PI;
+          pickSheet(w);
+        }
       }
     }
-    for(let i=0;i<4;i++) if(webMeshes[i].length)
-      scene.add(mergeStatic(webMeshes[i],webMats[i]));
-    for(const arr of webMeshes) for(const m of arr) m.geometry.dispose();
+    /* the oldest stalagmites near the broods are wrapped and staked */
+    for(const o of CAVE.obstacles){
+      if(o.r!==0.45&&o.r!==0.55) continue;
+      const c=worldToCell3(o.x,o.z);
+      if(broodDist(c.cx,c.cy)>9||Math.random()>0.30) continue;
+      const hgt=rand(0.5,1.0);
+      const w=new THREE.Mesh(webWrapGeo(o.r+0.16,hgt));
+      w.position.set(o.x,0.02,o.z); w.rotation.y=Math.random()*7;
+      pickSheet(w);
+      for(let i=2+Math.floor(Math.random()*2);i--;){
+        const a=Math.random()*Math.PI*2;
+        strands.push(strandMesh(o.x+Math.cos(a)*o.r*0.7, hgt*rand(0.7,1.0), o.z+Math.sin(a)*o.r*0.7,
+          o.x+Math.cos(a)*(o.r+rand(0.7,1.3)), 0.02, o.z+Math.sin(a)*(o.r+rand(0.7,1.3)),
+          rand(0.03,0.05)));
+      }
+    }
+    /* the canopy: directly over every brood, generations of layered
+       hammocks and long streamer tails — the nest has a ceiling of silk */
+    const vaultAt=(cx,cy)=>Math.min(cH[cy][cx],cH[cy][cx+1],cH[cy+1][cx],cH[cy+1][cx+1]);
+    for(const b of broods){
+      const bp=cellToWorld3(b.cx,b.cy);
+      for(let i=0;i<6;i++){
+        const hx=bp.x+rand(-4.5,4.5), hz=bp.z+rand(-4.5,4.5);
+        const c=worldToCell3(hx,hz), cc=codeAt(c.cx,c.cy);
+        if(cc===1||cc===5||cc===7) continue;
+        const lv=vaultAt(c.cx,c.cy);
+        const wdt=rand(1.6,3.2), dep=rand(1.4,2.8), sag=Math.min(wdt,dep)*rand(0.2,0.34);
+        const yaw=Math.random()*Math.PI, hy=lv-rand(0.25,1.4);
+        const w=new THREE.Mesh(webHammockGeo(wdt,dep,sag));
+        w.rotation.order="YXZ"; w.rotation.y=yaw; w.rotation.x=-Math.PI/2;
+        w.position.set(hx,hy,hz);
+        pickSheet(w);
+        const cs=Math.cos(yaw), sn=Math.sin(yaw);
+        for(const[lx,ly]of[[wdt/2,dep/2],[wdt/2,-dep/2],[-wdt/2,dep/2],[-wdt/2,-dep/2]])
+          strands.push(strandMesh(hx+lx*cs-ly*sn, hy, hz-lx*sn-ly*cs,
+            hx+lx*cs-ly*sn+rand(-0.5,0.5), lv+0.05, hz-lx*sn-ly*cs+rand(-0.5,0.5),
+            rand(0.03,0.06)));
+      }
+      for(let i=0;i<9;i++){
+        const hx=bp.x+rand(-4,4), hz=bp.z+rand(-4,4);
+        const c=worldToCell3(hx,hz), cc=codeAt(c.cx,c.cy);
+        if(cc===1||cc===5||cc===7) continue;
+        const lv=vaultAt(c.cx,c.cy);
+        const len=rand(0.9,Math.min(3.0,lv*0.6));
+        const w=new THREE.Mesh(webStreamerGeo(rand(0.15,0.4),len));
+        w.position.set(hx, lv+0.1-len/2, hz);
+        w.rotation.y=Math.random()*Math.PI;
+        pickSheet(w);
+      }
+    }
+    /* the way back up, silked shut: a torn lid over the stair mouth,
+       drapes down its collar, anchor lines radiating into the cave */
+    {
+      const sx=CAVE.spawn.x, sz=CAVE.spawn.z+2.6, sh=ceilH[spawnC.cy][spawnC.cx];
+      const lid=new THREE.Mesh(webHammockGeo(3.0,3.0,0.5));
+      lid.rotation.order="YXZ"; lid.rotation.y=Math.random()*Math.PI; lid.rotation.x=-Math.PI/2;
+      lid.position.set(sx,sh-0.35,sz);
+      tornV.push(lid);
+      for(let i=0;i<5;i++){
+        const a=i/5*Math.PI*2+rand(-0.3,0.3), len=rand(1.1,2.0);
+        const w=new THREE.Mesh(webSheetGeo(rand(0.9,1.5),len,rand(0.2,0.4)));
+        w.position.set(sx+Math.cos(a)*1.5, sh-0.3-len/2, sz+Math.sin(a)*1.5);
+        w.rotation.y=-a+Math.PI/2;
+        pickSheet(w);
+      }
+      for(let i=0;i<8;i++){
+        const a=Math.random()*Math.PI*2;
+        strands.push(strandMesh(sx+Math.cos(a)*0.9, sh-rand(0.1,0.5), sz+Math.sin(a)*0.9,
+          sx+Math.cos(a)*rand(2.5,4.0), rand(0.4,sh*0.7), sz+Math.sin(a)*rand(2.5,4.0),
+          rand(0.03,0.07)));
+      }
+    }
+    const flush=(arr,mat)=>{ if(arr.length){ scene.add(mergeStatic(arr,mat));
+      for(const m of arr) m.geometry.dispose(); } };
+    flush(sheets[0],webSheetMats[0]); flush(sheets[1],webSheetMats[1]);
+    flush(fans[0],webFanMats[0]);     flush(fans[1],webFanMats[1]);
+    flush(tornV,webTornMat);          flush(strands,webStrandMat);
+    flush(funnels,webFunnelMat);
   }
   /* cocoon bundles near the nests — almost all of them perfectly still.
      One merged mesh: they share a material and never move. */
@@ -1339,14 +1603,7 @@ export function buildCave(){
     }
     scene.add(mergeStatic(steps,stepMat));
     stepGeo.dispose();
-    /* silk over the way back up */
-    for(let i=0;i<5;i++){
-      const wI=Math.floor(Math.random()*4);
-      const w=new THREE.Mesh(new THREE.PlaneGeometry(rand(1.2,2.2),rand(1.2,2.2)),webMats[wI]);
-      w.position.set(sx+rand(-1.4,1.4), h-rand(0.2,1.6), sz+rand(-1.4,1.4));
-      w.rotation.set(rand(-0.6,0.6)+Math.PI/2*(Math.random()<0.5?1:0), Math.random()*7, Math.random()*7);
-      scene.add(w);
-    }
+    /* (the silk sealing this mouth is built with the web pass above) */
     CAVE.obstacles.push({x:sx, z:sz, r:1.5});
   }
   /* ---- the corpse, the lantern, the journal ---- */
