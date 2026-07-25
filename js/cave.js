@@ -557,6 +557,9 @@ function genCave(){
    spotlight the joints, pits and grain become real surface relief. The
    bumpScale is up from 0.055 — the old map had almost nothing at close
    range to make relief OUT of, so the walls read as smooth card. */
+/* every rock wall face is subdivided into this many rows, regardless of
+   how tall it is — see the wall builder for why it has to be global */
+const WALL_ROWS=10;
 const rockMat=new THREE.MeshPhongMaterial({map:texCaveRock, bumpMap:texCaveRock, bumpScale:0.14,
   specular:0x1a1a16, shininess:10, emissive:0x010101});
 const floorMat=new THREE.MeshPhongMaterial({map:texCaveFloor, bumpMap:texCaveFloor, bumpScale:0.07,
@@ -615,9 +618,19 @@ const boneMat=new THREE.MeshPhongMaterial({map:texBone, bumpMap:texBone, bumpSca
   color:0x8e8778, specular:0x2c2a24, shininess:16});
 const clothMat=new THREE.MeshPhongMaterial({map:texCloth, bumpMap:texCloth, bumpScale:0.008,
   color:0x585048, specular:0x0c0b0a, shininess:4});
+/* the outer layer reads darker and slightly greener than the shirt under
+   it, so the coat separates from the body instead of merging into one
+   uniform tan mass; boots and belt are near-black oiled leather */
+const coatMat=new THREE.MeshPhongMaterial({map:texCloth, bumpMap:texCloth, bumpScale:0.012,
+  color:0x3e4038, specular:0x100f0c, shininess:5});
+const bootMat=new THREE.MeshPhongMaterial({map:texCloth, color:0x2a2724,
+  specular:0x1a1714, shininess:22});
+const beltMat=new THREE.MeshPhongMaterial({map:texCloth, color:0x33291f,
+  specular:0x241d14, shininess:18});
 const brassMat=new THREE.MeshPhongMaterial({color:0x6e5a2e, specular:0x8a7340, shininess:55});
 markShared(rockMat,floorMat,pitMat,silkFloorMat,cocoonMat,boneMat,clothMat,brassMat,
-           texCaveRock,texCaveFloor,texCocoon,TEX_MOUND,moundMat,texCloth,texBone,texJournalPages);
+           texCaveRock,texCaveFloor,texCocoon,TEX_MOUND,moundMat,texCloth,texBone,texJournalPages,
+           coatMat,bootMat,beltMat);
 /* silk is LIT (Phong, not Basic): it glistens where the lantern rakes it
    and takes the fungus tint near the broods, instead of glowing flat white
    in the dark. A faint emissive keeps it readable at the threshold.
@@ -992,9 +1005,26 @@ export function makeLanternProp(){
    laid out square. */
 function makeCorpse(){
   const g=new THREE.Group();
-  const limb=(x,y,z, dx,dy,dz, len, r0,r1, mat)=>{
-    const geo=new THREE.CylinderGeometry(r1,r0,len,7);
+  /* cloth does not run smooth over a limb — it creases, bunches at the
+     joints and hangs slack. Without this the tapered cylinders read as a
+     wooden artist's mannequin, which is exactly what the last pass looked
+     like: correct proportions, no material truth. */
+  const wrinkle=(geo,amp)=>{
+    const pos=geo.attributes.position, sd=Math.random()*10;
+    for(let i=0;i<pos.count;i++){
+      const x=pos.getX(i), y=pos.getY(i), z=pos.getZ(i);
+      const r=Math.hypot(x,z)||1e-6;
+      const k=1+amp*(Math.sin(y*11+sd)*0.5+Math.sin(y*23+sd*2)*0.3
+                    +Math.sin(Math.atan2(z,x)*4+y*7+sd)*0.45);
+      pos.setXYZ(i, x/r*r*k, y, z/r*r*k);
+    }
+    geo.computeVertexNormals();
+    return geo;
+  };
+  const limb=(x,y,z, dx,dy,dz, len, r0,r1, mat, amp)=>{
+    const geo=new THREE.CylinderGeometry(r1,r0,len,9);
     geo.translate(0,len/2,0);
+    if(amp!==0) wrinkle(geo, amp===undefined? 0.10:amp);
     const m=new THREE.Mesh(geo,mat);
     m.position.set(x,y,z);
     const L=Math.hypot(dx,dy,dz)||1;
@@ -1003,28 +1033,50 @@ function makeCorpse(){
     g.add(m);
     return [x+dx/L*len, y+dy/L*len, z+dz/L*len];
   };
+  const blob=(x,y,z, r, sx,sy,sz, mat, amp)=>{
+    const geo=new THREE.SphereGeometry(r,10,8);
+    if(amp) wrinkle(geo,amp);
+    const m=new THREE.Mesh(geo,mat);
+    m.scale.set(sx,sy,sz); m.position.set(x,y,z); g.add(m); return m;
+  };
   /* torso: collapsed onto one shoulder, the chest fallen in */
-  const torso=new THREE.Mesh(new THREE.SphereGeometry(0.30,12,9),clothMat);
-  torso.scale.set(0.80,0.52,1.32); torso.position.set(0,0.14,0);
-  torso.rotation.set(0.10,0.12,0.22); g.add(torso);
-  /* the ribs the cloth has rotted off */
-  for(let i=0;i<5;i++){
-    const rib=new THREE.Mesh(new THREE.TorusGeometry(0.15-i*0.012,0.011,4,9,Math.PI*1.05),boneMat);
-    rib.position.set(0.01,0.20-i*0.006,-0.20+i*0.10);
-    rib.rotation.set(Math.PI/2,0,0.16+i*0.03); g.add(rib);
+  const torso=blob(0,0.14,0, 0.30, 0.80,0.52,1.32, clothMat, 0.07);
+  torso.rotation.set(0.10,0.12,0.22);
+  /* the coat over it: a looser shell, split down the front, with the collar
+     standing up behind the neck — the silhouette that says "dressed" */
+  const coat=blob(0,0.155,0.04, 0.325, 0.86,0.50,1.24, coatMat, 0.11);
+  coat.rotation.set(0.10,0.12,0.22);
+  for(const sx of[-1,1]){                            // the front panels, fallen open
+    const flap=new THREE.Mesh(wrinkle(new THREE.SphereGeometry(0.20,9,7),0.13),coatMat);
+    flap.scale.set(0.42,0.30,1.05);
+    flap.position.set(sx*0.24,0.075,0.02); flap.rotation.set(0.1,0,sx*0.5);
+    g.add(flap);
   }
-  const hips=new THREE.Mesh(new THREE.SphereGeometry(0.20,10,8),clothMat);
-  hips.scale.set(1.0,0.62,0.86); hips.position.set(-0.03,0.115,0.50); g.add(hips);
-  /* legs: one folded under, one thrown out */
+  const collar=new THREE.Mesh(new THREE.TorusGeometry(0.115,0.045,5,11,Math.PI*1.25),coatMat);
+  collar.position.set(0.01,0.185,-0.30); collar.rotation.set(1.30,0,0.15); g.add(collar);
+  const belt=new THREE.Mesh(new THREE.TorusGeometry(0.175,0.026,5,13),beltMat);
+  belt.position.set(-0.01,0.125,0.34); belt.rotation.set(1.44,0,0.10); g.add(belt);
+  /* the ribs the cloth has rotted off, showing through the split coat */
+  for(let i=0;i<4;i++){
+    const rib=new THREE.Mesh(new THREE.TorusGeometry(0.135-i*0.012,0.010,4,9,Math.PI*0.9),boneMat);
+    rib.position.set(0.02,0.215-i*0.004,-0.16+i*0.085);
+    rib.rotation.set(Math.PI/2,0,0.20+i*0.03); g.add(rib);
+  }
+  blob(-0.03,0.115,0.50, 0.20, 1.0,0.62,0.86, clothMat, 0.08);
+  /* legs: one folded under, one thrown out — trousers, then a boot */
   let k=limb(-0.10,0.11,0.60,  -0.16,-0.12,1.0, 0.44,0.105,0.085, clothMat);
-  limb(k[0],k[1],k[2],         -0.05,-0.05,1.0, 0.42,0.082,0.060, clothMat);
+  k=limb(k[0],k[1],k[2],       -0.05,-0.05,1.0, 0.40,0.082,0.062, clothMat);
+  blob(k[0],k[1]+0.01,k[2]+0.05, 0.085, 1.05,0.95,1.85, bootMat, 0.05);
   k=limb(0.12,0.11,0.60,        0.52,-0.10,0.85,0.42,0.105,0.085, clothMat);
-  limb(k[0],k[1],k[2],          0.16,-0.06,1.0, 0.40,0.082,0.058, clothMat);
+  k=limb(k[0],k[1],k[2],        0.16,-0.06,1.0, 0.38,0.082,0.060, clothMat);
+  blob(k[0]+0.02,k[1]+0.01,k[2]+0.04, 0.082, 1.05,0.95,1.85, bootMat, 0.05);
   /* arms: one flung back toward the stair, one folded under the chest */
   k=limb(-0.24,0.16,-0.10,     -0.72,-0.10,-0.68,0.34,0.070,0.055, clothMat);
-  limb(k[0],k[1],k[2],         -0.42,-0.14,-0.90,0.30,0.052,0.038, clothMat);
+  k=limb(k[0],k[1],k[2],       -0.42,-0.14,-0.90,0.28,0.052,0.040, clothMat);
+  blob(k[0]-0.02,k[1],k[2]-0.03, 0.055, 1.0,0.75,1.25, boneMat, 0.10);   // the hand
   k=limb(0.24,0.16,-0.08,       0.62,-0.12,0.42, 0.32,0.070,0.055, clothMat);
-  limb(k[0],k[1],k[2],         -0.10,-0.16,0.86, 0.28,0.052,0.038, clothMat);
+  k=limb(k[0],k[1],k[2],       -0.10,-0.16,0.86, 0.26,0.052,0.040, clothMat);
+  blob(k[0],k[1],k[2]+0.03, 0.052, 1.0,0.75,1.25, boneMat, 0.10);
   /* skull: turned to the side, jaw fallen open, sockets sunk */
   const sk=new THREE.Group();
   const cran=new THREE.Mesh(new THREE.SphereGeometry(0.105,12,10),boneMat);
@@ -1032,12 +1084,20 @@ function makeCorpse(){
   const face=new THREE.Mesh(new THREE.SphereGeometry(0.075,10,8),boneMat);
   face.scale.set(0.82,0.72,0.80); face.position.set(0,-0.035,-0.075); sk.add(face);
   for(const sx of[-0.042,0.042]){                    // the sockets
-    const soc=new THREE.Mesh(new THREE.SphereGeometry(0.030,8,7),pitMat);
-    soc.scale.set(1,0.85,0.7); soc.position.set(sx,0.005,-0.088); sk.add(soc);
+    const soc=new THREE.Mesh(new THREE.SphereGeometry(0.032,8,7),pitMat);
+    soc.scale.set(1,0.9,0.75); soc.position.set(sx,0.008,-0.094); sk.add(soc);
   }
+  const nas=new THREE.Mesh(new THREE.SphereGeometry(0.018,6,5),pitMat);
+  nas.scale.set(0.8,1.3,0.7); nas.position.set(0,-0.038,-0.118); sk.add(nas);
   const jaw=new THREE.Mesh(new THREE.TorusGeometry(0.058,0.014,4,9,Math.PI*1.1),boneMat);
-  jaw.position.set(0,-0.078,-0.052); jaw.rotation.set(1.28,0,0); sk.add(jaw);
+  jaw.position.set(0,-0.082,-0.050); jaw.rotation.set(1.28,0,0); sk.add(jaw);
   sk.position.set(0.03,0.10,-0.46); sk.rotation.set(0.25,0.85,0.30); g.add(sk);
+  /* the pack that came down with them, strap still over the shoulder */
+  const pack=new THREE.Mesh(wrinkle(new THREE.SphereGeometry(0.22,10,8),0.12),coatMat);
+  pack.scale.set(0.86,0.62,0.70); pack.position.set(-0.44,0.10,0.16);
+  pack.rotation.set(0.2,0.5,0.35); g.add(pack);
+  const strap=new THREE.Mesh(new THREE.TorusGeometry(0.155,0.020,4,11,Math.PI*0.8),beltMat);
+  strap.position.set(-0.26,0.14,0.02); strap.rotation.set(1.2,0.7,0.3); g.add(strap);
   /* a scatter of what the dark left */
   for(let i=0;i<5;i++){
     const b=new THREE.Mesh(new THREE.CylinderGeometry(rand(0.014,0.024),rand(0.014,0.024),rand(0.13,0.28),6),boneMat);
@@ -1204,8 +1264,11 @@ export function buildCave(){
       /* the floor: 3×3 sub-quads riding floorYAt (fine enough that the mesh
          and the exact ground function never visibly disagree), SMOOTH-shaded
          from the field's own gradient — see floorNormalAt. The rock above
-         stays faceted; only the ground you walk on rolls. */
-      const S=3;
+         stays faceted; only the ground you walk on rolls.
+         A squeeze goes to 4×4 to match ITS vault and wall count — at a fixed
+         3 the wall's bottom edge and the floor's edge sampled the same line
+         at different x/z and split open along the crawl. */
+      const S=t===2? 4:3;
       for(let j=0;j<S;j++)for(let i=0;i<S;i++){
         const x0=p.x-E+i*CELL/S, x1=x0+CELL/S;
         const z0=p.z-E+j*CELL/S, z1=z0+CELL/S;
@@ -1252,17 +1315,26 @@ export function buildCave(){
     for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){
       if(codeAt(x+dx,y+dy)!==1) continue;
       const rx=-dy, rz=dx;                       // traverse dir: normal faces the room
-      const COLS=4;
+      /* COLS must match the SUB-QUAD COUNT of the floor and vault over this
+         cell (3, or 4 in a squeeze). At COLS=4 against a 3-sub-quad ceiling
+         the two edges sampled the same curve at different x/z, so between
+         shared points the polylines drifted apart and opened slivers you
+         could see the void through. Same story at the floor line. */
+      const COLS=t===2? 4:3;
       const pts=[];
-      let span=0;
       for(let i=0;i<=COLS;i++){
         const tt=i/COLS*2-1;
         const px=p.x+dx*E+rx*E*tt, pz=p.z+dy*E+rz*E*tt;
-        const yb=floorYAt(px,pz), yt=ceilYAt(px,pz);
-        span=Math.max(span,yt-yb);
-        pts.push({px,pz,yb,yt});
+        pts.push({px,pz, yb:floorYAt(px,pz), yt:ceilYAt(px,pz)});
       }
-      const ROWS=Math.max(3,Math.ceil(span/1.1));
+      /* ROWS is GLOBAL, not per-face. It used to be ceil(span/1.1) off the
+         face's own height, so two faces meeting at a corner column — or two
+         coplanar faces either side of a cell boundary — subdivided that
+         shared column into different numbers of steps. wallField is
+         evaluated per vertex and varies with height, so the two edges
+         approximated the same curve at different y and split apart. Any
+         constant works as long as every face uses the same one. */
+      const ROWS=WALL_ROWS;
       const V=[];
       for(let r=0;r<=ROWS;r++){
         V[r]=[];
@@ -1451,23 +1523,14 @@ export function buildCave(){
         stalUp.push(nub);
       }
     }
-    /* drapery curtains where a wall meets a high vault — hung from the
-       real ceiling edge at that face (ceilYAt at the anchor), shifted with
-       the wall's own relief so the root stays against the rock */
-    if(code===0&&srand()<0.10){
-      for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){
-        if(codeAt(x+dx,y+dy)!==1) continue;
-        const ax=p.x+dx*(E-0.30), az=p.z+dy*(E-0.30);
-        const eV=ceilYAt(ax,az);
-        const hgt=rand(1.0,Math.min(2.8,eV*0.5));
-        const ct=new THREE.Mesh(curtainGeo(rand(1.1,2.6),hgt));
-        const F=wallField(ax,eV-hgt*0.3,az);
-        ct.position.set(ax+F.x*0.7, eV+0.22-hgt/2, az+F.z*0.7);
-        ct.rotation.y = dx? (dx>0?-Math.PI/2:Math.PI/2) : (dy>0?Math.PI:0);
-        curtains.push(ct);
-        break;
-      }
-    }
+    /* NO wall drapery here any more. It anchored at E−0.30, i.e. 0.30m in
+       from the wall face, and then took another ~0.2m of wallField and
+       fold depth on top — so a broad, shallowly-folded calcite sheet hung
+       somewhere between a few inches and a foot clear of a wall that was
+       already there. It did not read as a formation; it read as a stray
+       slab of wall floating in the room. Flowstone that still exists is
+       the kind that has somewhere real to attach: the stream-bank cascades
+       below, and the collar around the arrival bore. */
     /* flowstone cascades spilling down the banks into the stream */
     if(code===0&&srand()<0.22){
       let sdx=0,sdy=0;
