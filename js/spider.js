@@ -145,8 +145,13 @@ export function makeSpider(){
      the tail landing at local z −0.8 (→ −1.08 scaled → −2.03 in mesh
      space, where the silk anchors). Do not resize without moving both. */
   const abdParts=[];
-  const abdGeo=bodyLathe([[0,0.30],[0.10,0.58],[0.22,0.79],[0.36,0.93],[0.50,1.00],
-                          [0.64,0.99],[0.76,0.91],[0.86,0.75],[0.94,0.49],[1,0.10]],
+  /* NOTE the 0.001 at both ends. A lathe profile that starts at a non-zero
+     radius leaves an OPEN RING there — the geometry is a tube, not a solid
+     — and with backfaces culled you see straight through it. That is what
+     put a hole in the middle of the spider's face. Every body lathe closes
+     at both poles now. */
+  const abdGeo=bodyLathe([[0,0.001],[0.04,0.30],[0.10,0.58],[0.22,0.79],[0.36,0.93],[0.50,1.00],
+                          [0.64,0.99],[0.76,0.91],[0.86,0.75],[0.94,0.49],[0.985,0.16],[1,0.001]],
                          1.6,0.8,20);
   abdParts.push(new THREE.Mesh(abdGeo,M.body));
   /* spinnerets, clustered at the tail where the silk actually leaves */
@@ -175,25 +180,54 @@ export function makeSpider(){
   /* ---- the head group: carapace, eyes, chelicerae, pedipalps ----
      one group so the sniff dip carries all of it down together */
   const head=new THREE.Group(); g.add(head);
-  const carGeo=bodyLathe([[0,0.34],[0.12,0.62],[0.26,0.84],[0.42,0.97],[0.58,1.00],
-                          [0.74,0.95],[0.88,0.82],[1,0.60]],
-                         1.10,0.58,18);
-  carGeo.scale(1,0.74,1);                        // a carapace is flat, not round
+  const CAR_PROF=[[0,0.001],[0.03,0.30],[0.08,0.52],[0.16,0.71],[0.28,0.87],
+                  [0.42,0.97],[0.58,1.00],[0.74,0.95],[0.88,0.82],[1,0.60]];
+  const CAR_LEN=1.10, CAR_R=0.58, CAR_FLAT=0.74, CAR_Z=0.42;
+  const carGeo=bodyLathe(CAR_PROF,CAR_LEN,CAR_R,18);
+  carGeo.scale(1,CAR_FLAT,1);                    // a carapace is flat, not round
   const ceph=new THREE.Mesh(carGeo,M.car);
-  ceph.position.set(0,BODY_Y,0.42); head.add(ceph);
+  ceph.position.set(0,BODY_Y,CAR_Z); head.add(ceph);
 
-  /* 8 eyes, two rows: anterior medians big and forward-facing, posterior
-     medians high, laterals small and out on the shoulders */
+  /* ---- 8 eyes, two rows ----
+     Placed ON the carapace by evaluating the SAME profile the mesh is
+     lathed from, rather than by hand-picked xyz. The hand-picked set sat
+     inside the shell — the laterals especially, which the skin then cut in
+     half — because guessing a point on a scaled lathe by eye does not
+     work. `carSurf(t,th)` returns the surface point and its outward
+     normal for a profile parameter t (0 = snout) and an angle th measured
+     from the dorsal midline, so an eye can be seated on the skin and
+     pushed just proud of it. They are lenses, not balls: flattened along
+     the normal so they read as set INTO the carapace the way real eyes
+     are, without popping out of it. */
+  const carRadiusAt=(z)=>{
+    const t=clamp((CAR_Z+CAR_LEN/2-z)/CAR_LEN,0,1);
+    let i=0; while(i<CAR_PROF.length-2 && CAR_PROF[i+1][0]<t) i++;
+    const [t0,r0]=CAR_PROF[i], [t1,r1]=CAR_PROF[i+1];
+    return (r0+(r1-r0)*(t-t0)/Math.max(t1-t0,1e-6))*CAR_R;
+  };
+  /* Keep the arrangement — it read correctly — and just push each eye OUT
+     along its own direction until it meets the shell. Parametrising by
+     angle instead spread them around the whole dome like a ring of beads. */
   const eyeParts=[];
-  /* kept small on purpose: eight eyes at the anatomically honest size put
-     enough emissive area on screen to read as one glowing mouth-curve in
-     the dark. Small and separated, they read as what they are — glints. */
-  for(const[ex,ey,ez,er]of[[-0.072,0.075,0.888,0.062],[0.072,0.075,0.888,0.062],
-                           [-0.088,0.188,0.804,0.050],[0.088,0.188,0.804,0.050],
-                           [-0.198,0.048,0.832,0.038],[0.198,0.048,0.832,0.038],
-                           [-0.232,0.146,0.748,0.034],[0.232,0.146,0.748,0.034]]){
+  /* Seating them on the shell spreads them — the carapace flares fast
+     behind the snout — so they are pulled FORWARD onto the face and cut
+     right down in size. At the old radii, eight lenses on the shell read
+     as a ring of red lozenges stuck to a helmet. */
+  for(const[ex,ey,ez,er] of [[-0.055,0.070,0.906,0.034],[0.055,0.070,0.906,0.034],
+                             [-0.070,0.150,0.866,0.028],[0.070,0.150,0.866,0.028],
+                             [-0.150,0.050,0.884,0.022],[0.150,0.050,0.884,0.022],
+                             [-0.175,0.115,0.848,0.020],[0.175,0.115,0.848,0.020]]){
+    const r=carRadiusAt(ez), ry=r*CAR_FLAT;
+    /* scale the (x,y) offset out onto the shell's ellipse at this z */
+    const q=Math.hypot(ex/r, ey/ry) || 1e-6;
+    const sx=ex/q, sy=ey/q;
+    const n=[sx/(r*r), sy/(ry*ry), 0];                       // ellipse normal
+    const L=Math.hypot(n[0],n[1])||1; n[0]/=L; n[1]/=L;
     const e=new THREE.Mesh(new THREE.SphereGeometry(er,10,8),eyeMat);
-    e.position.set(ex,BODY_Y+ey,ez); eyeParts.push(e);
+    e.scale.set(1,0.62,1);                                   // a lens, not a bead
+    e.position.set(sx+n[0]*er*0.28, BODY_Y+sy+n[1]*er*0.28, ez);
+    aim(e,n[0],n[1],n[2]);                                   // flatten ALONG the normal
+    eyeParts.push(e);
   }
   const eyes=mergeStatic(eyeParts,eyeMat);
   for(const p of eyeParts) p.geometry.dispose();

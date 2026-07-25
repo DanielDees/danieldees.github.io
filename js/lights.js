@@ -10,7 +10,14 @@ import { WALL_H } from "./map.js";
 
 const FLICKER_PATTERNS=5; // 0 strobe · 1 stutter · 2 brown-out sag · 3 blink-off · 4 dying sputter
 function panelValue(L,t){
-  if(L.mode==="steady") return 0.92+Math.sin(t*1.7+L.phase)*0.06;
+  /* Fungus holds DEAD STILL when it isn't reacting to anything. Electric
+     fixtures breathe on that sine, and the cold branch below writes the
+     colony's emissive, its additive halo and its bound pool light from the
+     same value — so on the mushrooms a ±6% idle breathe read as the whole
+     colony faintly shimmering while the player stood motionless. The
+     flicker BURSTS still fire (fungus dimming is the matriarch's radar on
+     this floor); only the idle is frozen. */
+  if(L.mode==="steady") return L.cold? 0.92 : 0.92+Math.sin(t*1.7+L.phase)*0.06;
   if(L.warm){
     /* end-of-life cycle in three acts: a ~2s hilly dim-down (the arc keeps
        half-catching, so brightness recovers a little in sub-second steps on

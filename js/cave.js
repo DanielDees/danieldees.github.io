@@ -20,7 +20,8 @@ import { scene, camera, renderer, lights, makeLightRecord, markShared,
          mergeStatic, freezeStaticScene } from "./scene.js";
 import { makeCanvas, texCaveRock, texCaveFloor, texDripstone,
          makeWebSheetTexture, makeCobwebTexture, makeStrandTexture, makeFunnelTexture,
-         makeFungusSkin, scaleBoxUV, texEggSac, makeFlameTexture, texCocoon } from "./textures.js";
+         makeFungusSkin, scaleBoxUV, texEggSac, makeFlameTexture, texCocoon,
+         texCloth, texBone, texJournalPages } from "./textures.js";
 import { addInteractable } from "./props.js";
 import { die } from "./lifecycle.js";
 import { renderObjectives, toast } from "./ui.js";
@@ -610,11 +611,13 @@ const moundMat=new THREE.MeshPhongMaterial({map:TEX_MOUND, bumpMap:TEX_MOUND, bu
   color:0x8a9092, specular:0x242626, shininess:10});
 const eggMat=()=>new THREE.MeshPhongMaterial({map:texEggSac, color:0x8fa8b2,
   specular:0x40565f, shininess:44, emissive:0x123540});
-const boneMat=new THREE.MeshPhongMaterial({color:0xb8b0a0, specular:0x2c2a24, shininess:16});
-const clothMat=new THREE.MeshPhongMaterial({color:0x2c2a26, specular:0x0c0b0a, shininess:4});
+const boneMat=new THREE.MeshPhongMaterial({map:texBone, bumpMap:texBone, bumpScale:0.006,
+  color:0x8e8778, specular:0x2c2a24, shininess:16});
+const clothMat=new THREE.MeshPhongMaterial({map:texCloth, bumpMap:texCloth, bumpScale:0.008,
+  color:0x585048, specular:0x0c0b0a, shininess:4});
 const brassMat=new THREE.MeshPhongMaterial({color:0x6e5a2e, specular:0x8a7340, shininess:55});
 markShared(rockMat,floorMat,pitMat,silkFloorMat,cocoonMat,boneMat,clothMat,brassMat,
-           texCaveRock,texCaveFloor,texCocoon,TEX_MOUND,moundMat);
+           texCaveRock,texCaveFloor,texCocoon,TEX_MOUND,moundMat,texCloth,texBone,texJournalPages);
 /* silk is LIT (Phong, not Basic): it glistens where the lantern rakes it
    and takes the fungus tint near the broods, instead of glowing flat white
    in the dark. A faint emissive keeps it readable at the threshold.
@@ -982,26 +985,64 @@ export function makeLanternProp(){
   return g;
 }
 /* the one who got this far: prone, face down, the lantern still clipped on */
+/* The one who came before. It used to be six boxes and a sphere in two
+   flat colours — the first thing the level shows you, reading as crates.
+   Limbs are tapered capsules now, the ribcage shows through the rotted
+   canvas, the skull has a face, and the whole body is slumped rather than
+   laid out square. */
 function makeCorpse(){
   const g=new THREE.Group();
-  const torso=new THREE.Mesh(new THREE.BoxGeometry(0.46,0.2,0.78),clothMat);
-  torso.position.set(0,0.11,0); torso.rotation.y=0.12; g.add(torso);
-  const hips=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.17,0.4),clothMat);
-  hips.position.set(-0.02,0.095,0.52); g.add(hips);
-  for(const sx of[-0.11,0.13]){
-    const leg=new THREE.Mesh(new THREE.BoxGeometry(0.15,0.13,0.82),clothMat);
-    leg.position.set(sx,0.075,1.05); leg.rotation.y=(Math.random()-0.5)*0.3; g.add(leg);
+  const limb=(x,y,z, dx,dy,dz, len, r0,r1, mat)=>{
+    const geo=new THREE.CylinderGeometry(r1,r0,len,7);
+    geo.translate(0,len/2,0);
+    const m=new THREE.Mesh(geo,mat);
+    m.position.set(x,y,z);
+    const L=Math.hypot(dx,dy,dz)||1;
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),
+      new THREE.Vector3(dx/L,dy/L,dz/L));
+    g.add(m);
+    return [x+dx/L*len, y+dy/L*len, z+dz/L*len];
+  };
+  /* torso: collapsed onto one shoulder, the chest fallen in */
+  const torso=new THREE.Mesh(new THREE.SphereGeometry(0.30,12,9),clothMat);
+  torso.scale.set(0.80,0.52,1.32); torso.position.set(0,0.14,0);
+  torso.rotation.set(0.10,0.12,0.22); g.add(torso);
+  /* the ribs the cloth has rotted off */
+  for(let i=0;i<5;i++){
+    const rib=new THREE.Mesh(new THREE.TorusGeometry(0.15-i*0.012,0.011,4,9,Math.PI*1.05),boneMat);
+    rib.position.set(0.01,0.20-i*0.006,-0.20+i*0.10);
+    rib.rotation.set(Math.PI/2,0,0.16+i*0.03); g.add(rib);
   }
-  const armL=new THREE.Mesh(new THREE.BoxGeometry(0.12,0.11,0.62),clothMat);
-  armL.position.set(-0.34,0.07,-0.18); armL.rotation.y=0.5; g.add(armL);
-  const armR=new THREE.Mesh(new THREE.BoxGeometry(0.12,0.11,0.5),clothMat);
-  armR.position.set(0.32,0.07,-0.05); armR.rotation.y=-0.9; g.add(armR);
-  const skull=new THREE.Mesh(new THREE.SphereGeometry(0.115,10,8),boneMat);
-  skull.scale.set(0.86,0.9,1.1); skull.position.set(0.02,0.1,-0.5); g.add(skull);
+  const hips=new THREE.Mesh(new THREE.SphereGeometry(0.20,10,8),clothMat);
+  hips.scale.set(1.0,0.62,0.86); hips.position.set(-0.03,0.115,0.50); g.add(hips);
+  /* legs: one folded under, one thrown out */
+  let k=limb(-0.10,0.11,0.60,  -0.16,-0.12,1.0, 0.44,0.105,0.085, clothMat);
+  limb(k[0],k[1],k[2],         -0.05,-0.05,1.0, 0.42,0.082,0.060, clothMat);
+  k=limb(0.12,0.11,0.60,        0.52,-0.10,0.85,0.42,0.105,0.085, clothMat);
+  limb(k[0],k[1],k[2],          0.16,-0.06,1.0, 0.40,0.082,0.058, clothMat);
+  /* arms: one flung back toward the stair, one folded under the chest */
+  k=limb(-0.24,0.16,-0.10,     -0.72,-0.10,-0.68,0.34,0.070,0.055, clothMat);
+  limb(k[0],k[1],k[2],         -0.42,-0.14,-0.90,0.30,0.052,0.038, clothMat);
+  k=limb(0.24,0.16,-0.08,       0.62,-0.12,0.42, 0.32,0.070,0.055, clothMat);
+  limb(k[0],k[1],k[2],         -0.10,-0.16,0.86, 0.28,0.052,0.038, clothMat);
+  /* skull: turned to the side, jaw fallen open, sockets sunk */
+  const sk=new THREE.Group();
+  const cran=new THREE.Mesh(new THREE.SphereGeometry(0.105,12,10),boneMat);
+  cran.scale.set(0.88,0.94,1.06); sk.add(cran);
+  const face=new THREE.Mesh(new THREE.SphereGeometry(0.075,10,8),boneMat);
+  face.scale.set(0.82,0.72,0.80); face.position.set(0,-0.035,-0.075); sk.add(face);
+  for(const sx of[-0.042,0.042]){                    // the sockets
+    const soc=new THREE.Mesh(new THREE.SphereGeometry(0.030,8,7),pitMat);
+    soc.scale.set(1,0.85,0.7); soc.position.set(sx,0.005,-0.088); sk.add(soc);
+  }
+  const jaw=new THREE.Mesh(new THREE.TorusGeometry(0.058,0.014,4,9,Math.PI*1.1),boneMat);
+  jaw.position.set(0,-0.078,-0.052); jaw.rotation.set(1.28,0,0); sk.add(jaw);
+  sk.position.set(0.03,0.10,-0.46); sk.rotation.set(0.25,0.85,0.30); g.add(sk);
   /* a scatter of what the dark left */
-  for(let i=0;i<4;i++){
-    const b=new THREE.Mesh(new THREE.BoxGeometry(0.05,0.04,rand(0.14,0.3)),boneMat);
-    b.position.set(rand(-0.6,0.6),0.02,rand(-0.8,1.3)); b.rotation.y=Math.random()*Math.PI;
+  for(let i=0;i<5;i++){
+    const b=new THREE.Mesh(new THREE.CylinderGeometry(rand(0.014,0.024),rand(0.014,0.024),rand(0.13,0.28),6),boneMat);
+    b.position.set(rand(-0.6,0.6),0.02,rand(-0.8,1.3));
+    b.rotation.set(Math.PI/2+rand(-0.2,0.2),Math.random()*Math.PI,rand(-0.3,0.3));
     g.add(b);
   }
   return g;
@@ -1668,7 +1709,12 @@ export function buildCave(){
     for(const c of CAVE.chambers){
       const bd=Math.min(...broods.map(b=>Math.hypot(c.cx-b.cx,c.cy-b.cy)));
       const dens=clamp(1-bd/16,0.4,1);
-      const k=Math.round(c.r*c.r*2.1*dens);
+      /* ×3 placements, and the roll re-weighted hard toward SHEETS: the
+         vault is where the den reads from, and it was too sparse. Net
+         effect is roughly 5× the ceiling sheets, with streamers about
+         level and the free-strung lines down a little — every slung sheet
+         now brings its own guy-lines, which more than replaces them. */
+      const k=Math.round(c.r*c.r*2.1*dens*3);
       for(let t=0,placed=0;t<k*3&&placed<k;t++){
         const a=srand()*Math.PI*2, rr=c.r*Math.sqrt(srand())*0.95;
         const x=Math.round(c.cx+Math.cos(a)*rr), y=Math.round(c.cy+Math.sin(a)*rr);
@@ -1680,14 +1726,27 @@ export function buildCave(){
         if(inMouth(hx,hz,0.8)) continue;
         const cv=ceilYAt(hx,hz);
         const roll=Math.random();
-        if(roll<0.30){                     // a slung sheet under the vault
+        if(roll<0.47){                     // a slung sheet under the vault
+          /* slung CLOSE to the vault and trussed to it on four corner
+             guys. Hung at cv−0.25..0.9 with a sag of up to 0.9 on top and
+             nothing visibly holding it, these read as sheets floating a
+             couple of feet under a ceiling that wasn't there. */
           const wdt=rand(1.4,3.2), dep=rand(1.2,2.8);
-          const w=new THREE.Mesh(webHammockGeo(wdt,dep,Math.min(wdt,dep)*rand(0.18,0.32)));
-          w.rotation.order="YXZ"; w.rotation.y=Math.random()*Math.PI;
-          w.rotation.x=-Math.PI/2+rand(-0.22,0.22);
-          w.position.set(hx,cv-rand(0.25,0.9),hz);
+          const sag=Math.min(wdt,dep)*rand(0.18,0.32);
+          const yaw=Math.random()*Math.PI;
+          const hy=cv-rand(0.12,0.45);
+          const w=new THREE.Mesh(webHammockGeo(wdt,dep,sag));
+          w.rotation.order="YXZ"; w.rotation.y=yaw;
+          w.rotation.x=-Math.PI/2+rand(-0.18,0.18);
+          w.position.set(hx,hy,hz);
           pickSheet(w);
-        } else if(roll<0.55){              // a veil hanging off the stalactite line
+          const cs=Math.cos(yaw), sn=Math.sin(yaw);
+          for(const[lx,ly]of[[wdt/2,dep/2],[wdt/2,-dep/2],[-wdt/2,dep/2],[-wdt/2,-dep/2]]){
+            const gx=hx+lx*cs-ly*sn, gz=hz-lx*sn-ly*cs;
+            strands.push(strandMesh(gx,hy,gz, gx+rand(-0.25,0.25),
+              Math.max(ceilYAt(gx,gz)+0.04,hy+0.22), gz+rand(-0.25,0.25), rand(0.025,0.05)));
+          }
+        } else if(roll<0.90){              // a veil hanging off the stalactite line
           /* sized against the LOCAL floor-to-vault room, never an absolute
              height: a veil that reaches the ground stops reading as silk
              and starts reading as a wall */
@@ -1697,7 +1756,7 @@ export function buildCave(){
           w.rotation.y=Math.random()*Math.PI;
           w.position.set(hx,cv-0.15-hgt/2,hz);
           pickFan(w);
-        } else if(roll<0.80){              // long streamers
+        } else if(roll<0.965){             // long streamers
           const len=rand(1.2,Math.max(1.3,Math.min(4.5,(cv-floorYAt(hx,hz))*0.45)));
           const w=new THREE.Mesh(webStreamerGeo(rand(0.15,0.4),len));
           w.position.set(hx,cv+0.05-len/2,hz);
@@ -1939,7 +1998,14 @@ export function buildCave(){
         const nCord=2+Math.floor(srand()*3);
         for(let cI=0;cI<nCord;cI++){
           const pts=[];
-          const segs=6+Math.floor(srand()*4);
+          /* more, shorter segments and a DRIFTING heading rather than an
+             independent random turn per step — at 6 segments with a ±0.28
+             rad kick each, floor cords came out as neon lightning bolts
+             scribbled on the ground. Width is chosen once and tapers
+             monotonically; jittering it per point made them flicker in
+             thickness along their length. */
+          const segs=12+Math.floor(srand()*6);
+          const W0=rand(0.045,0.075);
           if(onWall){
             const uX=(fdy!==0)?1:0, uZ=(fdx!==0)?1:0;    // wall-parallel axis
             let drift=(srand()<0.5?-1:1)*rand(0.10,0.30);
@@ -1951,18 +2017,19 @@ export function buildCave(){
               const F=wallField(wx2,wy,wz2);
               pts.push({x:wx2+F.x-fdx*0.03, y:wy, z:wz2+F.z-fdy*0.03,
                         nx:-fdx, ny:0, nz:-fdy,
-                        w:rand(0.05,0.10)*(1-i/segs*0.6)});
-              u+=drift*rand(0.6,1.4); drift+=(srand()-0.5)*0.12;
-              yy-=rand(0.25,0.6)*(hh-0.2)/segs*2;
+                        w:W0*(1-i/segs*0.72)});
+              u+=drift*rand(0.6,1.4)*0.55; drift+=(srand()-0.5)*0.07; drift*=0.9;
+              yy-=rand(0.25,0.6)*(hh-0.2)/segs;
             }
           } else {
-            let aa=Math.random()*Math.PI*2, rr=0.15;
+            let aa=Math.random()*Math.PI*2, rr=0.15, turn=0;
             for(let i=0;i<=segs;i++){
               const mx=ax+Math.cos(aa)*rr, mz=az+Math.sin(aa)*rr;
               pts.push({x:mx, y:floorYAt(mx,mz)+0.03, z:mz,
                         nx:0, ny:1, nz:0,
-                        w:rand(0.05,0.10)*(1-i/segs*0.6)});
-              rr+=rand(0.14,0.30); aa+=(srand()-0.5)*0.55;
+                        w:W0*(1-i/segs*0.72)});
+              rr+=rand(0.10,0.18);
+              turn=turn*0.78+(srand()-0.5)*0.16; aa+=turn;   // a wander, not a zigzag
             }
           }
           parts.push(new THREE.Mesh(cordGeo(pts)));
@@ -2222,12 +2289,28 @@ export function buildCave(){
     scene.add(lant);
     /* the journal, fallen open beside it */
     const jr=new THREE.Group();
-    const cover=new THREE.Mesh(new THREE.BoxGeometry(0.27,0.045,0.35),
-      new THREE.MeshPhongMaterial({color:0x4a3826, specular:0x1a140c, shininess:8}));
-    cover.position.y=0.022; jr.add(cover);
-    const pages=new THREE.Mesh(new THREE.BoxGeometry(0.23,0.03,0.30),
-      new THREE.MeshPhongMaterial({color:0xb9ac8e, specular:0x111111, shininess:4}));
-    pages.position.y=0.052; pages.rotation.y=0.06; jr.add(pages);
+    /* fallen OPEN: two boards splayed off a spine with the page block
+       swollen between them, instead of two stacked slabs */
+    const leather=new THREE.MeshPhongMaterial({map:texCloth, color:0x6e5236,
+      specular:0x1a140c, shininess:10});
+    const paper=new THREE.MeshPhongMaterial({map:texJournalPages, color:0x6e6858,
+      specular:0x111111, shininess:3});
+    const spine=new THREE.Mesh(new THREE.BoxGeometry(0.045,0.030,0.35),leather);
+    spine.position.y=0.015; jr.add(spine);
+    for(const sx of[-1,1]){
+      const board=new THREE.Mesh(new THREE.BoxGeometry(0.25,0.016,0.35),leather);
+      board.position.set(sx*0.145,0.012,0); board.rotation.z=sx*0.055; jr.add(board);
+      const leaf=new THREE.Mesh(new THREE.BoxGeometry(0.225,0.026,0.315),paper);
+      leaf.position.set(sx*0.142,0.031,0.004);
+      leaf.rotation.set(0,sx*0.03,sx*0.075); jr.add(leaf);
+    }
+    /* a couple of leaves torn loose and lying nearby */
+    for(let i=0;i<3;i++){
+      const lf=new THREE.Mesh(new THREE.BoxGeometry(0.20,0.003,0.27),paper);
+      lf.position.set(rand(-0.45,0.45),0.004,rand(-0.4,0.5));
+      lf.rotation.set(rand(-0.05,0.05),Math.random()*Math.PI,rand(-0.05,0.05));
+      jr.add(lf);
+    }
     const jx=p.x-0.15, jz=p.z+0.75;
     jr.position.set(jx,floorYAt(jx,jz),jz);
     jr.rotation.y=rand(0,7); jr.rotation.z=0.05;

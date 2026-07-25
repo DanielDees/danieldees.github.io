@@ -1856,3 +1856,91 @@ export const texCocoon = makeCanvas(128,256,(g,w,h)=>{
   }
 });
 texCocoon.wrapS=texCocoon.wrapT=THREE.RepeatWrapping;
+
+/* ---- THE NEST: the one who came before -------------------------------
+   The corpse was six boxes and a sphere in two flat colours, and the
+   journal beside it two more boxes. It is the first thing the level shows
+   you and the reason you have a lantern at all, so it earns real skin. */
+/* rotted canvas workwear: weave, damp bloom, and the holes it has worn */
+export const texCloth = makeCanvas(256,256,(g,w,h)=>{
+  g.fillStyle="#2b2822";g.fillRect(0,0,w,h);
+  for(let i=0;i<10;i++){          // damp blooms and dark staining
+    const x=Math.random()*w,y=Math.random()*h,r=24+Math.random()*70;
+    const gr=g.createRadialGradient(x,y,2,x,y,r);
+    const dark=Math.random()<0.6;
+    gr.addColorStop(0,dark?`rgba(12,11,9,${0.16+Math.random()*0.18})`
+                         :`rgba(74,66,50,${0.10+Math.random()*0.12})`);
+    gr.addColorStop(1,"rgba(0,0,0,0)");
+    g.fillStyle=gr;g.beginPath();g.arc(x,y,r,0,7);g.fill();
+  }
+  for(let x=0;x<w;x+=3){          // the weave: warp and weft
+    g.fillStyle=`rgba(${64+Math.random()*26|0},${58+Math.random()*22|0},${46+Math.random()*18|0},${0.10+Math.random()*0.10})`;
+    g.fillRect(x,0,1.4,h);
+  }
+  for(let y=0;y<h;y+=3){
+    g.fillStyle=`rgba(${16+Math.random()*14|0},${14+Math.random()*12|0},${11+Math.random()*10|0},${0.10+Math.random()*0.12})`;
+    g.fillRect(0,y,w,1.4);
+  }
+  for(let i=0;i<26;i++){          // worn holes, with frayed pale edges
+    const x=Math.random()*w,y=Math.random()*h,r=2+Math.random()*9;
+    g.fillStyle=`rgba(6,5,4,${0.4+Math.random()*0.4})`;
+    g.beginPath();g.arc(x,y,r,0,7);g.fill();
+    g.strokeStyle=`rgba(96,88,70,${0.14+Math.random()*0.16})`;g.lineWidth=1;
+    g.beginPath();g.arc(x,y,r+0.9,0,7);g.stroke();
+  }
+  for(let i=0;i<600;i++){         // grit worked into the fibres
+    g.fillStyle=`rgba(${52+Math.random()*40|0},${46+Math.random()*32|0},${36+Math.random()*26|0},${0.06+Math.random()*0.12})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*1.8,1+Math.random()*1.8);
+  }
+});
+texCloth.wrapS=texCloth.wrapT=THREE.RepeatWrapping;
+/* dry bone: porous, blotched with the cave's minerals, hairline cracks */
+export const texBone = makeCanvas(128,128,(g,w,h)=>{
+  g.fillStyle="#b3ab99";g.fillRect(0,0,w,h);
+  for(let i=0;i<16;i++){          // mineral staining picked up off the rock
+    const x=Math.random()*w,y=Math.random()*h,r=8+Math.random()*30;
+    const gr=g.createRadialGradient(x,y,1,x,y,r);
+    gr.addColorStop(0,Math.random()<0.6?`rgba(96,86,62,${0.12+Math.random()*0.18})`
+                                       :`rgba(214,208,192,${0.12+Math.random()*0.14})`);
+    gr.addColorStop(1,"rgba(0,0,0,0)");
+    g.fillStyle=gr;g.beginPath();g.arc(x,y,r,0,7);g.fill();
+  }
+  for(let i=0;i<18;i++){          // hairline cracks along the grain
+    const x=Math.random()*w, y=Math.random()*h, a=(Math.random()-0.5)*0.9+Math.PI/2;
+    g.strokeStyle=`rgba(72,64,48,${0.14+Math.random()*0.2})`;g.lineWidth=0.5+Math.random()*0.7;
+    g.beginPath();g.moveTo(x,y);
+    let cx=x,cy=y,aa=a;
+    for(let k=0;k<4;k++){ aa+=(Math.random()-0.5)*0.5; cx+=Math.cos(aa)*9; cy+=Math.sin(aa)*9; g.lineTo(cx,cy); }
+    g.stroke();
+  }
+  for(let i=0;i<500;i++){         // the porosity
+    g.fillStyle=`rgba(${86+Math.random()*30|0},${80+Math.random()*26|0},${62+Math.random()*22|0},${0.10+Math.random()*0.16})`;
+    g.beginPath();g.arc(Math.random()*w,Math.random()*h,0.5+Math.random()*1.2,0,7);g.fill();
+  }
+});
+texBone.wrapS=texBone.wrapT=THREE.RepeatWrapping;
+/* a swollen page block: damp-rippled edges and the ghost of handwriting */
+export const texJournalPages = makeCanvas(128,128,(g,w,h)=>{
+  g.fillStyle="#c2b79a";g.fillRect(0,0,w,h);
+  for(let y=0;y<h;y+=2+Math.random()*2){       // the leaves, seen edge-on
+    g.fillStyle=`rgba(${132+Math.random()*46|0},${124+Math.random()*40|0},${100+Math.random()*34|0},${0.18+Math.random()*0.22})`;
+    g.fillRect(0,y,w,0.9);
+    g.fillStyle=`rgba(84,76,58,${0.10+Math.random()*0.14})`;
+    g.fillRect(0,y+1,w,0.6);
+  }
+  for(let i=0;i<9;i++){                        // water damage creeping in
+    const x=Math.random()*w,y=Math.random()*h,r=10+Math.random()*30;
+    const gr=g.createRadialGradient(x,y,1,x,y,r);
+    gr.addColorStop(0,`rgba(96,78,48,${0.14+Math.random()*0.16})`);
+    gr.addColorStop(0.75,`rgba(120,100,64,${0.08})`);
+    gr.addColorStop(1,"rgba(0,0,0,0)");
+    g.fillStyle=gr;g.beginPath();g.arc(x,y,r,0,7);g.fill();
+  }
+  for(let i=0;i<40;i++){                       // the ghost of writing
+    const y=Math.random()*h, x0=Math.random()*w*0.5, len=w*(0.2+Math.random()*0.4);
+    g.strokeStyle=`rgba(48,40,30,${0.06+Math.random()*0.10})`;g.lineWidth=0.7;
+    g.beginPath();g.moveTo(x0,y);
+    for(let x=x0;x<x0+len;x+=4) g.lineTo(x,y+Math.sin(x*0.8)*0.9);
+    g.stroke();
+  }
+});
