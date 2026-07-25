@@ -20,7 +20,7 @@ import { scene, camera, renderer, lights, makeLightRecord, markShared,
          mergeStatic, freezeStaticScene } from "./scene.js";
 import { makeCanvas, texCaveRock, texCaveFloor, texDripstone,
          makeWebSheetTexture, makeCobwebTexture, makeStrandTexture, makeFunnelTexture,
-         makeFungusSkin, scaleBoxUV } from "./textures.js";
+         makeFungusSkin, scaleBoxUV, texEggSac, makeFlameTexture, texCocoon } from "./textures.js";
 import { addInteractable } from "./props.js";
 import { die } from "./lifecycle.js";
 import { renderObjectives, toast } from "./ui.js";
@@ -602,14 +602,19 @@ texWater.wrapS=texWater.wrapT=THREE.RepeatWrapping;
 markShared(HALO_TEX,texWater,wetMat,curtainMat,texDripstone);
 const silkFloorMat=new THREE.MeshPhongMaterial({color:0xb8bcc0, specular:0x222222, shininess:8,
   transparent:true, opacity:0.34, depthWrite:false});
-const cocoonMat=new THREE.MeshPhongMaterial({color:0x7e8486, specular:0x2a2c2c, shininess:12});
-const eggMat=()=>new THREE.MeshPhongMaterial({color:0x93aeb9, specular:0x2c3c44, shininess:30,
-  emissive:0x123540});
+const cocoonMat=new THREE.MeshPhongMaterial({map:texCocoon, bumpMap:texCocoon, bumpScale:0.02,
+  color:0x909698, specular:0x2a2c2c, shininess:12});
+const TEX_MOUND=texCocoon.clone(); TEX_MOUND.center.set(0.5,0.5);
+TEX_MOUND.rotation=Math.PI/2; TEX_MOUND.repeat.set(2,2); TEX_MOUND.needsUpdate=true;
+const moundMat=new THREE.MeshPhongMaterial({map:TEX_MOUND, bumpMap:TEX_MOUND, bumpScale:0.02,
+  color:0x8a9092, specular:0x242626, shininess:10});
+const eggMat=()=>new THREE.MeshPhongMaterial({map:texEggSac, color:0x8fa8b2,
+  specular:0x40565f, shininess:44, emissive:0x123540});
 const boneMat=new THREE.MeshPhongMaterial({color:0xb8b0a0, specular:0x2c2a24, shininess:16});
 const clothMat=new THREE.MeshPhongMaterial({color:0x2c2a26, specular:0x0c0b0a, shininess:4});
 const brassMat=new THREE.MeshPhongMaterial({color:0x6e5a2e, specular:0x8a7340, shininess:55});
 markShared(rockMat,floorMat,pitMat,silkFloorMat,cocoonMat,boneMat,clothMat,brassMat,
-           texCaveRock,texCaveFloor);
+           texCaveRock,texCaveFloor,texCocoon,TEX_MOUND,moundMat);
 /* silk is LIT (Phong, not Basic): it glistens where the lantern rakes it
    and takes the fungus tint near the broods, instead of glowing flat white
    in the dark. A faint emissive keeps it readable at the threshold.
@@ -644,7 +649,10 @@ function latheFungus(P,B,segs){
   for(let i=0;i<uv.count;i++) uv.setY(i, B[Math.round(uv.getY(i)*(N-1))]);
   return g;
 }
-/* a classic toadstool: flared stem, radiating gill underside, domed cap */
+/* a classic toadstool: flared stem, radiating gill underside, domed cap.
+   The cap is now a real DOME — a cosine shoulder instead of the old
+   straight taper — and its margin curls under with actual thickness, so
+   the silhouette is a mushroom rather than a disc balanced on a pin. */
 function toadstoolGeo(rc,rs,hs,ch){
   const P=[],B=[];
   P.push([rs*1.4,0]);            B.push(fv(F_STEM,0.02));
@@ -652,37 +660,43 @@ function toadstoolGeo(rc,rs,hs,ch){
   P.push([rs*0.92,hs*0.8]);      B.push(fv(F_STEM,0.75));
   P.push([rs,hs]);               B.push(fv(F_STEM,0.98));
   P.push([rs*1.15,hs+0.004]);    B.push(fv(F_GILL,0.03));
-  P.push([rc*0.6,hs+0.012]);     B.push(fv(F_GILL,0.5));
-  P.push([rc*0.98,hs+0.03]);     B.push(fv(F_GILL,0.97));
-  P.push([rc,hs+0.05]);          B.push(fv(F_CAP,0.02));
-  P.push([rc*0.88,hs+ch*0.5]);   B.push(fv(F_CAP,0.38));
-  P.push([rc*0.55,hs+ch*0.85]);  B.push(fv(F_CAP,0.7));
-  P.push([rc*0.2,hs+ch]);        B.push(fv(F_CAP,0.9));
-  P.push([0.001,hs+ch*1.02]);    B.push(fv(F_CAP,1));
-  return latheFungus(P,B,9);
+  P.push([rc*0.55,hs+0.010]);    B.push(fv(F_GILL,0.42));
+  P.push([rc*0.90,hs+0.030]);    B.push(fv(F_GILL,0.86));
+  P.push([rc*0.99,hs+0.058]);    B.push(fv(F_GILL,0.99));   // up into the curled margin
+  P.push([rc,hs+0.088]);         B.push(fv(F_CAP,0.02));    // the rim's outer edge
+  for(let i=1;i<=5;i++){                                    // the dome itself
+    const t=i/5;
+    P.push([rc*Math.cos(t*Math.PI/2)*(1-0.04*t), hs+0.088+ch*Math.sin(t*Math.PI/2)]);
+    B.push(fv(F_CAP,0.08+t*0.9));
+  }
+  P.push([0.001,hs+0.088+ch*1.01]); B.push(fv(F_CAP,1));
+  return latheFungus(P,B,11);
 }
 /* a shelf conk: stemless cap, half of it buried in the rock face */
 function conkGeo(rc){
   const P=[],B=[];
   P.push([0.02,0.0]);            B.push(fv(F_GILL,0.02));
-  P.push([rc*0.55,0.008]);       B.push(fv(F_GILL,0.5));
-  P.push([rc*0.97,0.03]);        B.push(fv(F_GILL,0.96));
-  P.push([rc,0.06]);             B.push(fv(F_CAP,0.02));
-  P.push([rc*0.9,rc*0.24]);      B.push(fv(F_CAP,0.35));
-  P.push([rc*0.55,rc*0.38]);     B.push(fv(F_CAP,0.7));
-  P.push([rc*0.2,rc*0.44]);      B.push(fv(F_CAP,0.9));
-  P.push([0.001,rc*0.46]);       B.push(fv(F_CAP,1));
-  return latheFungus(P,B,10);
+  P.push([rc*0.50,0.010]);       B.push(fv(F_GILL,0.44));
+  P.push([rc*0.88,0.034]);       B.push(fv(F_GILL,0.84));
+  P.push([rc*0.98,0.070]);       B.push(fv(F_GILL,0.99));   // the margin has a lip
+  P.push([rc,0.105]);            B.push(fv(F_CAP,0.02));
+  for(let i=1;i<=5;i++){                                    // a swollen shelf, not a wedge
+    const t=i/5;
+    P.push([rc*Math.cos(t*Math.PI/2)*(1-0.05*t), 0.105+rc*0.40*Math.sin(t*Math.PI/2)]);
+    B.push(fv(F_CAP,0.08+t*0.9));
+  }
+  P.push([0.001,0.105+rc*0.405]); B.push(fv(F_CAP,1));
+  return latheFungus(P,B,12);
 }
 /* one coral finger: a tapered spindle, tip mapped to the bright bulb crown */
 function fingerGeo(r,hgt){
   const P=[[r,0],[r*0.9,hgt*0.35],[r*0.68,hgt*0.65],[r*0.38,hgt*0.86],[0.001,hgt]];
   const B=[fv(F_BULB,0.03),fv(F_BULB,0.3),fv(F_BULB,0.6),fv(F_BULB,0.85),fv(F_BULB,1)];
-  return latheFungus(P,B,7);
+  return latheFungus(P,B,10);
 }
 /* a puffball: squashed sphere remapped into the pore-speckled bulb strip */
 function puffGeo(r){
-  const g=new THREE.SphereGeometry(r,8,7);
+  const g=new THREE.SphereGeometry(r,16,12);
   const uv=g.attributes.uv;
   for(let i=0;i<uv.count;i++) uv.setY(i, fv(F_BULB, uv.getY(i)*0.85+0.05));
   return g;
@@ -851,6 +865,26 @@ function webWrapGeo(r,hgt){
   }
   return dripNoise(new THREE.LatheGeometry(pts,14),seed,0.05);
 }
+/* a veil hanging free from the vault: pinned ONLY along its top edge, so
+   it tapers, sags and frays as it falls. webSheetGeo is pinned on all four
+   sides — correct for a sheet strung across a corner, but hung loose from
+   a ceiling it reads as a flat billboard floating in mid-air, which is
+   exactly what it looked like. A hanging web has to narrow. */
+function webVeilGeo(wdt,hgt){
+  const g=new THREE.PlaneGeometry(wdt,hgt,5,5);
+  const pos=g.attributes.position, seed=Math.random()*9;
+  for(let i=0;i<pos.count;i++){
+    const x=pos.getX(i), y=pos.getY(i);
+    const v=0.5-y/hgt;                            // 0 at the pinned top, 1 at the hem
+    const taper=1-0.60*v*v;                       // it narrows as it falls
+    pos.setX(i, x*taper+Math.sin(v*3.1+seed)*0.16*v*wdt);
+    pos.setY(i, y-v*v*hgt*0.12);                  // the hem sags under its own weight
+    pos.setZ(i, Math.sin(x/Math.max(wdt,0.01)*2.4+seed)*0.10*v*wdt
+               +Math.sin(v*4.3+seed)*0.06);
+  }
+  g.computeVertexNormals();
+  return g;
+}
 /* a hanging streamer: tall narrow strip, rooted at the top, tapering and
    twisting as it falls — the thing that brushes your face in a tunnel */
 function webStreamerGeo(wdt,len){
@@ -973,28 +1007,65 @@ function makeCorpse(){
   return g;
 }
 /* an egg clutch: a silk mound crowned with blue-glowing eggs */
+/* the flame material family — built ONCE at module scope and reused by
+   every clutch, so igniting one never compiles a shader mid-frame */
+const FLAME_TEX=makeFlameTexture();
+const flameMat=new THREE.MeshBasicMaterial({map:FLAME_TEX, transparent:true,
+  blending:THREE.AdditiveBlending, depthWrite:false, side:THREE.DoubleSide, opacity:0});
+markShared(FLAME_TEX,flameMat,texEggSac);
+
 function makeClutch(){
   const g=new THREE.Group();
-  const mound=new THREE.Mesh(new THREE.SphereGeometry(1.3,10,8),cocoonMat);
+  /* the mass the eggs are bedded in: a lumpy silk-bound mound, not the
+     smooth grey dome it used to be. Radial noise on a squashed sphere is
+     enough — this thing is meant to look secreted, not moulded. */
+  const moundGeo=new THREE.SphereGeometry(1.3,24,16);
+  {
+    const pos=moundGeo.attributes.position, sd=Math.random()*9;
+    for(let i=0;i<pos.count;i++){
+      const x=pos.getX(i), y=pos.getY(i), z=pos.getZ(i);
+      const k=1+0.09*Math.sin(x*2.7+sd)+0.07*Math.sin(z*3.1-sd)+0.05*Math.sin(y*4.3+sd*2);
+      pos.setXYZ(i,x*k,y*k,z*k);
+    }
+    moundGeo.computeVertexNormals();
+  }
+  /* the mound needs the wrap running the OTHER way. texCocoon's bands are
+     horizontal so that they ring a bundle — correct on a cocoon, but on a
+     dome squashed to 0.42 they stack into contour terraces and the nest
+     looks like a stepped clay model. Rotated a quarter turn they run over
+     the mound instead, which is how silk would actually be laid on it. */
+  const mound=new THREE.Mesh(moundGeo,moundMat);
   mound.scale.set(1.15,0.42,1.15); mound.position.y=0.1; g.add(mound);
+
+  /* the eggs: piled toward the middle rather than scattered flat, sizes
+     graded so the pile has a crown, and each one now carries the sac map */
   const mats=[];
-  const n=11+Math.floor(Math.random()*5);
+  const n=15+Math.floor(Math.random()*7);
   for(let i=0;i<n;i++){
-    const a=Math.random()*Math.PI*2, rr=Math.random()*0.95;
-    const r=rand(0.17,0.33);
+    const a=Math.random()*Math.PI*2;
+    const rr=Math.pow(Math.random(),0.65)*0.95;      // denser at the centre
+    const r=rand(0.15,0.30)*(1-rr*0.25);             // and bigger there too
     const m=eggMat(); mats.push(m);
-    const egg=new THREE.Mesh(new THREE.SphereGeometry(r,9,8),m);
-    egg.scale.y=1.25;
-    egg.position.set(Math.cos(a)*rr, 0.42+r*0.9-rr*0.22, Math.sin(a)*rr);
+    const egg=new THREE.Mesh(new THREE.SphereGeometry(r,10,8),m);
+    egg.scale.set(1,1.28,1);
+    egg.rotation.set(rand(-0.5,0.5),Math.random()*6,rand(-0.5,0.5));
+    egg.position.set(Math.cos(a)*rr, 0.40+r*0.9+(1-rr)*0.20, Math.sin(a)*rr);
     g.add(egg);
   }
-  /* silk guys staking it down */
+  /* silk: guys staking it down, plus strands lashed OVER the pile */
   for(let i=0;i<5;i++){
     const a=i/5*Math.PI*2+rand(-0.2,0.2);
-    const guy=new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.012,1.5,4),cocoonMat);
+    const guy=new THREE.Mesh(new THREE.CylinderGeometry(0.005,0.005,1.5,4),cocoonMat);
     guy.position.set(Math.cos(a)*1.35,0.5,Math.sin(a)*1.35);
     guy.rotation.z=Math.cos(a)*0.85; guy.rotation.x=-Math.sin(a)*0.85;
     g.add(guy);
+  }
+  for(let i=0;i<7;i++){
+    const a=Math.random()*Math.PI*2, L=rand(1.6,2.4);
+    const lash=new THREE.Mesh(new THREE.CylinderGeometry(0.004,0.004,L,4),cocoonMat);
+    lash.position.set(0,rand(0.55,0.85),0);
+    lash.rotation.z=Math.PI/2; lash.rotation.y=a;
+    g.add(lash);
   }
   /* nest-glow: an additive pool of egg-light on the ground under it */
   const haloMat=new THREE.MeshBasicMaterial({map:HALO_TEX, color:0x3f93ac,
@@ -1002,8 +1073,31 @@ function makeClutch(){
   const halo=new THREE.Mesh(new THREE.PlaneGeometry(4.8,4.8),haloMat);
   halo.rotation.x=-Math.PI/2; halo.position.y=0.07;
   g.add(halo);
+
+  /* ---- the fire, built now and hidden ----
+     Burning used to be a recolour of the eggs and an orange smear on the
+     ground: there were no flames in the scene. These are crossed quads
+     (three planes per tongue, so no per-frame billboarding is needed),
+     created at build time on a shared material and revealed on ignite —
+     making them at ignite time would compile a shader mid-frame. */
+  const flames=[];
+  for(let i=0;i<7;i++){
+    const a=Math.random()*Math.PI*2, rr=Math.random()*1.05;
+    const hgt=rand(0.7,1.35), wdt=hgt*rand(0.46,0.66);
+    const tongue=new THREE.Group();
+    for(let k=0;k<3;k++){
+      const q=new THREE.Mesh(new THREE.PlaneGeometry(wdt,hgt),flameMat);
+      q.position.y=hgt/2; q.rotation.y=k*Math.PI/3;
+      tongue.add(q);
+    }
+    tongue.position.set(Math.cos(a)*rr,0.25,Math.sin(a)*rr);
+    tongue.userData={h0:hgt, ph:Math.random()*9, sp:rand(0.8,1.5)};
+    tongue.visible=false;
+    g.add(tongue); flames.push(tongue);
+  }
   g.userData.haloMat=haloMat;
   g.userData.eggMats=mats;
+  g.userData.flames=flames;
   return g;
 }
 
@@ -1462,7 +1556,9 @@ export function buildCave(){
         if(codeAt(x+dx,y+dy)!==2||Math.random()>0.55) continue;
         const vx=p.x+dx*(E-0.10), vz=p.z+dy*(E-0.10);
         const eV=ceilYAt(vx-dx*0.25,vz-dy*0.25);
-        const hgt=rand(1.2,Math.max(1.3,eV*0.62)), wdt=rand(2.0,3.1);
+        const room=Math.max(1.3, eV-floorYAt(vx,vz));
+        const hgt=Math.min(rand(1.2,Math.max(1.3,room*0.62)), room-0.30);
+        const wdt=rand(2.0,3.1);
         const w=new THREE.Mesh(webSheetGeo(wdt,hgt,rand(0.15,0.3)));
         w.position.set(vx, eV-0.02-hgt/2, vz);
         w.rotation.y=faceYaw(dx,dy);
@@ -1557,7 +1653,7 @@ export function buildCave(){
         const c=worldToCell3(hx,hz), cc=codeAt(c.cx,c.cy);
         if(cc===1||cc===5||cc===7) continue;
         const lv=ceilYAt(hx,hz);
-        const len=rand(1.2,Math.min(5.5,lv*0.55));
+        const len=rand(1.2,Math.max(1.3,Math.min(5.5,(lv-floorYAt(hx,hz))*0.5)));
         const w=new THREE.Mesh(webStreamerGeo(rand(0.15,0.4),len));
         w.position.set(hx, lv+0.1-len/2, hz);
         w.rotation.y=Math.random()*Math.PI;
@@ -1592,13 +1688,17 @@ export function buildCave(){
           w.position.set(hx,cv-rand(0.25,0.9),hz);
           pickSheet(w);
         } else if(roll<0.55){              // a veil hanging off the stalactite line
-          const wdt=rand(0.8,1.9), hgt=rand(0.8,2.0);
-          const w=new THREE.Mesh(webSheetGeo(wdt,hgt,rand(0.1,0.25)));
+          /* sized against the LOCAL floor-to-vault room, never an absolute
+             height: a veil that reaches the ground stops reading as silk
+             and starts reading as a wall */
+          const room=Math.max(1.2, cv-floorYAt(hx,hz));
+          const wdt=rand(0.8,1.9), hgt=Math.min(rand(0.8,2.0), room*0.42);
+          const w=new THREE.Mesh(webVeilGeo(wdt,hgt));
           w.rotation.y=Math.random()*Math.PI;
           w.position.set(hx,cv-0.15-hgt/2,hz);
           pickFan(w);
         } else if(roll<0.80){              // long streamers
-          const len=rand(1.2,Math.min(4.5,cv*0.45));
+          const len=rand(1.2,Math.max(1.3,Math.min(4.5,(cv-floorYAt(hx,hz))*0.45)));
           const w=new THREE.Mesh(webStreamerGeo(rand(0.15,0.4),len));
           w.position.set(hx,cv+0.05-len/2,hz);
           w.rotation.y=Math.random()*Math.PI;
@@ -2296,6 +2396,26 @@ export function updateCave(dt){
     if(!b.clutch) return;
     const mats=b.clutch.userData.eggMats;
     const hm=b.clutch.userData.haloMat;
+    const fl=b.clutch.userData.flames;
+    /* the flames: alive only while the fire has fuel. Each tongue breathes
+       on its own incommensurate sine so the group never pulses in unison,
+       and the whole set sinks and dims as the burn runs out. */
+    if(fl){
+      const burning=b.burned? clamp(1-(b.burnT||0)/26,0,1) : 0;
+      if(burning<=0){ if(fl[0].visible) for(const t of fl) t.visible=false; }
+      else{
+        for(const t of fl){
+          const u=t.userData;
+          const f=0.62+0.38*Math.sin(tN*(5.1*u.sp)+u.ph)
+                      *0.5+0.5*hash(Math.floor(tN*19)+u.ph);
+          t.visible=true;
+          const s=burning*(0.55+0.65*f);
+          t.scale.set(0.8+0.35*f, s, 0.8+0.35*f);
+          t.rotation.y=u.ph+Math.sin(tN*1.7+u.ph)*0.35;
+        }
+        flameMat.opacity=clamp(0.30+0.09*Math.sin(tN*7.3)+0.14*burning,0,0.58);
+      }
+    }
     if(!b.burned){
       const k=0.7+0.3*Math.sin(tN*0.9+i*1.7);
       for(const m of mats) m.emissive.setRGB(0.07*k,0.21*k,0.25*k);

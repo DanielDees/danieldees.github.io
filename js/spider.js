@@ -73,12 +73,16 @@ const _SPIDER_MATS=()=>({
      it is a big smooth surface, and a tight bright highlight on one turns
      the animal into a balloon under any light that gets near it. The
      carapace is the one hard glossy plate, so it keeps a tighter lobe. */
-  body:new THREE.MeshPhongMaterial({map:texSpiderAbd, color:0x56524a,
-    specular:0x0e0a06, shininess:6}),
-  car:new THREE.MeshPhongMaterial({map:texSpiderCarapace, color:0x6a655c,
-    specular:0x2a2216, shininess:26}),
-  limb:new THREE.MeshPhongMaterial({map:texSpiderLimb, color:0x5a5650,
-    specular:0x150f08, shininess:9}),
+  /* Near-neutral, near-black. Warm browns here plus the lantern's orange
+     multiplied out to BRONZE — the thing looked cast, not grown. A real
+     spider under a warm light stays black with the barest brown lift, so
+     the maps and these tints are both pulled toward neutral. */
+  body:new THREE.MeshPhongMaterial({map:texSpiderAbd, color:0x413f3b,
+    specular:0x0a0806, shininess:6}),
+  car:new THREE.MeshPhongMaterial({map:texSpiderCarapace, color:0x4a4844,
+    specular:0x1a1712, shininess:22}),
+  limb:new THREE.MeshPhongMaterial({map:texSpiderLimb, color:0x35332f,
+    specular:0x0c0a08, shininess:8}),
   eye:new THREE.MeshPhongMaterial({color:0x050202, emissive:0x3a0805,
     specular:0x181818, shininess:60}),
 });
@@ -94,15 +98,40 @@ function bodyLathe(prof,len,rad,seg){
 }
 /* one bristle: a hair-fine spike from p along dir. They cost almost nothing
    merged, and they are the whole difference between chitin and plastic. */
+/* Everything on the head is placed by a POINT and a DIRECTION, never by
+   Euler angles. Hand-written rotations are how the first pass ended up
+   with the chelicerae inverted — tip welded to the face and the fat base
+   swinging free — and with the pedipalps buried in the carapace. With
+   these two helpers a part cannot be inside-out: the geometry is built
+   from its attachment at the origin outward along +Y, and then +Y is
+   simply aimed where the part should go. `end()` returns the far end so
+   the next segment starts exactly where the last one stopped. */
 const _bA=new THREE.Vector3(), _bB=new THREE.Vector3(0,1,0);
-function bristle(px,py,pz,dx,dy,dz,len,thick,mat){
-  const geo=new THREE.ConeGeometry(thick,len,4);
-  geo.translate(0,len/2,0);
-  const m=new THREE.Mesh(geo,mat);
-  m.position.set(px,py,pz);
+function aim(m,dx,dy,dz){
   _bA.set(dx,dy,dz).normalize();
   m.quaternion.setFromUnitVectors(_bB,_bA);
   return m;
+}
+function end(px,py,pz,dx,dy,dz,len){
+  const l=Math.hypot(dx,dy,dz)||1;
+  return [px+dx/l*len, py+dy/l*len, pz+dz/l*len];
+}
+/* a cone whose BASE sits at the attachment and whose TIP points along dir */
+function spike(px,py,pz,dx,dy,dz,len,thick,mat,seg){
+  const geo=new THREE.ConeGeometry(thick,len,seg||5);
+  geo.translate(0,len/2,0);
+  const m=new THREE.Mesh(geo,mat); m.position.set(px,py,pz);
+  return aim(m,dx,dy,dz);
+}
+/* a tapered limb segment: r0 at the attachment, r1 at the far end */
+function seg(px,py,pz,dx,dy,dz,len,r0,r1,mat){
+  const geo=new THREE.CylinderGeometry(r1,r0,len,8);
+  geo.translate(0,len/2,0);
+  const m=new THREE.Mesh(geo,mat); m.position.set(px,py,pz);
+  return aim(m,dx,dy,dz);
+}
+function bristle(px,py,pz,dx,dy,dz,len,thick,mat){
+  return spike(px,py,pz,dx,dy,dz,len,thick,mat,4);
 }
 export function makeSpider(){
   const M=_SPIDER_MATS();
@@ -170,30 +199,31 @@ export function makeSpider(){
   for(const p of eyeParts) p.geometry.dispose();
   head.add(eyes);
 
-  /* chelicerae: a heavy basal segment hanging off the clypeus with the
-     fang folded back along it, and the pedipalps flanking them */
+  /* chelicerae: a stout basal segment hanging under the clypeus, the fang
+     folded down and BACK off its end (a resting spider's fangs tuck under,
+     they do not stick out forward). Pedipalps sit OUTSIDE the jaws and
+     stop short of them, so nothing intersects the carapace. Everything
+     here is deliberately smaller than the first pass — at that size the
+     mouthparts were the only thing you could see of the face. */
   const jaw=[];
   for(const sx of[-1,1]){
-    const base=new THREE.Mesh(new THREE.CylinderGeometry(0.105,0.085,0.36,8),M.limb);
-    base.position.set(sx*0.125,BODY_Y-0.20,0.80); base.rotation.x=0.30;
-    jaw.push(base);
-    const fang=new THREE.Mesh(new THREE.ConeGeometry(0.062,0.34,7),M.limb);
-    fang.geometry.translate(0,-0.17,0);
-    fang.position.set(sx*0.125,BODY_Y-0.36,0.83); fang.rotation.set(-0.55,0,sx*0.18);
-    jaw.push(fang);
-    /* pedipalp: three short segments angled down and forward */
-    const p1=new THREE.Mesh(new THREE.CylinderGeometry(0.062,0.05,0.42,7),M.limb);
-    p1.geometry.translate(0,0.21,0);
-    p1.position.set(sx*0.27,BODY_Y-0.10,0.66); p1.rotation.set(1.15,0,sx*0.55);
-    jaw.push(p1);
-    const p2=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.032,0.38,7),M.limb);
-    p2.geometry.translate(0,0.19,0);
-    p2.position.set(sx*0.44,BODY_Y-0.30,0.88); p2.rotation.set(2.25,0,sx*0.42);
-    jaw.push(p2);
-    for(let i=0;i<5;i++)
-      jaw.push(bristle(sx*(0.30+Math.random()*0.16), BODY_Y-0.12-Math.random()*0.24,
-                       0.70+Math.random()*0.20, sx*0.7, -0.5, 0.5,
-                       0.09+Math.random()*0.08, 0.010, M.limb));
+    /* --- chelicera --- */
+    const bx=sx*0.115, by=BODY_Y-0.20, bz=0.78;
+    const bd=[sx*0.10,-1,0.16], bl=0.26;
+    jaw.push(seg(bx,by,bz, bd[0],bd[1],bd[2], bl, 0.095,0.072, M.limb));
+    const [fx,fy,fz]=end(bx,by,bz, bd[0],bd[1],bd[2], bl);
+    jaw.push(spike(fx,fy,fz, sx*0.04,-1,-0.42, 0.22, 0.048, M.limb, 7));
+    /* --- pedipalp: two short segments, elbowed, clear of the jaws --- */
+    const px=sx*0.31, py=BODY_Y-0.14, pz=0.60;
+    const pd=[sx*0.62,-0.74,0.36], pl=0.26;
+    jaw.push(seg(px,py,pz, pd[0],pd[1],pd[2], pl, 0.052,0.042, M.limb));
+    const [qx,qy,qz]=end(px,py,pz, pd[0],pd[1],pd[2], pl);
+    jaw.push(seg(qx,qy,qz, sx*0.12,-0.96,0.24, 0.22, 0.042,0.024, M.limb));
+    /* a few bristles on the palps, pointing away from the body */
+    for(let i=0;i<4;i++)
+      jaw.push(bristle(sx*(0.34+Math.random()*0.10), BODY_Y-0.20-Math.random()*0.18,
+                       0.58+Math.random()*0.14, sx*0.8, -0.35, 0.4,
+                       0.07+Math.random()*0.05, 0.009, M.limb));
   }
   const jawM=mergeStatic(jaw,M.limb);
   for(const p of jaw) p.geometry.dispose();
@@ -1425,7 +1455,7 @@ export function updateSpiderCave(dt){
       if(dLK<2.0||(s.path.length===0&&dLK<CELL*1.5)){
         if(s.lastKnown) s.faceAng=Math.atan2(s.lastKnown.x-s.pos.x,s.lastKnown.z-s.pos.z);
         s.state="investigate"; s.searchT=rand(1.8,3.2); s.path=[];
-        startSniffFit(s,2+Math.floor(Math.random()*3),rand(0.4,0.9));
+        startSniffFit(s,1+Math.floor(Math.random()*2),rand(0.4,0.9));  // half the library's fit: down here it huffs less
       }
       break;
     }
@@ -1457,7 +1487,7 @@ export function updateSpiderCave(dt){
       if(dB<3.4||(s.path.length===0&&dB<CELL*1.6)){
         s.state="rampage"; s.path=[]; s.repath=0;
         s.rageC=s.lastKnown? s.lastKnown.clone() : s.pos.clone();
-        startSniffFit(s,3,0.3);
+        startSniffFit(s,2,0.3);
       }
       break;
     }

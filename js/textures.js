@@ -1117,22 +1117,71 @@ export const texCaveRock = makeCanvas(512,512,(g,w,h)=>{
 });
 /* the cave floor: packed sediment, bone-dry dust, scattered grit */
 export const texCaveFloor = makeCanvas(512,512,(g,w,h)=>{
+  /* The old floor was 9000 1.5px dots plus a few soft blotches — all of it
+     below the size the eye resolves at walking distance, so it averaged
+     out to flat brown and gave the bump map nothing to bite on. A cave
+     floor is deposited: sheets of sediment laid over each other, drying
+     cracks, channels where water ran, and stones sitting proud of it.
+     Those are all MID-scale features, and that is the scale that was
+     missing. Everything is drawn wrapped so the 4m tile never seams. */
+  const wrap=(fn)=>{ for(const ox of[0,-w,w]) for(const oy of[0,-h,h]) fn(ox,oy); };
   g.fillStyle="#2b2723";g.fillRect(0,0,w,h);
-  for(let i=0;i<9000;i++){const v=Math.random();
-    g.fillStyle=`rgba(${v<.5?22:62},${v<.5?20:56},${v<.5?17:46},0.30)`;
-    g.fillRect(Math.random()*w,Math.random()*h,1.5,1.5);}
-  for(let i=0;i<30;i++){                // sediment fans & damp patches
-    const x=Math.random()*w,y=Math.random()*h,r=16+Math.random()*60;
-    const gr=g.createRadialGradient(x,y,2,x,y,r);
-    const dark=Math.random()<0.5;
-    gr.addColorStop(0,dark?`rgba(12,11,9,${0.12+Math.random()*0.14})`
-                         :`rgba(64,58,46,${0.08+Math.random()*0.10})`);
-    gr.addColorStop(1,"rgba(0,0,0,0)");
-    g.fillStyle=gr;g.fillRect(x-r,y-r,r*2,r*2);
+  /* 1. sediment sheets: broad overlapping lobes of slightly different silt */
+  for(let i=0;i<34;i++){
+    const x=Math.random()*w, y=Math.random()*h, r=45+Math.random()*120;
+    const warm=Math.random()<0.5;
+    const col=warm? [72,64,50] : [38,36,31];
+    g.fillStyle=`rgba(${col[0]},${col[1]},${col[2]},${0.05+Math.random()*0.07})`;
+    wrap((ox,oy)=>{
+      g.beginPath();
+      for(let k=0;k<=11;k++){ const a=k/11*Math.PI*2, rr=r*(0.62+Math.random()*0.62);
+        const px=x+ox+Math.cos(a)*rr, py=y+oy+Math.sin(a)*rr;
+        k?g.lineTo(px,py):g.moveTo(px,py); }
+      g.closePath();g.fill();
+    });
   }
-  for(let i=0;i<160;i++){               // grit and small stones
-    g.fillStyle=`rgba(${50+Math.random()*40|0},${46+Math.random()*34|0},${38+Math.random()*26|0},${0.3+Math.random()*0.4})`;
-    g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*3,1+Math.random()*2.5);
+  /* 2. runoff channels: shallow darker lines where water last moved */
+  for(let i=0;i<12;i++){
+    let x=Math.random()*w, y=Math.random()*h, a=Math.random()*Math.PI*2;
+    const pts=[[x,y]];
+    for(let k=0;k<14;k++){ a+=(Math.random()-0.5)*0.7; x+=Math.cos(a)*22; y+=Math.sin(a)*22; pts.push([x,y]); }
+    wrap((ox,oy)=>{
+      g.strokeStyle=`rgba(16,15,12,${0.07+Math.random()*0.08})`;
+      g.lineWidth=5+Math.random()*11; g.lineJoin="round"; g.lineCap="round";
+      g.beginPath(); pts.forEach(([px,py],k)=>k?g.lineTo(px+ox,py+oy):g.moveTo(px+ox,py+oy)); g.stroke();
+      g.strokeStyle=`rgba(96,88,70,${0.05+Math.random()*0.05})`;   // the dry lip alongside
+      g.lineWidth=1.6; g.stroke();
+    });
+  }
+  /* 3. drying cracks: polygonal, the signature of silt that dried out */
+  for(let i=0;i<26;i++){
+    const cx=Math.random()*w, cy=Math.random()*h, n=3+Math.floor(Math.random()*3);
+    const R=12+Math.random()*30;
+    wrap((ox,oy)=>{
+      g.strokeStyle=`rgba(12,11,9,${0.14+Math.random()*0.16})`;
+      g.lineWidth=0.7+Math.random()*0.9;
+      for(let k=0;k<n;k++){
+        const a=Math.random()*Math.PI*2;
+        g.beginPath(); g.moveTo(cx+ox,cy+oy);
+        let px=cx+ox, py=cy+oy, aa=a;
+        for(let s=0;s<3;s++){ aa+=(Math.random()-0.5)*0.9;
+          px+=Math.cos(aa)*R/3; py+=Math.sin(aa)*R/3; g.lineTo(px,py); }
+        g.stroke();
+      }
+    });
+  }
+  /* 4. the grain, and stones sitting proud with a lit top and a cast shade */
+  for(let i=0;i<11000;i++){const v=Math.random();
+    g.fillStyle=`rgba(${v<.5?22:62},${v<.5?20:56},${v<.5?17:46},0.28)`;
+    g.fillRect(Math.random()*w,Math.random()*h,1.5,1.5);}
+  for(let i=0;i<420;i++){
+    const x=Math.random()*w, y=Math.random()*h, r=1.2+Math.random()*4.2;
+    g.fillStyle=`rgba(10,9,7,${0.16+Math.random()*0.2})`;          // the shade it casts
+    g.beginPath();g.ellipse(x+r*0.4,y+r*0.45,r,r*0.8,0,0,7);g.fill();
+    g.fillStyle=`rgba(${74+Math.random()*44|0},${68+Math.random()*36|0},${56+Math.random()*28|0},${0.30+Math.random()*0.35})`;
+    g.beginPath();g.ellipse(x,y,r*0.92,r*0.72,Math.random()*3,0,7);g.fill();
+    g.fillStyle=`rgba(${118+Math.random()*40|0},${110+Math.random()*34|0},${92+Math.random()*26|0},${0.14+Math.random()*0.2})`;
+    g.beginPath();g.ellipse(x-r*0.22,y-r*0.24,r*0.42,r*0.30,0,0,7);g.fill();   // its lit crown
   }
 });
 /* wet dripstone: pale calcite laid down in growth bands, drip streaks
@@ -1548,7 +1597,7 @@ export function makeFungusSkin(){
 const chitinSpeck=(g,w,h,n,al)=>{
   for(let i=0;i<n;i++){
     const v=Math.random();
-    g.fillStyle=`rgba(${v<0.5?8:96},${v<0.5?6:80},${v<0.5?4:54},${al*(0.4+Math.random())})`;
+    g.fillStyle=`rgba(${v<0.5?6:70},${v<0.5?5:66},${v<0.5?4:60},${al*(0.4+Math.random())})`;
     g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*1.6,1+Math.random()*1.6);
   }
 };
@@ -1559,14 +1608,14 @@ const chitinPores=(g,w,h,n)=>{
     const x=Math.random()*w, y=Math.random()*h, r=0.8+Math.random()*1.7;
     g.fillStyle=`rgba(4,3,2,${0.30+Math.random()*0.35})`;
     g.beginPath();g.arc(x,y,r,0,7);g.fill();
-    g.fillStyle=`rgba(122,104,72,${0.10+Math.random()*0.16})`;
+    g.fillStyle=`rgba(92,88,80,${0.10+Math.random()*0.16})`;
     g.beginPath();g.arc(x-r*0.35,y-r*0.4,r*0.5,0,7);g.fill();
   }
 };
 /* the abdomen: near-black cuticle carrying a folium — the pale jagged
    heart-marking down the dorsal midline that every orb-weaver wears. */
 export const texSpiderAbd = makeCanvas(256,256,(g,w,h)=>{
-  g.fillStyle="#15110b";g.fillRect(0,0,w,h);
+  g.fillStyle="#0e0c08";g.fillRect(0,0,w,h);
   /* ventral half (u at the edges) is darker and duller than the back */
   for(const x0 of[0,w*0.82]){
     const gr=g.createLinearGradient(x0,0,x0+w*0.18,0);
@@ -1580,7 +1629,7 @@ export const texSpiderAbd = makeCanvas(256,256,(g,w,h)=>{
   for(let i=0;i<13;i++){
     const t=i/12, y=h*(0.10+t*0.76);
     const half=w*(0.20*Math.sin(Math.PI*(0.15+t*0.8))+0.035);
-    g.fillStyle=`rgba(${132-t*40|0},${116-t*36|0},${84-t*28|0},${0.16+0.10*Math.sin(t*Math.PI)})`;
+    g.fillStyle=`rgba(${96-t*30|0},${90-t*28|0},${78-t*24|0},${0.16+0.10*Math.sin(t*Math.PI)})`;
     g.beginPath();
     g.moveTo(cx-half,y);
     g.lineTo(cx,y-h*0.035);
@@ -1602,9 +1651,9 @@ export const texSpiderAbd = makeCanvas(256,256,(g,w,h)=>{
   }
   /* a broad waxy sheen along the dorsal ridge */
   const sh=g.createLinearGradient(cx-w*0.14,0,cx+w*0.14,0);
-  sh.addColorStop(0,"rgba(150,136,104,0)");
-  sh.addColorStop(0.5,"rgba(150,136,104,0.09)");
-  sh.addColorStop(1,"rgba(150,136,104,0)");
+  sh.addColorStop(0,"rgba(112,108,100,0)");
+  sh.addColorStop(0.5,"rgba(112,108,100,0.08)");
+  sh.addColorStop(1,"rgba(112,108,100,0)");
   g.fillStyle=sh;g.fillRect(cx-w*0.14,0,w*0.28,h);
   chitinSpeck(g,w,h,2600,0.12);
   chitinPores(g,w,h,220);
@@ -1612,45 +1661,50 @@ export const texSpiderAbd = makeCanvas(256,256,(g,w,h)=>{
 /* the carapace: hard, glossy, with striae fanning back from the fovea and
    a darker cephalic region where the eyes sit */
 export const texSpiderCarapace = makeCanvas(256,128,(g,w,h)=>{
-  g.fillStyle="#191309";g.fillRect(0,0,w,h);
-  const cx=w*0.5;
-  for(let i=0;i<40;i++){                 // radial striae from the midline groove
-    const y0=h*(0.30+Math.random()*0.55);
-    const a=(Math.random()-0.5)*1.5;
-    g.strokeStyle=`rgba(${96+Math.random()*50|0},${80+Math.random()*40|0},${52+Math.random()*30|0},${0.06+Math.random()*0.10})`;
-    g.lineWidth=0.7+Math.random()*1.3;
-    g.beginPath();g.moveTo(cx+(Math.random()-0.5)*10,y0);
-    g.quadraticCurveTo(cx+Math.cos(a)*w*0.2, y0+h*0.16, cx+Math.cos(a)*w*0.44, y0+h*0.3);
+  /* ORIENTATION MATTERS HERE. This dresses a lathe: u wraps around the
+     body, v runs front→rear. So a horizontal stroke (constant v) becomes a
+     RING — the first pass drew its striae that way and the carapace read
+     as a cut tree stump. Striae must run along v, i.e. VERTICAL strokes on
+     this canvas, which come out as lines radiating from the midline the
+     way a real carapace's do. */
+  g.fillStyle="#100c07";g.fillRect(0,0,w,h);
+  for(let i=0;i<54;i++){                 // striae, running front→rear
+    const x=Math.random()*w;
+    const y0=h*(0.18+Math.random()*0.30), y1=h*(0.62+Math.random()*0.36);
+    g.strokeStyle=`rgba(${74+Math.random()*34|0},${68+Math.random()*28|0},${56+Math.random()*22|0},${0.05+Math.random()*0.08})`;
+    g.lineWidth=0.6+Math.random()*1.1;
+    g.beginPath();g.moveTo(x,y0);
+    g.quadraticCurveTo(x+(Math.random()-0.5)*7,(y0+y1)/2, x+(Math.random()-0.5)*13, y1);
     g.stroke();
   }
-  /* the fovea: the dark pit the whole carapace radiates from */
-  const fg=g.createRadialGradient(cx,h*0.6,1,cx,h*0.6,16);
-  fg.addColorStop(0,"rgba(0,0,0,0.7)");fg.addColorStop(1,"rgba(0,0,0,0)");
-  g.fillStyle=fg;g.beginPath();g.arc(cx,h*0.6,16,0,7);g.fill();
-  /* the cephalic shield, darker, where the eyes are set */
+  /* the fovea: a small dark pit on the dorsal midline (u=0.5), NOT a ring —
+     it stays a compact blob so it never wraps the body */
+  const cx=w*0.5;
+  const fg=g.createRadialGradient(cx,h*0.62,1,cx,h*0.62,13);
+  fg.addColorStop(0,"rgba(0,0,0,0.65)");fg.addColorStop(1,"rgba(0,0,0,0)");
+  g.fillStyle=fg;g.beginPath();g.arc(cx,h*0.62,13,0,7);g.fill();
+  /* the cephalic shield, darker, where the eyes are set — a gradient in v
+     is legitimate: it darkens the front of the head, which is the point */
   const cg=g.createLinearGradient(0,0,0,h*0.34);
-  cg.addColorStop(0,"rgba(0,0,0,0.45)");cg.addColorStop(1,"rgba(0,0,0,0)");
+  cg.addColorStop(0,"rgba(0,0,0,0.5)");cg.addColorStop(1,"rgba(0,0,0,0)");
   g.fillStyle=cg;g.fillRect(0,0,w,h*0.34);
-  /* the pale margin around the rim of the shield */
-  g.strokeStyle="rgba(128,110,74,0.13)";g.lineWidth=3;
-  g.beginPath();g.moveTo(0,h*0.94);g.lineTo(w,h*0.94);g.stroke();
-  chitinSpeck(g,w,h,1400,0.11);
+  chitinSpeck(g,w,h,1400,0.09);
   chitinPores(g,w,h,150);
 });
 /* the limbs: banded cuticle. v runs along the segment, so the bands are
    rows; the dark rings land where the joints flex. */
 export const texSpiderLimb = makeCanvas(64,256,(g,w,h)=>{
-  g.fillStyle="#191308";g.fillRect(0,0,w,h);
+  g.fillStyle="#100d09";g.fillRect(0,0,w,h);
   for(let i=0;i<7;i++){                  // the bands
     const y=h*(0.05+i*0.135), th=h*(0.028+Math.random()*0.05);
     g.fillStyle=`rgba(3,2,1,${0.44+Math.random()*0.30})`;
     g.fillRect(0,y,w,th);
-    g.fillStyle=`rgba(${86+Math.random()*30|0},${80+Math.random()*24|0},${68+Math.random()*20|0},${0.07+Math.random()*0.08})`;
+    g.fillStyle=`rgba(${58+Math.random()*18|0},${56+Math.random()*16|0},${52+Math.random()*14|0},${0.045+Math.random()*0.05})`;
     g.fillRect(0,y+th,w,th*0.6);         // the pale edge below each band
   }
   for(let i=0;i<26;i++){                 // longitudinal fibres
     const x=Math.random()*w;
-    g.strokeStyle=`rgba(${78+Math.random()*32|0},${72+Math.random()*24|0},${60+Math.random()*18|0},${0.05+Math.random()*0.07})`;
+    g.strokeStyle=`rgba(${62+Math.random()*24|0},${60+Math.random()*20|0},${56+Math.random()*16|0},${0.05+Math.random()*0.07})`;
     g.lineWidth=0.6+Math.random();
     g.beginPath();g.moveTo(x,0);
     for(let y=12;y<=h;y+=12) g.lineTo(x+Math.sin(y*0.05+i)*1.4,y);
@@ -1658,9 +1712,147 @@ export const texSpiderLimb = makeCanvas(64,256,(g,w,h)=>{
   }
   /* a specular ridge down one side so a cylinder reads as round even flat-lit */
   const sh=g.createLinearGradient(w*0.18,0,w*0.5,0);
-  sh.addColorStop(0,"rgba(118,112,98,0)");
-  sh.addColorStop(1,"rgba(118,112,98,0.10)");
+  sh.addColorStop(0,"rgba(84,82,78,0)");
+  sh.addColorStop(1,"rgba(84,82,78,0.055)");
   g.fillStyle=sh;g.fillRect(w*0.18,0,w*0.32,h);
   chitinSpeck(g,w,h,700,0.12);
   chitinPores(g,w,h,90);
 });
+
+/* ---- THE NEST: the brood ----------------------------------------------
+   A clutch was a grey dome with plain spheres on it, and burning one only
+   recoloured those spheres — there was no fire in the scene at all. These
+   two maps give the eggs a body and the burn an actual flame. */
+/* an egg sac: waxy translucent shell with the dark curl of what is inside
+   showing through, and the surface veining of the membrane */
+export const texEggSac = makeCanvas(128,128,(g,w,h)=>{
+  const gr=g.createRadialGradient(w*0.38,h*0.32,2,w*0.5,h*0.5,w*0.62);
+  gr.addColorStop(0,"#b9d2da"); gr.addColorStop(0.45,"#8fadb9");
+  gr.addColorStop(1,"#5d747f");
+  g.fillStyle=gr;g.fillRect(0,0,w,h);
+  /* the embryo: a dark comma coiled inside, blurred by the shell */
+  g.globalAlpha=0.5;
+  for(let i=0;i<3;i++){
+    g.strokeStyle="rgba(24,40,48,0.5)"; g.lineWidth=9-i*2.4;
+    g.beginPath();
+    g.arc(w*0.52,h*0.58,w*0.20+i*1.5,0.7,3.5);
+    g.stroke();
+  }
+  g.globalAlpha=1;
+  for(let i=0;i<40;i++){          // membrane veins
+    const x=Math.random()*w, y=Math.random()*h;
+    g.strokeStyle=`rgba(${150+Math.random()*50|0},${180+Math.random()*40|0},${190+Math.random()*40|0},${0.10+Math.random()*0.14})`;
+    g.lineWidth=0.6+Math.random()*0.9;
+    g.beginPath();g.moveTo(x,y);
+    let cx=x,cy=y;
+    for(let k=0;k<4;k++){ cx+=(Math.random()-0.5)*22; cy+=(Math.random()-0.5)*22; g.lineTo(cx,cy); }
+    g.stroke();
+  }
+  for(let i=0;i<200;i++){         // fine surface grain
+    g.fillStyle=`rgba(${210+Math.random()*40|0},${230+Math.random()*25|0},${235+Math.random()*20|0},${0.05+Math.random()*0.12})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*1.5,1+Math.random()*1.5);
+  }
+  /* the wet highlight that sells it as a sac and not a marble */
+  const hl=g.createRadialGradient(w*0.36,h*0.28,1,w*0.36,h*0.28,w*0.20);
+  hl.addColorStop(0,"rgba(240,252,255,0.5)");hl.addColorStop(1,"rgba(240,252,255,0)");
+  g.fillStyle=hl;g.beginPath();g.arc(w*0.36,h*0.28,w*0.20,0,7);g.fill();
+});
+/* a flame tongue for additive blending: white-hot base, orange body,
+   ragged tip, fully clear at the edges so the quad never shows */
+export function makeFlameTexture(){
+  const t=makeCanvas(64,128,(g,w,h)=>{
+    /* Drawn as nested TONGUES, not a stack of soft circles — circles blur
+       into one smooth ellipse, which is exactly what the first attempt
+       rendered: a glowing egg hovering over the nest. A flame needs a
+       silhouette that tapers and wavers, and layers that get smaller and
+       hotter toward the core. */
+    g.clearRect(0,0,w,h);
+    const tongue=(scale,wob,seed,stops,alpha)=>{
+      const gr=g.createLinearGradient(0,h,0,h*0.06);
+      stops.forEach(([p,c])=>gr.addColorStop(p,c));
+      g.fillStyle=gr; g.globalAlpha=alpha;
+      g.beginPath();
+      const N=26, pts=[];
+      for(let i=0;i<=N;i++){
+        const v=i/N;                                  // 0 root, 1 tip
+        const half=w*0.44*scale*Math.sin(Math.PI*Math.pow(v,0.62))*(1-v*0.45);
+        const drift=Math.sin(v*5.1+seed)*wob*w*0.10*v;
+        pts.push([v,half,drift]);
+      }
+      g.moveTo(w/2+pts[0][2]-pts[0][1], h);
+      for(const [v,half,drift] of pts) g.lineTo(w/2+drift-half, h-v*h);
+      for(let i=pts.length-1;i>=0;i--){ const [v,half,drift]=pts[i];
+        g.lineTo(w/2+drift+half, h-v*h); }
+      g.closePath(); g.fill(); g.globalAlpha=1;
+    };
+    /* outer body: deep orange, the coolest and widest */
+    tongue(1.00,1.0,1.7,[[0,"rgba(226,96,26,0.55)"],[0.55,"rgba(196,64,16,0.30)"],
+                         [1,"rgba(140,36,8,0)"]],1);
+    /* mid: the orange that reads as fire at a glance */
+    tongue(0.68,1.4,4.2,[[0,"rgba(255,178,64,0.72)"],[0.6,"rgba(240,120,30,0.36)"],
+                         [1,"rgba(200,70,18,0)"]],1);
+    /* core: short, white-hot, sitting low */
+    tongue(0.36,0.7,0.5,[[0,"rgba(255,248,214,0.88)"],[0.42,"rgba(255,206,110,0.42)"],
+                         [1,"rgba(255,170,60,0)"]],1);
+    /* the edges must reach zero INSIDE the quad or the plane shows */
+    g.globalCompositeOperation="destination-out";
+    for(const [x0,x1] of [[0,w*0.16],[w,w*0.84]]){
+      const gr=g.createLinearGradient(x0,0,x1,0);
+      gr.addColorStop(0,"rgba(0,0,0,1)"); gr.addColorStop(1,"rgba(0,0,0,0)");
+      g.fillStyle=gr; g.fillRect(Math.min(x0,x1),0,w*0.16,h);
+    }
+    const tg=g.createLinearGradient(0,0,0,h*0.14);
+    tg.addColorStop(0,"rgba(0,0,0,1)"); tg.addColorStop(1,"rgba(0,0,0,0)");
+    g.fillStyle=tg; g.fillRect(0,0,w,h*0.14);
+    g.globalCompositeOperation="source-over";
+  });
+  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping;
+  t.minFilter=THREE.LinearFilter; t.generateMipmaps=false;
+  return t;
+}
+
+/* a silk-wrapped bundle: whatever it used to be, bound in layered bands.
+   On a sphere's UVs (u around, v pole-to-pole) horizontal strokes become
+   rings, which is exactly how a cocoon is wound. Shared by the cocoons,
+   the clutch mound and the silk lashings — all of which were flat grey
+   Phong, and all of which read as smooth pale eggs because of it. */
+export const texCocoon = makeCanvas(128,256,(g,w,h)=>{
+  g.fillStyle="#7c8285";g.fillRect(0,0,w,h);
+  /* the bulge inside: a broad soft light/dark so it isn't one flat tone */
+  for(let i=0;i<9;i++){
+    const y=Math.random()*h, r=20+Math.random()*54;
+    const gr=g.createRadialGradient(w*0.5,y,2,w*0.5,y,r);
+    const dark=Math.random()<0.55;
+    gr.addColorStop(0,dark?`rgba(52,58,60,${0.10+Math.random()*0.12})`
+                         :`rgba(196,202,204,${0.08+Math.random()*0.10})`);
+    gr.addColorStop(1,"rgba(0,0,0,0)");
+    g.fillStyle=gr;g.fillRect(0,y-r,w,r*2);
+  }
+  /* the winding: many overlapping bands, each with a lit crest and a
+     shadowed trough, drawn full width so they ring the bundle */
+  for(let i=0;i<70;i++){
+    const y=Math.random()*h, th=1.2+Math.random()*4.5;
+    const tilt=(Math.random()-0.5)*7;
+    g.save(); g.beginPath(); g.rect(0,0,w,h); g.clip();
+    g.strokeStyle=`rgba(222,228,230,${0.10+Math.random()*0.16})`;
+    g.lineWidth=th;
+    g.beginPath(); g.moveTo(-2,y); g.lineTo(w+2,y+tilt); g.stroke();
+    g.strokeStyle=`rgba(44,50,52,${0.08+Math.random()*0.13})`;
+    g.lineWidth=th*0.55;
+    g.beginPath(); g.moveTo(-2,y+th*0.8); g.lineTo(w+2,y+tilt+th*0.8); g.stroke();
+    g.restore();
+  }
+  /* loose ends and fibre fuzz escaping the wrap */
+  for(let i=0;i<80;i++){
+    const x=Math.random()*w, y=Math.random()*h;
+    g.strokeStyle=`rgba(228,234,236,${0.10+Math.random()*0.2})`;
+    g.lineWidth=0.5+Math.random()*0.6;
+    g.beginPath(); g.moveTo(x,y);
+    g.lineTo(x+(Math.random()-0.5)*16, y+(Math.random()-0.5)*7); g.stroke();
+  }
+  for(let i=0;i<140;i++){          // grime picked up off the cave
+    g.fillStyle=`rgba(${86+Math.random()*36|0},${88+Math.random()*32|0},${84+Math.random()*28|0},${0.08+Math.random()*0.14})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*2.2,1+Math.random()*1.6);
+  }
+});
+texCocoon.wrapS=texCocoon.wrapT=THREE.RepeatWrapping;
