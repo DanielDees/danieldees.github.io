@@ -23,46 +23,187 @@ import { LIB, ROOM_SPAN, LIB_WALL_H, cellToWorld2, worldToCell2, isBlockedSpider
          spawnWeb, updateWeb, removeWeb, severWeb } from "./library.js";
 import { AU, panTo, sfxHeartbeat, sfxSpiderTap, sfxSpiderScratch, sfxSpiderSniff,
          sfxSpiderShriek, sfxWebSplat, sfxWebSnap } from "./audio.js";
+import { texSpiderAbd, texSpiderCarapace, texSpiderLimb } from "./textures.js";
+import { mergeStatic, markShared } from "./scene.js";
 import { ui } from "./ui.js";
 import { die } from "./lifecycle.js";
 
 const RUN_BASE=7.28;                    // base run speed (chase/seekRun) = ×1.4 of browse
 const FEM=1.35, TIB=2.25, PITCH=0.42, KNEE=-1.62;   // leg chain dimensions
 
-/* ================= the body ================= */
+/* ---- sniff fits ----------------------------------------------------
+   The cooldown is armed the moment a fit STARTS, not when it ends. It
+   used to be armed only on the last puff, which left `sniffCD<=0` true
+   for the whole fit — and every trigger site is guarded by exactly that.
+   A player moving without line of sight close to the spider re-forces
+   `seek` every frame (the hearing block outranks `investigate`), so the
+   seek→investigate transition re-fired every frame, refilled `sniffsLeft`
+   before it could ever reach 0, and the huffing never stopped. Arming up
+   front makes the guard mean what it says; the drain below re-arms from
+   the fit's end so the long quiet is still measured from the last puff. */
+function startSniffFit(s,n,t0){
+  if(s.sniffCD>0) return;
+  s.sniffsLeft=n; s.sniffT=t0; s.sniffCD=rand(22,38);
+}
+
+/* ================= the body =================
+   Rebuilt as an animal rather than an assembly of primitives. What changed,
+   and why each part is where it is:
+
+   · The abdomen and carapace are LATHES turned onto the body axis instead
+     of scaled spheres, so they can be shaped (a teardrop that swells behind
+     the waist, a carapace that slopes down to the eye shield) and, more
+     importantly, so their UVs run around-the-body / front-to-rear and the
+     folium and striae in textures.js land where they belong.
+   · 8 eyes in the real two-row arrangement, not a crown of 6 — the anterior
+     medians large and forward, the laterals small and set out on the
+     shoulders. This is most of what makes a shape read as SPIDER.
+   · Pedipalps. The old mesh had none, and their absence is why it read as
+     a body with legs stuck on.
+   · Legs gain a tarsus and a claw, joint bulbs, and bristles. The chain
+     still measures FEM then TIB and the knee is still fixed at KNEE, so
+     the gait's terrain probe (which reaches FEM·cos + TIB·cos) is unchanged
+     — the tarsus is carved OUT of the tibia's length, not added past it.
+
+   Draw calls go DOWN despite all of it: everything below femG is rigid
+   (tibG's rotation is fixed at build and never animated), so each leg
+   merges from 3 meshes into 1. 34 draws before, 12 now. */
+const _SPIDER_MATS=()=>({
+  /* Near-black and waxy. The abdomen especially wants a BROAD, weak sheen:
+     it is a big smooth surface, and a tight bright highlight on one turns
+     the animal into a balloon under any light that gets near it. The
+     carapace is the one hard glossy plate, so it keeps a tighter lobe. */
+  body:new THREE.MeshPhongMaterial({map:texSpiderAbd, color:0x56524a,
+    specular:0x0e0a06, shininess:6}),
+  car:new THREE.MeshPhongMaterial({map:texSpiderCarapace, color:0x6a655c,
+    specular:0x2a2216, shininess:26}),
+  limb:new THREE.MeshPhongMaterial({map:texSpiderLimb, color:0x5a5650,
+    specular:0x150f08, shininess:9}),
+  eye:new THREE.MeshPhongMaterial({color:0x050202, emissive:0x3a0805,
+    specular:0x181818, shininess:60}),
+});
+markShared(texSpiderAbd,texSpiderCarapace,texSpiderLimb);
+/* a lathe turned onto the body axis: profile runs front(t=0) → rear(t=1),
+   u wraps the body with u=0.5 on the dorsal midline, v runs front → rear */
+function bodyLathe(prof,len,rad,seg){
+  const pts=prof.map(([t,r])=>new THREE.Vector2(Math.max(r*rad,0.004), t*len));
+  const g=new THREE.LatheGeometry(pts,seg,-Math.PI,Math.PI*2);
+  g.rotateX(-Math.PI/2);            // +Y (profile axis) → −Z (toward the rear)
+  g.translate(0,0,len/2);           // centre it on its own origin
+  return g;
+}
+/* one bristle: a hair-fine spike from p along dir. They cost almost nothing
+   merged, and they are the whole difference between chitin and plastic. */
+const _bA=new THREE.Vector3(), _bB=new THREE.Vector3(0,1,0);
+function bristle(px,py,pz,dx,dy,dz,len,thick,mat){
+  const geo=new THREE.ConeGeometry(thick,len,4);
+  geo.translate(0,len/2,0);
+  const m=new THREE.Mesh(geo,mat);
+  m.position.set(px,py,pz);
+  _bA.set(dx,dy,dz).normalize();
+  m.quaternion.setFromUnitVectors(_bB,_bA);
+  return m;
+}
 export function makeSpider(){
-  const chitin=new THREE.MeshPhongMaterial({color:0x12100d, specular:0x2e261c, shininess:24});
-  const chitinD=new THREE.MeshPhongMaterial({color:0x0b0a08, specular:0x1c160f, shininess:18});
-  const eyeMat=new THREE.MeshPhongMaterial({color:0x050202, emissive:0x3a0805,
-    specular:0x000000, shininess:2});
+  const M=_SPIDER_MATS();
+  const eyeMat=M.eye;
   const g=new THREE.Group();
   const BODY_Y=1.5;
-  const abd=new THREE.Mesh(new THREE.SphereGeometry(0.8,14,12),chitin);
+
+  /* ---- abdomen ----------------------------------------------------
+     Built at radius 0.8 / half-length 0.8 because the gait overwrites
+     abd.scale to (1, 0.9, 1.35) every frame — and TAIL_LOCAL depends on
+     the tail landing at local z −0.8 (→ −1.08 scaled → −2.03 in mesh
+     space, where the silk anchors). Do not resize without moving both. */
+  const abdParts=[];
+  const abdGeo=bodyLathe([[0,0.30],[0.10,0.58],[0.22,0.79],[0.36,0.93],[0.50,1.00],
+                          [0.64,0.99],[0.76,0.91],[0.86,0.75],[0.94,0.49],[1,0.10]],
+                         1.6,0.8,20);
+  abdParts.push(new THREE.Mesh(abdGeo,M.body));
+  /* spinnerets, clustered at the tail where the silk actually leaves */
+  for(const[sx,sy]of[[-0.07,0.05],[0.07,0.05],[-0.05,-0.07],[0.05,-0.07]]){
+    const sp=new THREE.Mesh(new THREE.ConeGeometry(0.055,0.20,6),M.limb);
+    sp.geometry.translate(0,0.10,0);
+    sp.position.set(sx,sy,-0.74); sp.rotation.x=-Math.PI/2;
+    abdParts.push(sp);
+  }
+  /* the coat: bristles over the back and flanks, swept toward the tail */
+  for(let i=0;i<64;i++){
+    const th=Math.random()*Math.PI*2, tz=Math.random();
+    const rr=0.30+0.70*Math.sin(Math.PI*(0.10+tz*0.84));
+    const z=0.8-tz*1.6, r=0.8*rr;
+    const nx=Math.cos(th), ny=Math.sin(th);
+    if(ny<-0.35) continue;                       // the belly is bald
+    abdParts.push(bristle(nx*r*0.97, ny*r*0.97, z,
+                          nx, ny+0.25, -0.55,     // swept back and up
+                          0.12+Math.random()*0.20, 0.012, M.limb));
+  }
+  const abd=mergeStatic(abdParts,M.body);
+  for(const p of abdParts) p.geometry.dispose();
+  abd.matrixAutoUpdate=true;                     // the gait drives it every frame
   abd.scale.set(1.0,0.9,1.35); abd.position.set(0,BODY_Y+0.12,-0.95); g.add(abd);
-  /* the whole head rides one group so the sniff dip carries the eyes and
-     fangs down with the carapace instead of leaving them floating */
+
+  /* ---- the head group: carapace, eyes, chelicerae, pedipalps ----
+     one group so the sniff dip carries all of it down together */
   const head=new THREE.Group(); g.add(head);
-  const ceph=new THREE.Mesh(new THREE.SphereGeometry(0.55,12,10),chitin);
-  ceph.scale.set(1.05,0.78,1.0); ceph.position.set(0,BODY_Y,0.42); head.add(ceph);
-  /* a crown of dim ember eyes */
-  for(const[ex,ey,ez]of[[-0.12,0.16,0.9],[0.12,0.16,0.9],[-0.24,0.10,0.82],[0.24,0.10,0.82],
-                        [-0.07,0.04,0.94],[0.07,0.04,0.94]]){
-    const eye=new THREE.Mesh(new THREE.SphereGeometry(0.05,8,8),eyeMat);
-    eye.position.set(ex,BODY_Y+ey,ez); head.add(eye);
+  const carGeo=bodyLathe([[0,0.34],[0.12,0.62],[0.26,0.84],[0.42,0.97],[0.58,1.00],
+                          [0.74,0.95],[0.88,0.82],[1,0.60]],
+                         1.10,0.58,18);
+  carGeo.scale(1,0.74,1);                        // a carapace is flat, not round
+  const ceph=new THREE.Mesh(carGeo,M.car);
+  ceph.position.set(0,BODY_Y,0.42); head.add(ceph);
+
+  /* 8 eyes, two rows: anterior medians big and forward-facing, posterior
+     medians high, laterals small and out on the shoulders */
+  const eyeParts=[];
+  /* kept small on purpose: eight eyes at the anatomically honest size put
+     enough emissive area on screen to read as one glowing mouth-curve in
+     the dark. Small and separated, they read as what they are — glints. */
+  for(const[ex,ey,ez,er]of[[-0.072,0.075,0.888,0.062],[0.072,0.075,0.888,0.062],
+                           [-0.088,0.188,0.804,0.050],[0.088,0.188,0.804,0.050],
+                           [-0.198,0.048,0.832,0.038],[0.198,0.048,0.832,0.038],
+                           [-0.232,0.146,0.748,0.034],[0.232,0.146,0.748,0.034]]){
+    const e=new THREE.Mesh(new THREE.SphereGeometry(er,10,8),eyeMat);
+    e.position.set(ex,BODY_Y+ey,ez); eyeParts.push(e);
   }
-  /* chelicerae */
-  for(const sx of[-0.1,0.1]){
-    const fang=new THREE.Mesh(new THREE.ConeGeometry(0.07,0.34,6),chitinD);
-    fang.position.set(sx,BODY_Y-0.34,0.86); fang.rotation.x=Math.PI; head.add(fang);
+  const eyes=mergeStatic(eyeParts,eyeMat);
+  for(const p of eyeParts) p.geometry.dispose();
+  head.add(eyes);
+
+  /* chelicerae: a heavy basal segment hanging off the clypeus with the
+     fang folded back along it, and the pedipalps flanking them */
+  const jaw=[];
+  for(const sx of[-1,1]){
+    const base=new THREE.Mesh(new THREE.CylinderGeometry(0.105,0.085,0.36,8),M.limb);
+    base.position.set(sx*0.125,BODY_Y-0.20,0.80); base.rotation.x=0.30;
+    jaw.push(base);
+    const fang=new THREE.Mesh(new THREE.ConeGeometry(0.062,0.34,7),M.limb);
+    fang.geometry.translate(0,-0.17,0);
+    fang.position.set(sx*0.125,BODY_Y-0.36,0.83); fang.rotation.set(-0.55,0,sx*0.18);
+    jaw.push(fang);
+    /* pedipalp: three short segments angled down and forward */
+    const p1=new THREE.Mesh(new THREE.CylinderGeometry(0.062,0.05,0.42,7),M.limb);
+    p1.geometry.translate(0,0.21,0);
+    p1.position.set(sx*0.27,BODY_Y-0.10,0.66); p1.rotation.set(1.15,0,sx*0.55);
+    jaw.push(p1);
+    const p2=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.032,0.38,7),M.limb);
+    p2.geometry.translate(0,0.19,0);
+    p2.position.set(sx*0.44,BODY_Y-0.30,0.88); p2.rotation.set(2.25,0,sx*0.42);
+    jaw.push(p2);
+    for(let i=0;i<5;i++)
+      jaw.push(bristle(sx*(0.30+Math.random()*0.16), BODY_Y-0.12-Math.random()*0.24,
+                       0.70+Math.random()*0.20, sx*0.7, -0.5, 0.5,
+                       0.09+Math.random()*0.08, 0.010, M.limb));
   }
+  const jawM=mergeStatic(jaw,M.limb);
+  for(const p of jaw) p.geometry.dispose();
+  head.add(jawM);
+
   /* ---- 8 legs: hip yaw + femur pitch + fixed knee, animated as two
-     alternating tetrapods ---- */
-  const femGeo=new THREE.CylinderGeometry(0.075,0.055,FEM,7);
-  femGeo.rotateZ(-Math.PI/2); femGeo.translate(FEM/2,0,0);      // extends along +x
-  const tibGeo=new THREE.CylinderGeometry(0.05,0.022,TIB,7);
-  tibGeo.rotateZ(-Math.PI/2); tibGeo.translate(TIB/2,0,0);
+     alternating tetrapods. Everything below femG is rigid, so it merges. ---- */
   const legs=[];
   const PHI_R=[0.96,0.35,-0.26,-0.87];           // splay angles, right side
+  const TIBL=TIB*0.60, TARL=TIB-TIBL;            // tibia / tarsus split of the same reach
   for(let side=0;side<2;side++){
     for(let i=0;i<4;i++){
       const phi = side===0? PHI_R[i] : Math.PI-PHI_R[i];
@@ -70,11 +211,56 @@ export function makeSpider(){
       hip.position.set((side===0?1:-1)*0.42, BODY_Y, 0.55-i*0.37);
       hip.rotation.y=-phi;
       const femG=new THREE.Group(); femG.rotation.z=PITCH; hip.add(femG);
-      femG.add(new THREE.Mesh(femGeo,chitin));
-      const kneeJ=new THREE.Mesh(new THREE.SphereGeometry(0.095,8,8),chitinD);
-      kneeJ.position.x=FEM; femG.add(kneeJ);
-      const tibG=new THREE.Group(); tibG.position.x=FEM; tibG.rotation.z=KNEE; femG.add(tibG);
-      tibG.add(new THREE.Mesh(tibGeo,chitinD));
+
+      const parts=[];
+      /* coxa/trochanter: the thick stub where the leg meets the body */
+      const cox=new THREE.Mesh(new THREE.SphereGeometry(0.115,9,7),M.limb);
+      cox.scale.set(1.25,0.95,0.95); parts.push(cox);
+      const fem=new THREE.Mesh(new THREE.CylinderGeometry(0.088,0.058,FEM,8),M.limb);
+      fem.geometry.rotateZ(-Math.PI/2); fem.geometry.translate(FEM/2,0,0);
+      parts.push(fem);
+      const knee=new THREE.Mesh(new THREE.SphereGeometry(0.082,9,7),M.limb);
+      knee.position.x=FEM; parts.push(knee);
+      /* femur bristles */
+      for(let b=0;b<5;b++){
+        const t=0.18+Math.random()*0.7, a=Math.random()*Math.PI*2;
+        parts.push(bristle(FEM*t, Math.sin(a)*0.06, Math.cos(a)*0.06,
+                           -0.35, Math.sin(a), Math.cos(a),
+                           0.13+Math.random()*0.13, 0.010, M.limb));
+      }
+      /* everything past the knee rides a fixed-rotation frame — build it
+         under a temp group so mergeStatic bakes that transform in */
+      const tibG=new THREE.Group(); tibG.position.x=FEM; tibG.rotation.z=KNEE;
+      tibG.updateMatrixWorld(true);
+      const tibParts=[];
+      const tib=new THREE.Mesh(new THREE.CylinderGeometry(0.056,0.030,TIBL,8),M.limb);
+      tib.geometry.rotateZ(-Math.PI/2); tib.geometry.translate(TIBL/2,0,0);
+      tibParts.push(tib);
+      const ank=new THREE.Mesh(new THREE.SphereGeometry(0.036,8,6),M.limb);
+      ank.position.x=TIBL; tibParts.push(ank);
+      /* the tarsus, angled a little further down — the foot */
+      const tar=new THREE.Mesh(new THREE.CylinderGeometry(0.030,0.014,TARL,7),M.limb);
+      tar.geometry.rotateZ(-Math.PI/2); tar.geometry.translate(TARL/2,0,0);
+      tar.position.x=TIBL; tar.rotation.z=-0.30; tibParts.push(tar);
+      /* the claw */
+      const claw=new THREE.Mesh(new THREE.ConeGeometry(0.020,0.10,5),M.limb);
+      claw.geometry.rotateZ(-Math.PI/2); claw.geometry.translate(0.05,0,0);
+      claw.position.set(TIBL+Math.cos(-0.30)*TARL, Math.sin(-0.30)*TARL, 0);
+      claw.rotation.z=-0.95; tibParts.push(claw);
+      /* tibial bristles — the spiny ones, longest on a spider's shin */
+      for(let b=0;b<7;b++){
+        const t=0.10+Math.random()*0.82, a=Math.random()*Math.PI*2;
+        tibParts.push(bristle(TIBL*t, Math.sin(a)*0.04, Math.cos(a)*0.04,
+                              -0.30, Math.sin(a), Math.cos(a),
+                              0.14+Math.random()*0.16, 0.009, M.limb));
+      }
+      for(const p of tibParts){ tibG.add(p); }
+      tibG.updateMatrixWorld(true);
+      parts.push(...tibParts);
+
+      const legMesh=mergeStatic(parts,M.limb);
+      for(const p of parts) p.geometry.dispose();
+      femG.add(legMesh);
       g.add(hip);
       legs.push({hip, femG, basePhi:phi, phase:(i%2===0)===(side===0)? 0:Math.PI,
                  front:i===0, row:i, fold:0});
@@ -668,7 +854,7 @@ export function updateSpider(dt){
     if(s.sniffT<=0){
       s.sniffsLeft--;
       s.sniffT=rand(0.25,0.95);                       // erratic spacing inside the fit
-      if(s.sniffsLeft<=0) s.sniffCD=rand(22,38);      // the long quiet between fits
+      if(s.sniffsLeft<=0) s.sniffCD=rand(22,38);      // re-arm: the quiet runs from the last puff
       sfxSpiderSniff(clamp(1-d/34,0.06,1)*0.55, panTo(s.pos.x,s.pos.z));
     }
   }
@@ -725,7 +911,7 @@ export function updateSpider(dt){
         s.state="peruse"; s.pauseT=rand(2,4); s.scratchT=rand(0.3,0.8);   // shorter pause, scratch fills most of it
         s.faceAng=s.target.face; s.path=[];
         /* rarely it noses the shelf before it starts to scratch */
-        if(Math.random()<0.1&&s.sniffCD<=0){ s.sniffsLeft=1+Math.floor(Math.random()*2); s.sniffT=rand(0.8,1.6); }
+        if(Math.random()<0.1) startSniffFit(s,1+Math.floor(Math.random()*2),rand(0.8,1.6));
       }
       break;
     case "peruse":
@@ -759,7 +945,7 @@ export function updateSpider(dt){
         if(s.lastKnown){ s.faceAng=Math.atan2(s.lastKnown.x-s.pos.x,s.lastKnown.z-s.pos.z); }
         s.state="investigate"; s.searchT=rand(1.82,3.22); s.path=[];   // −30%: it lingers less over a scent
         /* a clustered fit of questioning sniffs — only if it has been quiet */
-        if(s.sniffCD<=0){ s.sniffsLeft=2+Math.floor(Math.random()*3); s.sniffT=rand(0.4,0.9); }
+        startSniffFit(s,2+Math.floor(Math.random()*3),rand(0.4,0.9));
       }
       break;
     }
@@ -865,7 +1051,7 @@ export function updateSpider(dt){
       if(s.state==="seek"&&s.lastKnown&&s.pos.distanceTo(s.lastKnown)<CELL*1.5){
         s.faceAng=Math.atan2(s.lastKnown.x-s.pos.x,s.lastKnown.z-s.pos.z);
         s.state="investigate"; s.searchT=rand(1.82,3.22);
-        if(s.sniffCD<=0){ s.sniffsLeft=2+Math.floor(Math.random()*3); s.sniffT=rand(0.4,0.9); }
+        startSniffFit(s,2+Math.floor(Math.random()*3),rand(0.4,0.9));
       }
     }
   } else s.stuckT=0;
@@ -1143,7 +1329,7 @@ export function updateSpiderCave(dt){
     if(s.sniffT<=0){
       s.sniffsLeft--;
       s.sniffT=rand(0.25,0.95);
-      if(s.sniffsLeft<=0) s.sniffCD=rand(22,38);
+      if(s.sniffsLeft<=0) s.sniffCD=rand(22,38);   // re-arm from the last puff
       sfxSpiderSniff(clamp(1-d/34,0.06,1)*0.55, panTo(s.pos.x,s.pos.z));
     }
   }
@@ -1239,7 +1425,7 @@ export function updateSpiderCave(dt){
       if(dLK<2.0||(s.path.length===0&&dLK<CELL*1.5)){
         if(s.lastKnown) s.faceAng=Math.atan2(s.lastKnown.x-s.pos.x,s.lastKnown.z-s.pos.z);
         s.state="investigate"; s.searchT=rand(1.8,3.2); s.path=[];
-        if(s.sniffCD<=0){ s.sniffsLeft=2+Math.floor(Math.random()*3); s.sniffT=rand(0.4,0.9); }
+        startSniffFit(s,2+Math.floor(Math.random()*3),rand(0.4,0.9));
       }
       break;
     }
@@ -1271,7 +1457,7 @@ export function updateSpiderCave(dt){
       if(dB<3.4||(s.path.length===0&&dB<CELL*1.6)){
         s.state="rampage"; s.path=[]; s.repath=0;
         s.rageC=s.lastKnown? s.lastKnown.clone() : s.pos.clone();
-        if(s.sniffCD<=0){ s.sniffsLeft=3; s.sniffT=0.3; }
+        startSniffFit(s,3,0.3);
       }
       break;
     }

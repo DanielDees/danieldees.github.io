@@ -134,6 +134,20 @@ export function floorYAt(wx,wz){
   return h + w*(Math.sin(wx*1.31+wz*0.97)*0.07+Math.sin(wx*2.53-wz*1.71)*0.05
                +Math.sin(wx*0.53+wz*0.61)*0.08);
 }
+/* the floor's TRUE normal, straight off the height field.
+   The walls and the vault are faceted on purpose — fractured rock ought to
+   read as planes — but the ground is sediment, and giving it the same flat
+   per-triangle normals made every 1.3 m sub-quad a separate shade of brown.
+   Walking over it looked like crumpled paper. Sampling the gradient here
+   costs three extra floorYAt calls per vertex at BUILD time only, and the
+   floor becomes what the field always said it was: rolling. */
+const _FN_EPS=0.12;
+export function floorNormalAt(wx,wz){
+  const dx=(floorYAt(wx+_FN_EPS,wz)-floorYAt(wx-_FN_EPS,wz))/(2*_FN_EPS);
+  const dz=(floorYAt(wx,wz+_FN_EPS)-floorYAt(wx,wz-_FN_EPS))/(2*_FN_EPS);
+  const l=Math.hypot(dx,1,dz)||1;
+  return [-dx/l, 1/l, -dz/l];
+}
 /* the ceiling: corner vault + crag detail. The hard rule lives here — over
    any cell you can stand in, the rock never dips below twice your height
    (3.62m over the local floor); only the squeezes crawl, and their mouths
@@ -539,18 +553,26 @@ function genCave(){
 
 /* ---------------- materials (module singletons) ---------------- */
 /* the rock's own canvas doubles as its bump map: under the lantern's
-   spotlight the strata seams and mottling become real surface relief */
-const rockMat=new THREE.MeshPhongMaterial({map:texCaveRock, bumpMap:texCaveRock, bumpScale:0.055,
+   spotlight the joints, pits and grain become real surface relief. The
+   bumpScale is up from 0.055 — the old map had almost nothing at close
+   range to make relief OUT of, so the walls read as smooth card. */
+const rockMat=new THREE.MeshPhongMaterial({map:texCaveRock, bumpMap:texCaveRock, bumpScale:0.14,
   specular:0x1a1a16, shininess:10, emissive:0x010101});
-const floorMat=new THREE.MeshPhongMaterial({map:texCaveFloor, bumpMap:texCaveFloor, bumpScale:0.035,
+const floorMat=new THREE.MeshPhongMaterial({map:texCaveFloor, bumpMap:texCaveFloor, bumpScale:0.07,
   specular:0x0a0a08, shininess:4});
-/* dripstone grows wet and glossy — pale calcite, not the parent rock; the
-   streaked skin is its own bump map so runnels read as ridges in the beam */
-const wetMat=new THREE.MeshPhongMaterial({map:texDripstone, bumpMap:texDripstone, bumpScale:0.08,
-  color:0x878f93, specular:0x3e4a52, shininess:46, emissive:0x020303});
+/* Dripstone is pale calcite, not the parent rock; the streaked skin is its
+   own bump map so runnels read as ridges in the beam.
+   Damp calcite, NOT wet chrome. specular 0x3e4a52 at shininess 46 put a
+   single tight highlight down each lathe, and against the lantern's orange
+   that read as polished brass — the formations looked die-cast. Real
+   dripstone is a chalky body with a broad, weak sheen, so the highlight is
+   now wide and dim and the base colour is warmer and darker than the
+   texture suggests (the map itself is already pale). */
+const wetMat=new THREE.MeshPhongMaterial({map:texDripstone, bumpMap:texDripstone, bumpScale:0.10,
+  color:0x6d6d67, specular:0x14171a, shininess:9, emissive:0x020303});
 /* flowstone curtains hang free of the wall — both faces show */
-const curtainMat=new THREE.MeshPhongMaterial({map:texDripstone, bumpMap:texDripstone, bumpScale:0.085,
-  color:0x767d7f, specular:0x2e383e, shininess:30, emissive:0x020303, side:THREE.DoubleSide});
+const curtainMat=new THREE.MeshPhongMaterial({map:texDripstone, bumpMap:texDripstone, bumpScale:0.105,
+  color:0x62625d, specular:0x101315, shininess:7, emissive:0x020303, side:THREE.DoubleSide});
 const pitMat=new THREE.MeshPhongMaterial({color:0x070605, specular:0x000000, shininess:1});
 /* a soft radial glow, shared by every halo in the level */
 const HALO_TEX=makeCanvas(64,64,(g,w,h)=>{
@@ -588,11 +610,14 @@ const clothMat=new THREE.MeshPhongMaterial({color:0x2c2a26, specular:0x0c0b0a, s
 const brassMat=new THREE.MeshPhongMaterial({color:0x6e5a2e, specular:0x8a7340, shininess:55});
 markShared(rockMat,floorMat,pitMat,silkFloorMat,cocoonMat,boneMat,clothMat,brassMat,
            texCaveRock,texCaveFloor);
-/* silk is LIT now (Phong, not Basic): it glistens where the lantern rakes
-   it and takes the fungus tint near the broods, instead of glowing flat
-   white in the dark. A faint emissive keeps it readable at the threshold. */
+/* silk is LIT (Phong, not Basic): it glistens where the lantern rakes it
+   and takes the fungus tint near the broods, instead of glowing flat white
+   in the dark. A faint emissive keeps it readable at the threshold.
+   The specular is deliberately softer than it looks like it should be —
+   the maps are thread-shaped now, so the highlight lands on the threads
+   themselves; at the old strength every sheet turned into wet glass. */
 const silkMat=t=>new THREE.MeshPhongMaterial({map:t, transparent:true, depthWrite:false,
-  side:THREE.DoubleSide, color:0xc8ccce, emissive:0x131517, specular:0x8a929a, shininess:34});
+  side:THREE.DoubleSide, color:0xc8ccce, emissive:0x141618, specular:0x5c6268, shininess:22});
 const webSheetMats=[silkMat(makeWebSheetTexture(false)),silkMat(makeWebSheetTexture(false))];
 const webTornMat  = silkMat(makeWebSheetTexture(true));
 const webFanMats  =[silkMat(makeCobwebTexture()),silkMat(makeCobwebTexture())];
@@ -806,13 +831,15 @@ function webHammockGeo(wdt,dep,sag){
 /* a funnel-weaver's retreat: ragged sheet rim sloping into a throat that
    dives toward the wall/floor junction. Rim up; throat at y=0. */
 function funnelWebGeo(r,dep){
-  const N=7, seed=Math.random()*10, pts=[];
+  const N=8, seed=Math.random()*10, pts=[];
   for(let i=0;i<N;i++){
     const t=i/(N-1);
     const rad=r*(0.12+0.88*Math.pow(t,1.7))*(1+0.15*Math.sin(t*9+seed));
     pts.push(new THREE.Vector2(Math.max(rad,0.02), dep*t));
   }
-  return dripNoise(new THREE.LatheGeometry(pts,9),seed,0.22);
+  /* 16 segments, not 9: at 9 the silhouette read as a faceted cone, and a
+     funnel retreat is the one web the player gets close enough to count */
+  return dripNoise(new THREE.LatheGeometry(pts,16),seed,0.22);
 }
 /* an old silk skirt wrapped around a stalagmite's base — flared at the
    floor, cinched where the wrapping gave out */
@@ -822,7 +849,7 @@ function webWrapGeo(r,hgt){
     const t=i/(N-1);
     pts.push(new THREE.Vector2(r*(1.25-0.55*t)*(1+0.1*Math.sin(t*7+seed)), hgt*t));
   }
-  return dripNoise(new THREE.LatheGeometry(pts,8),seed,0.05);
+  return dripNoise(new THREE.LatheGeometry(pts,14),seed,0.05);
 }
 /* a hanging streamer: tall narrow strip, rooted at the top, tapering and
    twisting as it falls — the thing that brushes your face in a tunnel */
@@ -862,6 +889,14 @@ class QuadAcc{
     for(const u of uvs) this.uv.push(u[0],u[1]);
     this.idx.push(this.vc,this.vc+1,this.vc+2, this.vc,this.vc+2,this.vc+3);
     this.vc+=4;
+  }
+  /* one triangle carrying per-vertex normals — the floor, which is smooth */
+  triN(p1,p2,p3,n1,n2,n3,uvs){
+    for(const p of[p1,p2,p3]) this.pos.push(p[0],p[1],p[2]);
+    for(const n of[n1,n2,n3]) this.nor.push(n[0],n[1],n[2]);
+    for(const u of uvs) this.uv.push(u[0],u[1]);
+    this.idx.push(this.vc,this.vc+1,this.vc+2);
+    this.vc+=3;
   }
   /* one triangle with its own computed face normal — the vault's facets */
   tri(p1,p2,p3,uvs){
@@ -1031,16 +1066,21 @@ export function buildCave(){
           [-dx,0,-dy],[[0,0],[1,0],[1,3.5],[0,3.5]]);
       }
     } else {
-      /* the floor: 3×3 faceted sub-quads riding floorYAt (fine enough that
-         the mesh and the exact ground function never visibly disagree) */
+      /* the floor: 3×3 sub-quads riding floorYAt (fine enough that the mesh
+         and the exact ground function never visibly disagree), SMOOTH-shaded
+         from the field's own gradient — see floorNormalAt. The rock above
+         stays faceted; only the ground you walk on rolls. */
       const S=3;
       for(let j=0;j<S;j++)for(let i=0;i<S;i++){
         const x0=p.x-E+i*CELL/S, x1=x0+CELL/S;
         const z0=p.z-E+j*CELL/S, z1=z0+CELL/S;
         const q=(xx,zz)=>[xx,floorYAt(xx,zz),zz];
+        const nq=(xx,zz)=>floorNormalAt(xx,zz);
         const uv=(xx,zz)=>[xx/UVm,zz/UVm];
-        fAcc.tri(q(x0,z1),q(x1,z1),q(x1,z0),[uv(x0,z1),uv(x1,z1),uv(x1,z0)]);
-        fAcc.tri(q(x0,z1),q(x1,z0),q(x0,z0),[uv(x0,z1),uv(x1,z0),uv(x0,z0)]);
+        fAcc.triN(q(x0,z1),q(x1,z1),q(x1,z0), nq(x0,z1),nq(x1,z1),nq(x1,z0),
+                  [uv(x0,z1),uv(x1,z1),uv(x1,z0)]);
+        fAcc.triN(q(x0,z1),q(x1,z0),q(x0,z0), nq(x0,z1),nq(x1,z0),nq(x0,z0),
+                  [uv(x0,z1),uv(x1,z0),uv(x0,z0)]);
       }
       if(t===6){
         /* low stone lips so the bridge reads as a bridge */
@@ -1912,9 +1952,14 @@ export function buildCave(){
     bore.position.set(pc.x,TOP/2-1,pc.z); g.add(bore);
     /* treads: the mirror of the library's — these go UP */
     {
-      const stepMat=new THREE.MeshPhongMaterial({map:texCaveRock, color:0xc8d2d8,
-        emissive:0x0e161c, specular:0x161c22, shininess:12});
-      const stepGeo=new THREE.BoxGeometry(1.25,0.24,1.0);
+      /* stays cooler than the cave — this is the library's stone, and the
+         contrast is the point — but nowhere near the old 0xc8d2d8, which
+         lit up as painted concrete. The UVs are world-scaled too: raw box
+         UVs crammed a whole 4 m tile onto a 1.25 m tread, which averaged
+         out to a flat grey slab with no grain at all. */
+      const stepMat=new THREE.MeshPhongMaterial({map:texCaveRock, bumpMap:texCaveRock,
+        bumpScale:0.06, color:0x4e565e, emissive:0x03060a, specular:0x0e1218, shininess:6});
+      const stepGeo=scaleBoxUV(new THREE.BoxGeometry(1.25,0.24,1.0),1.25,0.24,1.0,2);
       const steps=[];
       for(let i=0;i<N;i++){
         const th=stair.a0+i*(Math.PI*2/STEPS);
@@ -2019,9 +2064,9 @@ export function buildCave(){
        radius 2.08) so it IS that stair, continued — phase locked to height
        so the helix runs unbroken from the haze down to the break */
     {
-      const stepMat=new THREE.MeshPhongMaterial({map:texCaveRock, color:0xb6c2ca,
-        emissive:0x0a1014, specular:0x141a20, shininess:10});
-      const stepGeo=new THREE.BoxGeometry(1.3,0.24,1.05);
+      const stepMat=new THREE.MeshPhongMaterial({map:texCaveRock, bumpMap:texCaveRock,
+        bumpScale:0.06, color:0x474e56, emissive:0x020508, specular:0x0c1016, shininess:6});
+      const stepGeo=scaleBoxUV(new THREE.BoxGeometry(1.3,0.24,1.05),1.3,0.24,1.05,2);
       const RISE=4.48, STEPS=16, rc=2.08;
       const steps=[];
       const yTop=yL+12.6, yBreak=3.3;

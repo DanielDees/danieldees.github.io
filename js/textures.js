@@ -1025,27 +1025,94 @@ export function sliceTexture(tex,u0,u1,flip=false){
 /* wet karst rock, TILEABLE at a fixed world scale (scaleBoxUV again):
    dark limestone with mineral mottling and seep-streaks that fade in and
    out so the tile seam never betrays itself */
-export const texCaveRock = makeCanvas(256,256,(g,w,h)=>{
+export const texCaveRock = makeCanvas(512,512,(g,w,h)=>{
+  /* 512, not 256: the walls are UV'd at 4 m per tile, so 256 gave only
+     64 px/m and a facet you stand next to was a smooth gradient. The old
+     pass also drew 14 full-width sine curves as "strata" — at this scale
+     they tiled into unmistakable dark worms crawling across every wall.
+     Rock does not undulate: it fractures. Everything below is either
+     multi-scale blotching (so no magnification is ever smooth) or SHORT
+     angular joints that carry no repeating rhythm. */
   g.fillStyle="#332f2b";g.fillRect(0,0,w,h);
-  for(let i=0;i<900;i++){               // mineral mottling
+  const wrap=(fn)=>{ for(const ox of[0,-w,w]) for(const oy of[0,-h,h]) fn(ox,oy); };
+  /* 1. broad tonal drift — the biggest scale, keeps whole facets from
+     reading as one flat colour. Soft and low-contrast on purpose. */
+  for(let i=0;i<26;i++){
+    const x=Math.random()*w, y=Math.random()*h, r=60+Math.random()*130;
+    const lite=Math.random()<0.45;
+    wrap((ox,oy)=>{
+      const gr=g.createRadialGradient(x+ox,y+oy,r*0.1,x+ox,y+oy,r);
+      gr.addColorStop(0,lite?`rgba(86,79,66,${0.07+Math.random()*0.06})`
+                           :`rgba(20,18,15,${0.08+Math.random()*0.07})`);
+      gr.addColorStop(1,"rgba(0,0,0,0)");
+      g.fillStyle=gr;g.beginPath();g.arc(x+ox,y+oy,r,0,7);g.fill();
+    });
+  }
+  /* 2. mid-scale mineral patches — the mottling you read as "stone" */
+  for(let i=0;i<300;i++){
+    const x=Math.random()*w, y=Math.random()*h, r=6+Math.random()*26;
     const v=Math.random();
-    g.fillStyle=`rgba(${v<0.5?34:74},${v<0.5?32:68},${v<0.5?28:58},${0.06+Math.random()*0.10})`;
-    g.fillRect(Math.random()*w,Math.random()*h,Math.random()*7+2,Math.random()*5+2);
+    g.fillStyle=`rgba(${v<0.5?30:82},${v<0.5?28:75},${v<0.5?24:63},${0.05+Math.random()*0.08})`;
+    g.beginPath();
+    /* irregular blob, not a disc */
+    for(let k=0;k<=9;k++){ const a=k/9*Math.PI*2, rr=r*(0.6+Math.random()*0.7);
+      const px=x+Math.cos(a)*rr, py=y+Math.sin(a)*rr;
+      k?g.lineTo(px,py):g.moveTo(px,py); }
+    g.closePath();g.fill();
   }
-  for(let i=0;i<14;i++){                // strata seams, wandering
-    g.strokeStyle=`rgba(12,10,8,${0.18+Math.random()*0.25})`; g.lineWidth=1+Math.random()*1.5;
-    const y=Math.random()*h; g.beginPath(); g.moveTo(0,y);
-    for(let x=0;x<=w;x+=10) g.lineTo(x,y+Math.sin(x*0.11+i*7)*4+Math.sin(x*0.031+i)*6);
-    g.stroke();
+  /* 3. joints and fractures: short, straight-ish, angular, in a couple of
+     dominant directions like real bedding — drawn wrapped so the tile
+     seam never cuts one in half */
+  for(let fam=0;fam<3;fam++){
+    const base=Math.random()*Math.PI;
+    for(let i=0;i<26;i++){
+      const a=base+(Math.random()-0.5)*0.55;
+      const len=w*(0.06+Math.random()*0.20);
+      const x0=Math.random()*w, y0=Math.random()*h;
+      const segs=2+Math.floor(Math.random()*3);
+      const dark=0.10+Math.random()*0.16;
+      wrap((ox,oy)=>{
+        g.strokeStyle=`rgba(14,12,10,${dark})`;
+        g.lineWidth=0.6+Math.random()*1.3;
+        g.beginPath();g.moveTo(x0+ox,y0+oy);
+        let cx=x0+ox, cy=y0+oy, aa=a;
+        for(let s=0;s<segs;s++){                 // kinked, never curved
+          aa+=(Math.random()-0.5)*0.5;
+          cx+=Math.cos(aa)*len/segs; cy+=Math.sin(aa)*len/segs;
+          g.lineTo(cx,cy);
+        }
+        g.stroke();
+        /* the pale lip where the fracture face catches light */
+        g.strokeStyle=`rgba(122,114,96,${dark*0.5})`;
+        g.lineWidth=0.5; g.beginPath();
+        g.moveTo(x0+ox+1,y0+oy+1); g.lineTo(cx+1,cy+1); g.stroke();
+      });
+    }
   }
-  for(let i=0;i<7;i++){                 // seep streaks (fade both ends — seam-safe)
-    const x=Math.random()*w, ww=2+Math.random()*7, y0=Math.random()*h*0.5;
+  /* 4. seep streaks (fade both ends — seam-safe), fewer and fainter */
+  for(let i=0;i<9;i++){
+    const x=Math.random()*w, ww=4+Math.random()*16, y0=Math.random()*h*0.5;
     const gr=g.createLinearGradient(0,y0,0,y0+h*0.5);
-    const a=0.06+Math.random()*0.10;
+    const a=0.05+Math.random()*0.08;
     gr.addColorStop(0,"rgba(14,16,14,0)");
     gr.addColorStop(0.5,`rgba(14,16,14,${a})`);
     gr.addColorStop(1,"rgba(14,16,14,0)");
     g.fillStyle=gr;g.fillRect(x,y0,ww,h*0.5);
+  }
+  /* 5. grain: the close-up layer. Cheap, and the reason a facet you press
+     your face against still has something to look at. */
+  for(let i=0;i<7000;i++){
+    const v=Math.random();
+    g.fillStyle=`rgba(${v<0.5?24:96},${v<0.5?22:88},${v<0.5?18:74},${0.05+Math.random()*0.12})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*2,1+Math.random()*2);
+  }
+  /* 6. pits and chips — small dark spots with a bright lower lip */
+  for(let i=0;i<220;i++){
+    const x=Math.random()*w, y=Math.random()*h, r=1+Math.random()*3.5;
+    g.fillStyle=`rgba(16,14,12,${0.14+Math.random()*0.2})`;
+    g.beginPath();g.arc(x,y,r,0,7);g.fill();
+    g.fillStyle=`rgba(120,112,94,${0.08+Math.random()*0.12})`;
+    g.beginPath();g.arc(x+r*0.4,y+r*0.5,r*0.55,0,7);g.fill();
   }
 });
 /* the cave floor: packed sediment, bone-dry dust, scattered grit */
@@ -1113,165 +1180,216 @@ export const texDripstone = makeCanvas(128,256,(g,w,h)=>{
 });
 /* ---- the silk family: four textures for THE NEST's web system ----
    All alpha-on-transparency; the geometry they dress is 3D (sagging
-   sheets, fans, funnels, strands), so these only carry the weave. */
+   sheets, fans, funnels, strands), so these only carry the weave.
+
+   The rule these all obey: ALPHA IS THREAD-SHAPED. Nothing here paints a
+   broad translucent fill — a fill is what turned a sheet web into a pane
+   of dirty glass hanging in the air. Every pixel that is not on a thread
+   is fully clear, and the sheets fade out at their border so the quad's
+   own rectangle never shows up as an edge. Mipmaps are ON (these are all
+   power-of-two): a metre of 1px threads seen from 20m should soften into
+   grey haze the way a real web does, not crawl and sparkle. */
 const silkClamp=t=>{
-  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearFilter;
-  t.generateMipmaps=false; return t;
+  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping;
+  t.minFilter=THREE.LinearMipmapLinearFilter; t.magFilter=THREE.LinearFilter;
+  t.generateMipmaps=true; t.anisotropy=4; return t;
 };
-/* a woven silk sheet: layered crossing strands, milky where the weave is
-   thickest, bitten ragged at the border. torn=true punches the big hole
-   something left when it went through — the squeeze-mouth veils. */
+/* one slightly wavering thread from a to b — silk never runs dead straight */
+function silkThread(g,x0,y0,x1,y1,a,lw,waver){
+  const dx=x1-x0, dy=y1-y0, L=Math.hypot(dx,dy)||1;
+  const nx=-dy/L, ny=dx/L, ph=Math.random()*9;
+  g.strokeStyle=`rgba(228,233,236,${a})`; g.lineWidth=lw;
+  g.beginPath(); g.moveTo(x0,y0);
+  const seg=Math.max(3,Math.round(L/9));
+  for(let i=1;i<=seg;i++){
+    const t=i/seg, s=Math.sin(t*Math.PI)*(waver||0)*Math.sin(ph+t*4.1);
+    g.lineTo(x0+dx*t+nx*s, y0+dy*t+ny*s);
+  }
+  g.stroke();
+}
+/* fade the border so a sheet dissolves instead of ending on the quad's edge */
+function silkFeather(g,w,h,inset){
+  g.globalCompositeOperation="destination-out";
+  const band=(x,y,ww,hh,x0,y0,x1,y1)=>{
+    const gr=g.createLinearGradient(x0,y0,x1,y1);
+    gr.addColorStop(0,"rgba(0,0,0,1)"); gr.addColorStop(1,"rgba(0,0,0,0)");
+    g.fillStyle=gr; g.fillRect(x,y,ww,hh);
+  };
+  band(0,0,w,inset, 0,0,0,inset);            // top
+  band(0,h-inset,w,inset, 0,h,0,h-inset);    // bottom
+  band(0,0,inset,h, 0,0,inset,0);            // left
+  band(w-inset,0,inset,h, w,0,w-inset,0);    // right
+  g.globalCompositeOperation="source-over";
+}
+/* a woven silk sheet: a real tangle — long anchor lines spanning the panel,
+   a dense drift of cross-threads caught between them, and the small snarls
+   where the weave doubled back on itself. torn=true punches the big ragged
+   pass-through something left when it went through (the squeeze veils). */
 export function makeWebSheetTexture(torn){
-  return silkClamp(makeCanvas(128,128,(g,w,h)=>{
+  return silkClamp(makeCanvas(256,256,(g,w,h)=>{
     g.clearRect(0,0,w,h);
-    for(let L=0;L<3;L++){                // three strand families, two aligned
+    g.lineCap="round";
+    /* 1. anchor lines: long, taut, spanning the sheet in two loose families */
+    for(let L=0;L<2;L++){
       const baseA=Math.random()*Math.PI;
-      const n=14+Math.floor(Math.random()*8);
-      for(let i=0;i<n;i++){
-        const a=L===2? Math.random()*Math.PI : baseA+(Math.random()-0.5)*0.5;
-        const cx=Math.random()*w, cy=Math.random()*h, len=w*(0.5+Math.random()*0.7);
-        const bow=(Math.random()-0.5)*16;
-        g.strokeStyle=`rgba(214,220,224,${0.07+Math.random()*0.13})`;
-        g.lineWidth=0.6+Math.random()*0.8;
-        g.beginPath();
-        g.moveTo(cx-Math.cos(a)*len/2, cy-Math.sin(a)*len/2);
-        g.quadraticCurveTo(cx+Math.cos(a+Math.PI/2)*bow, cy+Math.sin(a+Math.PI/2)*bow,
-                           cx+Math.cos(a)*len/2, cy+Math.sin(a)*len/2);
-        g.stroke();
+      for(let i=0;i<11;i++){
+        const a=baseA+(Math.random()-0.5)*0.42, len=w*(1.1+Math.random()*0.5);
+        const cx=Math.random()*w, cy=Math.random()*h;
+        silkThread(g, cx-Math.cos(a)*len/2, cy-Math.sin(a)*len/2,
+                      cx+Math.cos(a)*len/2, cy+Math.sin(a)*len/2,
+                   0.20+Math.random()*0.22, 0.7+Math.random()*0.5, 5+Math.random()*7);
       }
     }
-    for(let i=0;i<7;i++){                // milky sheen blotches
-      const x=w*(0.2+Math.random()*0.6), y=h*(0.2+Math.random()*0.6), r=8+Math.random()*22;
-      const gr=g.createRadialGradient(x,y,1,x,y,r);
-      gr.addColorStop(0,`rgba(222,226,229,${0.10+Math.random()*0.12})`);
-      gr.addColorStop(1,"rgba(222,226,229,0)");
-      g.fillStyle=gr; g.beginPath(); g.arc(x,y,r,0,7); g.fill();
+    /* 2. the drift: many fine cross-threads at every angle — this is the
+       body of the web, and it is all line, no fill */
+    for(let i=0;i<150;i++){
+      const a=Math.random()*Math.PI*2, len=w*(0.16+Math.random()*0.5);
+      const cx=Math.random()*w, cy=Math.random()*h;
+      silkThread(g, cx, cy, cx+Math.cos(a)*len, cy+Math.sin(a)*len,
+                 0.07+Math.random()*0.14, 0.45+Math.random()*0.45, 3+Math.random()*6);
     }
-    for(let i=0;i<12;i++){               // dust clots caught in the weave
-      g.fillStyle=`rgba(168,172,170,${0.10+Math.random()*0.16})`;
-      g.beginPath();g.arc(Math.random()*w,Math.random()*h,0.8+Math.random()*2.2,0,7);g.fill();
+    /* 3. snarls: little knots where the weave is old and doubled */
+    for(let k=0;k<9;k++){
+      const sx=Math.random()*w, sy=Math.random()*h, r=7+Math.random()*17;
+      for(let i=0;i<11;i++){
+        const a0=Math.random()*7, a1=a0+1.4+Math.random()*3;
+        silkThread(g, sx+Math.cos(a0)*r*Math.random(), sy+Math.sin(a0)*r*Math.random(),
+                      sx+Math.cos(a1)*r, sy+Math.sin(a1)*r,
+                   0.10+Math.random()*0.16, 0.5+Math.random()*0.5, 2);
+      }
     }
+    /* 4. what the web caught: motes strung ON the threads, tiny and few */
+    for(let i=0;i<26;i++){
+      g.fillStyle=`rgba(196,199,196,${0.14+Math.random()*0.22})`;
+      g.beginPath();g.arc(Math.random()*w,Math.random()*h,0.6+Math.random()*1.5,0,7);g.fill();
+    }
+    /* 5. bite holes and the torn pass-through */
     g.globalCompositeOperation="destination-out";
-    const bite=(x,y,r)=>{const gr=g.createRadialGradient(x,y,r*0.2,x,y,r);
-      gr.addColorStop(0,"rgba(0,0,0,0.95)");gr.addColorStop(1,"rgba(0,0,0,0)");
+    const bite=(x,y,r)=>{const gr=g.createRadialGradient(x,y,r*0.25,x,y,r);
+      gr.addColorStop(0,"rgba(0,0,0,1)");gr.addColorStop(1,"rgba(0,0,0,0)");
       g.fillStyle=gr;g.beginPath();g.arc(x,y,r,0,7);g.fill();};
-    for(let i=0;i<14;i++){               // border tatters
-      const e=Math.floor(Math.random()*4);
-      bite(e<2?(e?w:0):Math.random()*w, e<2?Math.random()*h:(e===2?0:h), 5+Math.random()*14);
-    }
-    for(let i=0;i<(torn?3:5);i++) bite(Math.random()*w,Math.random()*h,3+Math.random()*8);
+    for(let i=0;i<(torn?5:9);i++) bite(Math.random()*w,Math.random()*h,7+Math.random()*17);
     let hx=0,hy=0;
-    if(torn){                            // the big ragged pass-through
+    if(torn){
       hx=w*(0.35+Math.random()*0.3); hy=h*(0.35+Math.random()*0.3);
-      for(let i=0;i<9;i++) bite(hx+(Math.random()-0.5)*30, hy+(Math.random()-0.5)*26, 10+Math.random()*15);
+      for(let i=0;i<11;i++) bite(hx+(Math.random()-0.5)*62, hy+(Math.random()-0.5)*54, 20+Math.random()*30);
     }
     g.globalCompositeOperation="source-over";
-    if(torn) for(let i=0;i<8;i++){       // frayed threads waving into the hole
-      const a=Math.random()*Math.PI*2, r0=26+Math.random()*10;
-      g.strokeStyle="rgba(216,222,226,0.30)"; g.lineWidth=0.7;
-      g.beginPath();
-      g.moveTo(hx+Math.cos(a)*r0, hy+Math.sin(a)*r0);
-      g.lineTo(hx+Math.cos(a)*(r0-9-Math.random()*8)+(Math.random()-0.5)*6,
-               hy+Math.sin(a)*(r0-9-Math.random()*8)+(Math.random()-0.5)*6);
-      g.stroke();
+    /* 6. frayed ends waving into the hole */
+    if(torn) for(let i=0;i<14;i++){
+      const a=Math.random()*Math.PI*2, r0=52+Math.random()*22;
+      silkThread(g, hx+Math.cos(a)*r0, hy+Math.sin(a)*r0,
+                    hx+Math.cos(a)*(r0-18-Math.random()*16)+(Math.random()-0.5)*12,
+                    hy+Math.sin(a)*(r0-18-Math.random()*16)+(Math.random()-0.5)*12,
+                 0.24+Math.random()*0.2, 0.6, 3);
     }
+    silkFeather(g,w,h,26);
   }));
 }
 /* a corner cobweb fan: anchored along the TOP edge, radial anchor threads
    dropping into sagging capture rows — the geometry pins that edge into a
    wall/ceiling junction, so the fan genuinely hangs off it. */
 export function makeCobwebTexture(){
-  return silkClamp(makeCanvas(128,128,(g,w,h)=>{
+  return silkClamp(makeCanvas(256,256,(g,w,h)=>{
     g.clearRect(0,0,w,h);
+    g.lineCap="round";
     const cx=w*(0.35+Math.random()*0.3), cy=0;
-    const n=8+Math.floor(Math.random()*5), angs=[];
-    for(let i=0;i<n;i++) angs.push((i+0.5)/n*Math.PI*0.94+0.03*Math.PI+(Math.random()-0.5)*0.12);
-    const maxR=h*(0.8+Math.random()*0.25);
-    for(const a of angs){                // radial anchor threads
-      const len=maxR*(0.75+Math.random()*0.35);
-      g.strokeStyle=`rgba(218,224,227,${0.16+Math.random()*0.18})`;
-      g.lineWidth=0.8+Math.random()*0.7;
-      g.beginPath();g.moveTo(cx,cy);
-      g.quadraticCurveTo(cx+Math.cos(a)*len*0.5+(Math.random()-0.5)*6, cy+Math.sin(a)*len*0.5,
-                         cx+Math.cos(a)*len, cy+Math.sin(a)*len);
-      g.stroke();
+    const n=11+Math.floor(Math.random()*6), angs=[];
+    for(let i=0;i<n;i++) angs.push((i+0.5)/n*Math.PI*0.94+0.03*Math.PI+(Math.random()-0.5)*0.1);
+    const maxR=h*(0.82+Math.random()*0.22);
+    const rr=[];
+    for(const a of angs){                         // radial anchor threads
+      const len=maxR*(0.72+Math.random()*0.36); rr.push(len);
+      silkThread(g,cx,cy,cx+Math.cos(a)*len,cy+Math.sin(a)*len,
+                 0.22+Math.random()*0.2, 0.7+Math.random()*0.5, 5);
     }
-    for(let r=8;r<maxR;r+=5+Math.random()*7+r*0.06){  // sagging capture rows
+    for(let r=10;r<maxR;r+=6+Math.random()*9+r*0.05){   // sagging capture rows
       for(let i=0;i<angs.length-1;i++){
-        if(Math.random()<0.18) continue; // gaps where rows broke
+        if(Math.random()<0.2) continue;           // gaps where rows broke
+        if(r>rr[i]||r>rr[i+1]) continue;          // rows stop with their anchors
         const x0=cx+Math.cos(angs[i])*r,   y0=cy+Math.sin(angs[i])*r;
         const x1=cx+Math.cos(angs[i+1])*r, y1=cy+Math.sin(angs[i+1])*r;
-        g.strokeStyle=`rgba(214,220,224,${0.09+Math.random()*0.13})`;
-        g.lineWidth=0.6;
-        g.beginPath();g.moveTo(x0,y0);
-        g.quadraticCurveTo((x0+x1)/2,(y0+y1)/2+r*0.12,x1,y1);g.stroke();
+        const mx=(x0+x1)/2, my=(y0+y1)/2+r*0.14;  // the sag between anchors
+        g.strokeStyle=`rgba(226,231,234,${0.09+Math.random()*0.13})`;
+        g.lineWidth=0.5+Math.random()*0.35;
+        g.beginPath();g.moveTo(x0,y0);g.quadraticCurveTo(mx,my,x1,y1);g.stroke();
       }
     }
-    for(let i=0;i<6;i++){                // broken threads curling off the rim
-      const a=angs[Math.floor(Math.random()*angs.length)];
-      const r=maxR*(0.75+Math.random()*0.3);
+    for(let i=0;i<10;i++){                        // broken threads curling off the rim
+      const j=Math.floor(Math.random()*angs.length), a=angs[j];
+      const r=rr[j]*(0.8+Math.random()*0.22);
       const x=cx+Math.cos(a)*r, y=cy+Math.sin(a)*r;
-      g.strokeStyle="rgba(210,216,220,0.16)"; g.lineWidth=0.6;
-      g.beginPath();g.moveTo(x,y);
-      g.quadraticCurveTo(x+(Math.random()-0.5)*8, y+6, x+(Math.random()-0.5)*12, y+10+Math.random()*8);
-      g.stroke();
+      silkThread(g,x,y,x+(Math.random()-0.5)*22,y+12+Math.random()*20,
+                 0.12+Math.random()*0.12, 0.55, 4);
     }
-    for(let i=0;i<9;i++){                // dust
-      g.fillStyle=`rgba(180,184,182,${0.10+Math.random()*0.14})`;
-      g.beginPath();g.arc(cx+(Math.random()-0.5)*w*0.8, Math.random()*h*0.7, 0.8+Math.random()*2,0,7);g.fill();
+    for(let i=0;i<14;i++){                        // dust caught in the rows
+      g.fillStyle=`rgba(190,193,190,${0.12+Math.random()*0.16})`;
+      g.beginPath();g.arc(cx+(Math.random()-0.5)*w*0.8, Math.random()*h*0.75, 0.6+Math.random()*1.5,0,7);g.fill();
     }
+    silkFeather(g,w,h,20);
   }));
 }
 /* guy-line strands: a couple of wavering threads with silk-wrapped beads,
-   drawn tall for thin quads strung point-to-point in 3D */
+   drawn tall for thin quads strung point-to-point in 3D. Kept dim — a lit
+   guy-line at full white reads as a wire, or worse, a scratch on the lens. */
 export function makeStrandTexture(){
-  return silkClamp(makeCanvas(32,128,(g,w,h)=>{
+  return silkClamp(makeCanvas(32,256,(g,w,h)=>{
     g.clearRect(0,0,w,h);
+    g.lineCap="round";
     const n=2+Math.floor(Math.random()*2);
     for(let i=0;i<n;i++){
-      const x0=w*(0.35+Math.random()*0.3);
-      g.strokeStyle=`rgba(220,226,229,${0.34+Math.random()*0.26})`;
-      g.lineWidth=1.5+Math.random();
-      g.beginPath();g.moveTo(x0,0);
-      for(let y=10;y<=h;y+=10) g.lineTo(x0+Math.sin(y*0.06+i*3)*2.2,y);
-      g.stroke();
+      const x0=w*(0.36+Math.random()*0.28);
+      /* a soft halo under the core so the thread has a little body */
+      for(const[lw,al]of[[2.6,0.07],[1.1,0.30+Math.random()*0.16]]){
+        g.strokeStyle=`rgba(224,229,231,${al})`; g.lineWidth=lw;
+        g.beginPath();g.moveTo(x0,0);
+        for(let y=8;y<=h;y+=8) g.lineTo(x0+Math.sin(y*0.03+i*3)*2.4,y);
+        g.stroke();
+      }
     }
-    for(let i=0;i<5;i++){                // beads of wrapped debris
-      g.fillStyle=`rgba(210,214,214,${0.25+Math.random()*0.25})`;
-      g.beginPath();g.arc(w*0.5+(Math.random()-0.5)*6,Math.random()*h,0.8+Math.random()*1.6,0,7);g.fill();
+    for(let i=0;i<7;i++){                         // beads of wrapped debris
+      g.fillStyle=`rgba(206,210,210,${0.20+Math.random()*0.22})`;
+      g.beginPath();g.arc(w*0.5+(Math.random()-0.5)*7,Math.random()*h,0.7+Math.random()*1.5,0,7);g.fill();
     }
   }));
 }
 /* the funnel weave: wraps a lathe (u repeats around it), dense circular
-   rows at the throat (v=0, canvas bottom) fraying apart toward the rim */
+   rows at the throat (v=0, canvas bottom) fraying apart toward the rim.
+   Deliberately open: this dresses a closed lathe, so anything approaching
+   a solid alpha turns a funnel retreat into a ceramic cone. */
 export function makeFunnelTexture(){
-  const t=makeCanvas(128,64,(g,w,h)=>{
+  const t=makeCanvas(256,128,(g,w,h)=>{
     g.clearRect(0,0,w,h);
-    for(let i=0;i<46;i++){               // circular rows, throat-dense
-      const y0=h-Math.pow(Math.random(),1.7)*h;
-      const dens=y0/h;
-      g.strokeStyle=`rgba(216,222,225,${0.04+dens*(0.10+Math.random()*0.16)})`;
-      g.lineWidth=0.6+Math.random()*0.7;
-      g.beginPath();g.moveTo(0,y0+Math.sin(i)*1.6);
-      for(let x=8;x<=w;x+=8) g.lineTo(x, y0+Math.sin(x*(Math.PI*4/w)+i)*1.6);
+    g.lineCap="round";
+    for(let i=0;i<64;i++){               // circular rows, throat-dense
+      const y0=h-Math.pow(Math.random(),1.9)*h;
+      const dens=y0/h;                   // 1 at the throat, 0 at the rim
+      g.strokeStyle=`rgba(228,233,236,${0.03+dens*(0.07+Math.random()*0.13)})`;
+      g.lineWidth=0.45+Math.random()*0.6;
+      g.beginPath();g.moveTo(0,y0+Math.sin(i)*2.2);
+      for(let x=8;x<=w;x+=8) g.lineTo(x, y0+Math.sin(x*(Math.PI*4/w)+i)*2.2);
       g.stroke();
     }
-    for(let i=0;i<12;i++){               // radial support strands (wrap-safe)
-      const x0=Math.random()*w, drift=(Math.random()-0.5)*10;
-      g.strokeStyle="rgba(214,220,224,0.16)"; g.lineWidth=0.7;
+    for(let i=0;i<18;i++){               // radial support strands (wrap-safe)
+      const x0=Math.random()*w, drift=(Math.random()-0.5)*16;
+      g.strokeStyle=`rgba(226,231,234,${0.08+Math.random()*0.09})`; g.lineWidth=0.55;
       for(const off of[0,-w,w]){
         g.beginPath();g.moveTo(x0+off,h);g.lineTo(x0+off+drift,0);g.stroke();
       }
     }
+    /* the rim frays away to nothing — no hard lathe edge in the air */
     g.globalCompositeOperation="destination-out";
-    for(let i=0;i<10;i++){               // ragged rim
+    const gr=g.createLinearGradient(0,0,0,h*0.46);
+    gr.addColorStop(0,"rgba(0,0,0,1)"); gr.addColorStop(1,"rgba(0,0,0,0)");
+    g.fillStyle=gr; g.fillRect(0,0,w,h*0.46);
+    for(let i=0;i<14;i++){
       g.fillStyle="rgba(0,0,0,0.9)";
-      g.beginPath();g.arc(Math.random()*w,-2,5+Math.random()*8,0,7);g.fill();
+      g.beginPath();g.arc(Math.random()*w,h*0.42+Math.random()*20,7+Math.random()*13,0,7);g.fill();
     }
     g.globalCompositeOperation="source-over";
   });
-  t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearFilter;
-  t.generateMipmaps=false;               // wrapS stays repeating for the lathe
+  t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearMipmapLinearFilter;
+  t.generateMipmaps=true; t.anisotropy=4;   // wrapS stays repeating for the lathe
   return t;
 }
 /* bioluminescent fungus veins: a wandering glow-thread decal for the rock */
@@ -1415,3 +1533,134 @@ export function makeFungusSkin(){
   }
   return {map,emit};
 }
+
+/* ================= the spider — shared by THE END and THE NEST =================
+   Chitin is not plastic. It is layered and waxy, banded where the cuticle
+   hardened in stages, darker along the sclerotised seams, and pitted with
+   the sockets every bristle grows out of. The old mesh was flat-coloured
+   Phong on smooth primitives, which is exactly how you get a black balloon
+   on copper pipes; these three maps are most of the fix.
+   UV contract (the mesh builds to match):
+     · abdomen / carapace are LATHES rotated onto the body axis, so u runs
+       around the body with u=0.5 on the DORSAL midline, and v runs
+       front → rear.
+     · limbs are cylinders, so v runs along the segment and u around it. */
+const chitinSpeck=(g,w,h,n,al)=>{
+  for(let i=0;i<n;i++){
+    const v=Math.random();
+    g.fillStyle=`rgba(${v<0.5?8:96},${v<0.5?6:80},${v<0.5?4:54},${al*(0.4+Math.random())})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*1.6,1+Math.random()*1.6);
+  }
+};
+/* bristle sockets: a dark pit with a pale rim, the texture that makes a
+   carapace read as living cuticle instead of painted shell */
+const chitinPores=(g,w,h,n)=>{
+  for(let i=0;i<n;i++){
+    const x=Math.random()*w, y=Math.random()*h, r=0.8+Math.random()*1.7;
+    g.fillStyle=`rgba(4,3,2,${0.30+Math.random()*0.35})`;
+    g.beginPath();g.arc(x,y,r,0,7);g.fill();
+    g.fillStyle=`rgba(122,104,72,${0.10+Math.random()*0.16})`;
+    g.beginPath();g.arc(x-r*0.35,y-r*0.4,r*0.5,0,7);g.fill();
+  }
+};
+/* the abdomen: near-black cuticle carrying a folium — the pale jagged
+   heart-marking down the dorsal midline that every orb-weaver wears. */
+export const texSpiderAbd = makeCanvas(256,256,(g,w,h)=>{
+  g.fillStyle="#15110b";g.fillRect(0,0,w,h);
+  /* ventral half (u at the edges) is darker and duller than the back */
+  for(const x0 of[0,w*0.82]){
+    const gr=g.createLinearGradient(x0,0,x0+w*0.18,0);
+    const a=x0? "rgba(0,0,0,0)":"rgba(0,0,0,0.5)";
+    gr.addColorStop(0,x0?"rgba(0,0,0,0)":"rgba(0,0,0,0.5)");
+    gr.addColorStop(1,x0?"rgba(0,0,0,0.5)":"rgba(0,0,0,0)");
+    g.fillStyle=gr;g.fillRect(x0,0,w*0.18,h);
+  }
+  /* the folium: a chain of chevrons narrowing toward the spinnerets */
+  const cx=w*0.5;
+  for(let i=0;i<13;i++){
+    const t=i/12, y=h*(0.10+t*0.76);
+    const half=w*(0.20*Math.sin(Math.PI*(0.15+t*0.8))+0.035);
+    g.fillStyle=`rgba(${132-t*40|0},${116-t*36|0},${84-t*28|0},${0.16+0.10*Math.sin(t*Math.PI)})`;
+    g.beginPath();
+    g.moveTo(cx-half,y);
+    g.lineTo(cx,y-h*0.035);
+    g.lineTo(cx+half,y);
+    g.lineTo(cx,y+h*0.045);
+    g.closePath();g.fill();
+    /* the dark rim that makes the marking read at a distance */
+    g.strokeStyle=`rgba(6,5,3,${0.24+Math.random()*0.14})`;g.lineWidth=1.4;g.stroke();
+  }
+  /* paired muscle dimples flanking the midline */
+  for(let i=0;i<4;i++){
+    const y=h*(0.18+i*0.17);
+    for(const sx of[-1,1]){
+      const x=cx+sx*w*0.085;
+      const gr=g.createRadialGradient(x,y,0.5,x,y,7);
+      gr.addColorStop(0,"rgba(2,2,1,0.55)");gr.addColorStop(1,"rgba(0,0,0,0)");
+      g.fillStyle=gr;g.beginPath();g.arc(x,y,7,0,7);g.fill();
+    }
+  }
+  /* a broad waxy sheen along the dorsal ridge */
+  const sh=g.createLinearGradient(cx-w*0.14,0,cx+w*0.14,0);
+  sh.addColorStop(0,"rgba(150,136,104,0)");
+  sh.addColorStop(0.5,"rgba(150,136,104,0.09)");
+  sh.addColorStop(1,"rgba(150,136,104,0)");
+  g.fillStyle=sh;g.fillRect(cx-w*0.14,0,w*0.28,h);
+  chitinSpeck(g,w,h,2600,0.12);
+  chitinPores(g,w,h,220);
+});
+/* the carapace: hard, glossy, with striae fanning back from the fovea and
+   a darker cephalic region where the eyes sit */
+export const texSpiderCarapace = makeCanvas(256,128,(g,w,h)=>{
+  g.fillStyle="#191309";g.fillRect(0,0,w,h);
+  const cx=w*0.5;
+  for(let i=0;i<40;i++){                 // radial striae from the midline groove
+    const y0=h*(0.30+Math.random()*0.55);
+    const a=(Math.random()-0.5)*1.5;
+    g.strokeStyle=`rgba(${96+Math.random()*50|0},${80+Math.random()*40|0},${52+Math.random()*30|0},${0.06+Math.random()*0.10})`;
+    g.lineWidth=0.7+Math.random()*1.3;
+    g.beginPath();g.moveTo(cx+(Math.random()-0.5)*10,y0);
+    g.quadraticCurveTo(cx+Math.cos(a)*w*0.2, y0+h*0.16, cx+Math.cos(a)*w*0.44, y0+h*0.3);
+    g.stroke();
+  }
+  /* the fovea: the dark pit the whole carapace radiates from */
+  const fg=g.createRadialGradient(cx,h*0.6,1,cx,h*0.6,16);
+  fg.addColorStop(0,"rgba(0,0,0,0.7)");fg.addColorStop(1,"rgba(0,0,0,0)");
+  g.fillStyle=fg;g.beginPath();g.arc(cx,h*0.6,16,0,7);g.fill();
+  /* the cephalic shield, darker, where the eyes are set */
+  const cg=g.createLinearGradient(0,0,0,h*0.34);
+  cg.addColorStop(0,"rgba(0,0,0,0.45)");cg.addColorStop(1,"rgba(0,0,0,0)");
+  g.fillStyle=cg;g.fillRect(0,0,w,h*0.34);
+  /* the pale margin around the rim of the shield */
+  g.strokeStyle="rgba(128,110,74,0.13)";g.lineWidth=3;
+  g.beginPath();g.moveTo(0,h*0.94);g.lineTo(w,h*0.94);g.stroke();
+  chitinSpeck(g,w,h,1400,0.11);
+  chitinPores(g,w,h,150);
+});
+/* the limbs: banded cuticle. v runs along the segment, so the bands are
+   rows; the dark rings land where the joints flex. */
+export const texSpiderLimb = makeCanvas(64,256,(g,w,h)=>{
+  g.fillStyle="#191308";g.fillRect(0,0,w,h);
+  for(let i=0;i<7;i++){                  // the bands
+    const y=h*(0.05+i*0.135), th=h*(0.028+Math.random()*0.05);
+    g.fillStyle=`rgba(3,2,1,${0.44+Math.random()*0.30})`;
+    g.fillRect(0,y,w,th);
+    g.fillStyle=`rgba(${86+Math.random()*30|0},${80+Math.random()*24|0},${68+Math.random()*20|0},${0.07+Math.random()*0.08})`;
+    g.fillRect(0,y+th,w,th*0.6);         // the pale edge below each band
+  }
+  for(let i=0;i<26;i++){                 // longitudinal fibres
+    const x=Math.random()*w;
+    g.strokeStyle=`rgba(${78+Math.random()*32|0},${72+Math.random()*24|0},${60+Math.random()*18|0},${0.05+Math.random()*0.07})`;
+    g.lineWidth=0.6+Math.random();
+    g.beginPath();g.moveTo(x,0);
+    for(let y=12;y<=h;y+=12) g.lineTo(x+Math.sin(y*0.05+i)*1.4,y);
+    g.stroke();
+  }
+  /* a specular ridge down one side so a cylinder reads as round even flat-lit */
+  const sh=g.createLinearGradient(w*0.18,0,w*0.5,0);
+  sh.addColorStop(0,"rgba(118,112,98,0)");
+  sh.addColorStop(1,"rgba(118,112,98,0.10)");
+  g.fillStyle=sh;g.fillRect(w*0.18,0,w*0.32,h);
+  chitinSpeck(g,w,h,700,0.12);
+  chitinPores(g,w,h,90);
+});
