@@ -20,6 +20,7 @@ import { scene, camera, renderer, lights, hemi, amb, makeLightRecord, markShared
 import { makeCanvas, texLibWall, texLibCarpet, texLibCarpetBump, texLibCeil, texShelfWood, texDeskWood,
          texCaveRock, texGalv, texBeige, makeKeyboardTexture, makeFloppyTexture,
          makeCrackTexture, makeEndTextTexture, makePosterTexture, makeArtTexture,
+         makeWrapTexture, texTape, texCartPaint, texMannequin,
          makeBookCoverTexture, BOOK_TITLES, BOOK_BASES,
          makeArchiveBoxTexture, BOX_LABELS,
          texPages, texPagesAged, makeOpenPagesTexture, scaleBoxUV } from "./textures.js";
@@ -378,9 +379,144 @@ const darkMetalMat=new THREE.MeshPhongMaterial({color:0x474b50, specular:0x30333
 const beigePlastic=new THREE.MeshPhongMaterial({map:texBeige, specular:0x2a2822, shininess:18});
 const beigePlasticDark=new THREE.MeshPhongMaterial({map:texBeige, color:0x6f6a5b,
   specular:0x222018, shininess:14});
-/* untouched objects "wrapped in plastic packaging" */
-const plasticWrap=new THREE.MeshPhongMaterial({color:0xcfd6da, specular:0x888d92, shininess:60,
-  transparent:true, opacity:0.18, depthWrite:false});
+/* ---- untouched objects, still in their packaging ----
+   This was a BoxGeometry at 0.18 opacity wearing a flat blue-grey, and from
+   any angle that is a cube of fog: a solid you can see a little way into,
+   with six hard corners and not one fold. Three things had to change, and
+   all three matter equally.
+   1. A SHEET IS NOT A BOX. `wrapShape` is a closed surface of revolution
+      about the bundle's axis with a rounded-rectangle section, standing off
+      the object by the slack the film actually has, tucked under at the
+      floor and GATHERED into a twist at the top — plus a fold field that
+      pushes it out of symmetry. Nothing in it is straight.
+   2. The alpha is CREASE-shaped (makeWrapTexture), so what you read is the
+      white lines where the sheet has doubled, not a tinted volume.
+   3. DoubleSide. Seeing the far wall of the bag THROUGH the near one is
+      most of what says "bag" rather than "block" — and with depthWrite off
+      the object inside still occludes the film behind it correctly.
+   And flatShading, which is worth as much as the other three together:
+   crumpled polythene is FACETS meeting at creases, and a smooth-shaded
+   shell of the same silhouette is a bell jar. Each panel takes its own
+   specular, so the bundle breaks up the moment any light moves. */
+const texWrapFilm=makeWrapTexture();
+const plasticWrap=new THREE.MeshPhongMaterial({map:texWrapFilm, color:0xdde6ea,
+  specular:0xb8c4c8, shininess:88, transparent:true, opacity:0.62,
+  depthWrite:false, side:THREE.DoubleSide, flatShading:true});
+/* the tape is DULL and nearly grey: at any real saturation two bands round
+   a wrapped chair read as brass hoops floating in the air, which is the
+   opposite of the thing they are meant to be holding shut */
+const wrapTapeMat=new THREE.MeshPhongMaterial({map:texTape, color:0x8c8a80,
+  specular:0x3a3830, shininess:18, transparent:true, opacity:0.62,
+  depthWrite:false, side:THREE.DoubleSide});
+/* the bundle's surface, as a function of (u around, v base→gather). Both the
+   film and the tape bands sample this one shape, so a band can never float
+   off the sheet it is supposed to be holding shut. */
+function wrapShape(w,d,h){
+  const n=3.2;                                   // rounded-rectangle section
+  const slack=0.035+Math.random()*0.02;          // how far off the object it stands
+  const a=w/2+slack, b=d/2+slack;
+  /* Fold harmonics. k is an INTEGER on purpose — u wraps, and a fractional
+     wavelength puts a hard crease down the seam. The LOW orders carry most
+     of the amplitude and that is the whole point: what makes a bundle read
+     as crumpled is its SILHOUETTE, and the first pass spent its amplitude
+     on k=5 and 7, which is surface ripple you cannot see against the sky.
+     k=1 is the big asymmetric lobe — the side the sheet was pulled from. */
+  const harm=[];
+  for(const[k,a]of[[1,0.150],[2,0.165],[3,0.105],[5,0.045],[7,0.024]])
+    harm.push({k, amp:a*(0.65+Math.random()*0.7),
+               ph:Math.random()*7, vq:(Math.random()-0.5)*9});
+  /* the vq spread above is the other half of it: with a small drift every
+     ridge runs the full height of the bag and the thing comes out FLUTED,
+     like a column. At this spread a fold wanders most of the way round as
+     it rises, which is what a sheet gathered at one end actually does. */
+  const vph=Math.random()*7, vph2=Math.random()*7;
+  const lean=(Math.random()-0.5)*0.05;           // nothing hangs plumb
+  /* envelope: tucked under at the foot, slack and uneven through the body,
+     pinched into the twist at the top — but never to a POINT, which is a
+     cone. It closes on a stub, and the knot sits on that. */
+  const env=v=>{
+    const lump=1+0.055*Math.sin(v*Math.PI*2.6+vph)+0.03*Math.sin(v*Math.PI*4.3+vph2);
+    if(v<0.10) return (0.62+0.38*(v/0.10))*lump;
+    if(v>0.80){ const k=(v-0.80)/0.20; return (1-0.80*(k*k*(3-2*k)))*lump; }
+    return lump;
+  };
+  return (u,v,off)=>{
+    const th=u*Math.PI*2;
+    const e=env(v), taper=Math.min(1,e*1.6);     // folds die into the gather
+    let f=0;
+    for(const q of harm) f+=q.amp*Math.sin(th*q.k+q.ph+v*q.vq);
+    f=f*taper+0.022*Math.sin(v*Math.PI*5+th*2)*taper;
+    const s=(1+f)*e+(off||0);
+    const ct=Math.cos(th), st=Math.sin(th);
+    const r=Math.pow(Math.pow(Math.abs(ct/a),n)+Math.pow(Math.abs(st/b),n),-1/n);
+    return [ct*r*s+lean*h*v, v*h, st*r*s];
+  };
+}
+/* the sheet: a (NU+1)×(NV+1) grid closed with a fan at each pole. It CLOSES
+   at both ends for the lathe reason — an open ring on a DoubleSide surface
+   is a rim you can see the inside of the bag through end-on. */
+function wrapSheetGeo(P,h){
+  /* COARSE on purpose: with flatShading the panel count IS the fold count,
+     and a 32×20 grid gives facets too small to read as anything but a
+     smooth shell */
+  const NU=20, NV=14, pos=[], uv=[], idx=[];
+  const push=(p,u,v)=>{ pos.push(p[0],p[1],p[2]); uv.push(u,v); };
+  for(let j=0;j<=NV;j++)for(let i=0;i<=NU;i++){
+    const u=i/NU, v=j/NV;
+    push(P(u===1?0:u,v),u,v);
+  }
+  const R=NU+1;
+  for(let j=0;j<NV;j++)for(let i=0;i<NU;i++){
+    const A=j*R+i, B=A+1, C=A+R, D=C+1;
+    idx.push(A,C,B, B,C,D);
+  }
+  /* the foot: a fan closing onto the floor, just clear of it */
+  const foot=pos.length/3;
+  push([0,0.004,0],0.5,0);
+  for(let i=0;i<NU;i++) idx.push(foot,i,i+1);
+  /* the knot: the gather twisted up into a short stub, leaning off plumb */
+  const knot=pos.length/3;
+  push([(Math.random()-0.5)*0.05,h+0.055,(Math.random()-0.5)*0.05],0.5,1);
+  const last=NV*R;
+  for(let i=0;i<NU;i++) idx.push(knot,last+i+1,last+i);
+  const g=new THREE.BufferGeometry();
+  g.setAttribute("position",new THREE.Float32BufferAttribute(pos,3));
+  g.setAttribute("uv",new THREE.Float32BufferAttribute(uv,2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+/* a tape band riding the sheet, standing 6mm proud of it */
+function wrapBandGeo(P,v0,v1){
+  const NU=20, pos=[], uv=[], idx=[];
+  for(let j=0;j<2;j++)for(let i=0;i<=NU;i++){
+    const u=i/NU, p=P(u===1?0:u, j?v1:v0, 0.006);
+    pos.push(p[0],p[1],p[2]); uv.push(u*5,j);
+  }
+  const R=NU+1;
+  for(let i=0;i<NU;i++){ const A=i,B=A+1,C=A+R,D=C+1; idx.push(A,C,B, B,C,D); }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute("position",new THREE.Float32BufferAttribute(pos,3));
+  g.setAttribute("uv",new THREE.Float32BufferAttribute(uv,2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+/* w×d footprint, h tall — the film clears the object on every side */
+function makeWrap(w,d,h){
+  const g=new THREE.Group();
+  const P=wrapShape(w,d,h);
+  g.add(new THREE.Mesh(wrapSheetGeo(P,h),plasticWrap));
+  const bands=[];
+  for(const v of[0.24+Math.random()*0.1, 0.58+Math.random()*0.1])
+    if(Math.random()<0.45) bands.push(new THREE.Mesh(wrapBandGeo(P,v,v+0.022),wrapTapeMat));
+  if(bands.length){
+    g.add(mergeStatic(bands,wrapTapeMat));
+    for(const b of bands) b.geometry.dispose();
+  }
+  g.rotation.y=Math.random()*Math.PI*2;          // the fold pattern faces anywhere
+  return g;
+}
 
 /* ---- the books: a pool of distinct, properly 3D volumes ----
    Every design is a real closed book — two cover boards with fore-edge
@@ -848,10 +984,7 @@ function makeChair(wrapped){
     g.add(mergeStatic(arr[0],arr[1]));
     for(const m of arr[0]) m.geometry.dispose();
   }
-  if(wrapped){
-    const wrap=new THREE.Mesh(new THREE.BoxGeometry(0.56,1.12,0.56),plasticWrap);
-    wrap.position.y=0.56; g.add(wrap);
-  }
+  if(wrapped) g.add(makeWrap(0.58,0.58,1.10));
   return g;
 }
 function makeLadder(){
@@ -903,96 +1036,286 @@ function makeLectern(){
   }
   return g;
 }
-/* display mannequins, procedurally varied: build, tilt, which limbs are
-   still attached, whether anyone bothered to give it a head. Similar-ish,
-   never identical — and no reason at all for them to be in a library */
-const mannequinMat=new THREE.MeshPhongMaterial({color:0xb5ada0, specular:0x3a3832, shininess:22});
-const mannequinDark=new THREE.MeshPhongMaterial({color:0x6e675c, specular:0x26241e, shininess:16});
+/* ---- the display forms ----
+   A cylinder with a sphere on it, a sphere for a head and a stick for an
+   arm: a snowman on a pole, and the least convincing thing on the floor.
+   A dress form is a PROFILE — hip, waist, bust, the shoulder slope and the
+   sharp cut at the neck — and turning that profile is the whole difference,
+   exactly as it was for the almond water bottle. Everything here is turned:
+   the body, the head, the cast base, the collars on the pole. The arms are
+   the one exception, and they are jointed rather than a single peg, because
+   a straight stick hanging off a shoulder is a broom handle.
+   Every lathe CLOSES at both poles (radius 0.001): an open ring on a
+   backface-culled shell is a hole you see straight through, which is what
+   put a window in the spider's face.
+   texMannequin is fitted, u around and v base→neck, so its two mould
+   parting seams land where a real two-part shell's do. */
+/* the shell is a MATT painted fibreglass: at the old specular a warm light
+   turned every form in the room into polished brass */
+const mannequinMat=new THREE.MeshPhongMaterial({map:texMannequin, color:0x9a958d,
+  specular:0x1c1b18, shininess:9});
+const mannequinDark=new THREE.MeshPhongMaterial({map:texMannequin, color:0x5c564c,
+  specular:0x141310, shininess:7});
+const mannequinIron=new THREE.MeshPhongMaterial({color:0x3b3a37, specular:0x2a2c2e, shininess:26});
+/* r at t up the body, as a fraction of the widest point. The SHOULDER is
+   the load-bearing part of this list: the first pass ran the radius down
+   smoothly from the chest to the neck, and a smooth taper to a point is a
+   chess piece. A form holds its width to t≈0.86 and then falls off a
+   cliff, and that cliff is the shoulder line. */
+const FORM_PROFILE=[[0.001,0.00],[0.62,0.004],[0.94,0.030],[1.00,0.085],[0.97,0.19],
+                    [0.88,0.30],[0.79,0.40],[0.82,0.49],[0.93,0.59],[1.00,0.68],
+                    [1.00,0.78],[0.97,0.845],[0.86,0.875],[0.58,0.905],[0.33,0.94],
+                    [0.26,0.975],[0.001,1.00]];
+/* the head: an egg with a jaw, closed top and bottom */
+const HEAD_PROFILE=[[0.001,0.00],[0.30,0.03],[0.52,0.12],[0.68,0.26],[0.78,0.44],
+                    [0.80,0.60],[0.72,0.76],[0.52,0.90],[0.28,0.975],[0.001,1.00]];
+const lathe=(prof,R,H,seg)=>new THREE.LatheGeometry(
+  prof.map(([r,t])=>new THREE.Vector2(r*R,t*H)), seg||18);
 function makeMannequin(){
   const g=new THREE.Group(); g.userData.prop="mannequin";
-  const mat=Math.random()<0.78? mannequinMat : mannequinDark;
-  const poleH=0.62+Math.random()*0.22, torsoH=0.6+Math.random()*0.14;
-  const build=0.85+Math.random()*0.35;             // slender → broad
-  /* stand */
-  const foot=new THREE.Mesh(new THREE.CylinderGeometry(0.24,0.27,0.035,12),mannequinDark);
-  foot.position.y=0.0175; g.add(foot);
-  const pole=new THREE.Mesh(new THREE.CylinderGeometry(0.025,0.025,poleH,8),mannequinDark);
-  pole.position.y=0.035+poleH/2; g.add(pole);
-  /* torso group: hips → shoulders, with its own slump */
-  const tg=new THREE.Group(); tg.position.y=0.035+poleH; g.add(tg);
+  const mat=Math.random()<0.76? mannequinMat : mannequinDark;
+  const poleH=0.58+Math.random()*0.22, torsoH=0.66+Math.random()*0.13;
+  const build=0.90+Math.random()*0.28;             // slender → broad
+  /* a real form is ~0.42m across the shoulders. At the old 0.168 base it
+     was 0.34 wide over a 0.7m body, which is a skittle. */
+  const R=0.208*build;
+  const iron=[], skin=[];
+  /* the cast base: a turned disc with a cove rising into the pole boss */
+  iron.push(new THREE.Mesh(new THREE.LatheGeometry([
+    new THREE.Vector2(0.001,0),new THREE.Vector2(0.255,0),new THREE.Vector2(0.262,0.012),
+    new THREE.Vector2(0.245,0.026),new THREE.Vector2(0.14,0.036),new THREE.Vector2(0.075,0.058),
+    new THREE.Vector2(0.055,0.088),new THREE.Vector2(0.001,0.092)],20)));
+  /* two-stage pole with a knurled collar and the thumbscrew nobody undid */
+  const lower=new THREE.Mesh(new THREE.CylinderGeometry(0.021,0.023,poleH*0.55,10));
+  lower.position.y=0.05+poleH*0.275; iron.push(lower);
+  const upper=new THREE.Mesh(new THREE.CylinderGeometry(0.016,0.016,poleH*0.52,10));
+  upper.position.y=0.05+poleH*0.74; iron.push(upper);
+  const collar=new THREE.Mesh(new THREE.CylinderGeometry(0.030,0.030,0.036,12));
+  collar.position.y=0.05+poleH*0.55; iron.push(collar);
+  const screw=new THREE.Mesh(new THREE.CylinderGeometry(0.008,0.008,0.05,8));
+  screw.rotation.z=Math.PI/2; screw.position.set(0.03,0.05+poleH*0.55,0); iron.push(screw);
+  const wing=new THREE.Mesh(new THREE.BoxGeometry(0.008,0.028,0.014));
+  wing.position.set(0.054,0.05+poleH*0.55,0); iron.push(wing);
+  /* the body, on its own slump */
+  const tg=new THREE.Group(); tg.position.y=0.05+poleH; g.add(tg);
   tg.rotation.x=(Math.random()-0.5)*0.14; tg.rotation.z=(Math.random()-0.5)*0.18;
-  const torso=new THREE.Mesh(new THREE.CylinderGeometry(0.155*build,0.125*build,torsoH,10),mat);
-  torso.scale.z=0.62; torso.position.y=torsoH/2; tg.add(torso);
-  const should=new THREE.Mesh(new THREE.SphereGeometry(0.155*build,10,8),mat);
-  should.scale.set(1.08,0.5,0.62); should.position.y=torsoH; tg.add(should);
-  /* arms: each independently present, hung straight-ish down */
-  for(const sx of[-1,1]) if(Math.random()<0.62){
-    const aL=0.5+Math.random()*0.1;
-    const arm=new THREE.Mesh(new THREE.CylinderGeometry(0.032,0.026,aL,7),mat);
-    arm.position.set(sx*(0.165*build+0.03),torsoH-aL/2+0.03,0);
-    arm.rotation.z=sx*(0.06+Math.random()*0.2);
-    arm.rotation.x=(Math.random()-0.5)*0.24;
-    tg.add(arm);
+  tg.rotation.y=Math.random()*Math.PI*2;
+  const torso=new THREE.Mesh(lathe(FORM_PROFILE,R,torsoH,22));
+  torso.scale.z=0.63; tg.add(torso); skin.push(torso);
+  /* arms: shoulder → elbow → wrist, each joint a real break in the line.
+     Each one independently still attached. */
+  const shY=torsoH*0.855, shR=R*0.93;
+  for(const sx of[-1,1]) if(Math.random()<0.6){
+    const ag=new THREE.Group();
+    ag.position.set(sx*shR,shY,0);
+    ag.rotation.order="YXZ";
+    ag.rotation.z=sx*(0.10+Math.random()*0.18);
+    ag.rotation.x=(Math.random()-0.5)*0.3;
+    tg.add(ag);
+    const uL=0.27+Math.random()*0.04;
+    const ball=new THREE.Mesh(new THREE.SphereGeometry(0.056,10,8));
+    ball.scale.set(1,0.86,1); ag.add(ball); skin.push(ball);
+    const up=new THREE.Mesh(new THREE.CylinderGeometry(0.050,0.038,uL,9));
+    up.position.y=-uL/2; ag.add(up); skin.push(up);
+    const eg=new THREE.Group(); eg.position.y=-uL; ag.add(eg);
+    eg.rotation.x=-(0.14+Math.random()*0.55);      // the elbow, never locked
+    const el=new THREE.Mesh(new THREE.SphereGeometry(0.040,9,8));
+    eg.add(el); skin.push(el);
+    const fL=0.25+Math.random()*0.04;
+    const fore=new THREE.Mesh(new THREE.CylinderGeometry(0.037,0.026,fL,9));
+    fore.position.y=-fL/2; eg.add(fore); skin.push(fore);
+    /* and a bare wrist peg where the hand should have gone */
+    const wr=new THREE.Mesh(new THREE.CylinderGeometry(0.018,0.014,0.055,8));
+    wr.position.y=-fL-0.022; eg.add(wr); skin.push(wr);
   }
-  /* head: usually. A bare neck spike otherwise */
-  const neck=new THREE.Mesh(new THREE.CylinderGeometry(0.022,0.03,0.09,7),mat);
-  neck.position.y=torsoH+0.07; tg.add(neck);
-  if(Math.random()<0.7){
-    const head=new THREE.Mesh(new THREE.SphereGeometry(0.105,10,9),mat);
-    head.scale.set(0.88,1.22,0.92); head.position.y=torsoH+0.22;
-    head.rotation.y=(Math.random()-0.5)*1.6;       // looking somewhere. Not at you. Probably.
-    head.rotation.z=(Math.random()-0.5)*0.22;
-    tg.add(head);
+  /* the head. Turned, closed, faceless — with just enough of a nose that an
+     egg on a neck resolves as looking somewhere. It has to be SMALL and
+     sunk into the skull: at 22×55mm and standing clear of the surface it
+     stopped being a nose and became a beak. */
+  const makeHead=()=>{
+    const hg=new THREE.Group();
+    const hd=new THREE.Mesh(lathe(HEAD_PROFILE,0.118,0.245,18));
+    hd.scale.set(0.90,1,0.96); hg.add(hd); skin.push(hd);
+    const nose=new THREE.Mesh(new THREE.ConeGeometry(0.017,0.032,7));
+    nose.rotation.x=Math.PI/2*0.86; nose.position.set(0,0.140,0.083); hg.add(nose); skin.push(nose);
+    return hg;
+  };
+  const neck=new THREE.Mesh(new THREE.CylinderGeometry(0.030,0.048,0.105,10));
+  neck.position.y=torsoH+0.042; tg.add(neck); skin.push(neck);
+  /* the packaging is decided FIRST, because it constrains the head: a form
+     still sealed in its film cannot have its head lying on the floor
+     outside the bag, and the two rolled independently the first time */
+  const wrapped=Math.random()<0.24;
+  const r=wrapped? Math.random()*0.84 : Math.random();
+  if(r<0.66){
+    const hg=makeHead();
+    hg.position.y=torsoH+0.088;
+    hg.rotation.y=(Math.random()-0.5)*1.7;         // looking somewhere. Not at you. Probably.
+    hg.rotation.z=(Math.random()-0.5)*0.22;
+    tg.add(hg);
+  } else if(r<0.84){
+    /* the head came off, and lies on the floor beside the base. It rests on
+       its own widest radius — parked at a fixed 0.115 it floated, and an
+       egg hovering 2cm off a carpet reads as a dropped plate. */
+    const hg=makeHead();
+    const a=Math.random()*Math.PI*2, dd=0.34+Math.random()*0.26;
+    hg.position.set(Math.sin(a)*dd,0.118*0.90,Math.cos(a)*dd);
+    hg.rotation.set(Math.PI*0.5,Math.random()*7,(Math.random()-0.5)*0.5);
+    g.add(hg);
+  } else {
+    /* neither: a turned finial capping the neck, the way an unused form
+       leaves the factory */
+    const fin=new THREE.Mesh(new THREE.LatheGeometry([
+      new THREE.Vector2(0.001,0),new THREE.Vector2(0.034,0.004),new THREE.Vector2(0.024,0.022),
+      new THREE.Vector2(0.038,0.048),new THREE.Vector2(0.022,0.070),new THREE.Vector2(0.001,0.078)],12));
+    fin.position.y=torsoH+0.092; tg.add(fin); iron.push(fin);
   }
+  /* two merged meshes, whatever the variant rolled: the shell and the iron.
+     mergeStatic bakes each part's world matrix, so the slump, the arm poses
+     and the non-uniform torso scale all come along — but ONLY if the pose
+     groups above them are current. Object3D.updateMatrixWorld reads its
+     PARENT's matrixWorld and does not walk up to build it, so without this
+     one call every limb merges at the body's origin. */
+  g.updateMatrixWorld(true);
+  const merged=[];
+  for(const[arr,m]of[[skin,mat],[iron,mannequinIron]]){
+    if(!arr.length) continue;
+    merged.push(mergeStatic(arr,m));
+    for(const p of arr) p.geometry.dispose();
+  }
+  for(const c of[...g.children]) g.remove(c);      // the pose groups have done their job
+  for(const m of merged) g.add(m);
   /* a few are still in their packaging */
-  if(Math.random()<0.22){
-    const wrap=new THREE.Mesh(new THREE.BoxGeometry(0.52,poleH+torsoH+0.4,0.4),plasticWrap);
-    wrap.position.y=(poleH+torsoH+0.4)/2; g.add(wrap);
-  }
+  if(wrapped) g.add(makeWrap(0.60,0.48,poleH+torsoH+0.30));
   return g;
 }
-/* a returns trolley nobody pushed back — now actually loaded: runs of
-   shelved spines on the lower decks, strays leaning on top, a push handle
-   and a stencilled plaque on one side */
+/* ---- the returns trolley ----
+   It was eleven bare boxes wearing one flat grey — no finish, no formed
+   edges, and four discs lying on their sides for castors, which is the
+   detail that decided the whole object read as a shelf unit somebody had
+   drawn wheels on. A book truck is SHEET STEEL: every edge of it is folded
+   over, which is both how it gets its stiffness and the only reason it
+   catches a light at all. So each deck here is a plate with a hemmed lip
+   turned down on both long edges, the ends are pressed panels with a swage
+   across them, the corners take real rubber bumpers, and each castor is a
+   top plate + swivel + fork + a rubber tyre on a hub.
+   Three merged draws (paint · rubber · bright steel) plus the load, where
+   the old one cost eleven before a single book went on it. */
+/* Institutional enamel, and DESATURATED — the first pass offered an oxide
+   red, and a warm saturated tint over a bright map turns a hemmed steel
+   deck into an orange plank: the whole truck read as joinery, in a room
+   that is already made of joinery. Nothing here can be mistaken for wood. */
+const cartPaintMats=[0x9aa39c,0x7c848c,0xa5a29a].map(c=>new THREE.MeshPhongMaterial(
+  {map:texCartPaint, color:c, specular:0x35383a, shininess:34}));
+const cartRubberMat=new THREE.MeshPhongMaterial({color:0x1b1c1e, specular:0x2a2c2e, shininess:14});
+const cartSteelMat=new THREE.MeshPhongMaterial({map:texBrushed, color:0xa8aeb4,
+  specular:0x8a9096, shininess:70});
+const DECKS=[0.175,0.535,0.895];
 function makeBookCart(){
   const g=new THREE.Group(); g.userData.prop="cart";
-  for(const sx of[-0.42,0.42]){
-    const side=new THREE.Mesh(new THREE.BoxGeometry(0.05,0.86,0.56),darkMetalMat);
-    side.position.set(sx,0.5,0); g.add(side);
+  const paint=[], rubber=[], steel=[];
+  /* every painted box maps its finish at one world scale, so a 0.9m panel
+     and an 18mm lip carry the same enamel */
+  const pbox=(w,h,d,x,y,z)=>{
+    const m=new THREE.Mesh(scaleBoxUV(new THREE.BoxGeometry(w,h,d),w,h,d,0.5));
+    m.position.set(x,y,z); paint.push(m); return m;
+  };
+  const FRAME_B=0.115, TOP=0.965;                 // frame underside / top of the ends
+  /* the two end panels: a skin, a rolled rib all the way round it, and a
+     pressed swage across the middle. The rib is what stops a 3mm plate
+     reading as card. */
+  for(const sx of[-1,1]){
+    const ex=sx*0.455;
+    pbox(0.028,TOP-FRAME_B,0.50, ex,(TOP+FRAME_B)/2,0);
+    for(const ey of[FRAME_B+0.022,TOP-0.022])     // top & bottom rails of the rib
+      pbox(0.040,0.044,0.50, ex,ey,0);
+    for(const ez of[-0.23,0.23])                  // and its stiles
+      pbox(0.040,TOP-FRAME_B,0.044, ex,(TOP+FRAME_B)/2,ez);
+    pbox(0.038,0.030,0.46, ex,(TOP+FRAME_B)/2,0); // the swage
   }
-  for(const sy of[0.16,0.52,0.88]){
-    const shelf=new THREE.Mesh(new THREE.BoxGeometry(0.84,0.035,0.52),darkMetalMat);
-    shelf.position.y=sy; g.add(shelf);
+  /* the decks. Plate + a hem folded DOWN on each long edge — the shadow
+     under that hem is most of what says "formed" rather than "cut". */
+  for(const sy of DECKS){
+    pbox(0.88,0.020,0.50, 0,sy,0);
+    for(const sz of[-0.24,0.24]) pbox(0.88,0.046,0.018, 0,sy-0.031,sz);
   }
-  /* a low retaining rail along each long edge of the top deck */
-  for(const sz of[-0.245,0.245]){
-    const rail=new THREE.Mesh(new THREE.BoxGeometry(0.84,0.05,0.025),darkMetalMat);
-    rail.position.set(0,0.93,sz); g.add(rail);
+  /* the top deck alone gets retaining rails, standing proud */
+  for(const sz of[-0.245,0.245]) pbox(0.88,0.052,0.020, 0,DECKS[2]+0.036,sz);
+  /* a bottom apron tying the ends together under the lowest deck */
+  for(const sz of[-0.235,0.235]) pbox(0.90,0.055,0.020, 0,FRAME_B+0.030,sz);
+  /* corner bumpers: rubber, full height, and the reason a real truck can be
+     driven into a shelf end for thirty years without marking either */
+  for(const sx of[-1,1])for(const sz of[-1,1]){
+    const b=new THREE.Mesh(new THREE.CylinderGeometry(0.019,0.019,TOP-FRAME_B,10));
+    b.position.set(sx*0.452,(TOP+FRAME_B)/2,sz*0.245); rubber.push(b);
   }
-  /* push handle arcing off one end */
-  for(const sz of[-0.2,0.2]){
-    const post=new THREE.Mesh(new THREE.BoxGeometry(0.035,0.26,0.035),darkMetalMat);
-    post.position.set(0.46,1.0,sz); post.rotation.z=-0.2; g.add(post);
+  /* the push handle: a bent tube, so the corners are ELBOWS. Two uprights,
+     two quarter-torus bends and a crossbar, with a grip sleeve on it. */
+  const HX=0.455, HZ=0.20, HY=TOP+0.20, EB=0.055;   // elbow radius
+  for(const sz of[-1,1]){
+    const pl=HY-EB-TOP;
+    const post=new THREE.Mesh(new THREE.CylinderGeometry(0.016,0.016,pl,10));
+    post.position.set(HX,TOP+pl/2,sz*HZ); steel.push(post);
+    /* a TorusGeometry sweeps in its own XY plane from +x toward +y. Turning
+       it about Y by ∓90° swings that +x end onto ±z: the arc then leaves the
+       upright travelling vertically and arrives at the crossbar travelling
+       along z, which is exactly a bend. Get the sign wrong on one side and
+       that elbow curls out into the room. */
+    const el=new THREE.Mesh(new THREE.TorusGeometry(EB,0.016,7,9,Math.PI/2));
+    el.rotation.y=sz>0? -Math.PI/2 : Math.PI/2;
+    el.position.set(HX,HY-EB,sz*(HZ-EB));
+    steel.push(el);
   }
-  const grip=new THREE.Mesh(new THREE.CylinderGeometry(0.022,0.022,0.46,8),darkMetalMat);
-  grip.rotation.x=Math.PI/2; grip.position.set(0.485,1.12,0); g.add(grip);
-  for(const[sx,sz]of[[-0.36,-0.2],[0.36,-0.2],[-0.36,0.2],[0.36,0.2]]){
-    const caster=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,0.04,8),darkMetalMat);
-    caster.rotation.z=Math.PI/2; caster.position.set(sx,0.05,sz); g.add(caster);
+  const bar=new THREE.Mesh(new THREE.CylinderGeometry(0.016,0.016,2*(HZ-EB),10));
+  bar.rotation.x=Math.PI/2; bar.position.set(HX,HY,0); steel.push(bar);
+  const grip=new THREE.Mesh(new THREE.CylinderGeometry(0.023,0.023,0.26,12));
+  grip.rotation.x=Math.PI/2; grip.position.set(HX,HY,0); rubber.push(grip);
+  /* castors. Two rigid under the far end, two swivel under the handle —
+     and the swivel pair is left wherever it was last shoved. */
+  for(const[sx,sz]of[[-1,-1],[-1,1],[1,-1],[1,1]]){
+    const cg=new THREE.Group();
+    cg.position.set(sx*0.375,0,sz*0.19);
+    cg.rotation.y=sx>0? (Math.random()-0.5)*2.4 : 0;   // only the swivels wander
+    g.add(cg);
+    const plate=new THREE.Mesh(new THREE.BoxGeometry(0.072,0.008,0.072));
+    plate.position.y=FRAME_B-0.004; cg.add(plate); steel.push(plate);
+    const king=new THREE.Mesh(new THREE.CylinderGeometry(0.020,0.024,0.030,10));
+    king.position.y=FRAME_B-0.023; cg.add(king); steel.push(king);
+    const off=sx>0? 0.016:0;                      // a swivel castor trails its axle
+    for(const fs of[-1,1]){                       // the fork cheeks
+      const ch=new THREE.Mesh(new THREE.BoxGeometry(0.012,0.060,0.046));
+      ch.position.set(fs*0.033,0.062,-off); cg.add(ch); steel.push(ch);
+    }
+    const axle=new THREE.Mesh(new THREE.CylinderGeometry(0.006,0.006,0.078,6));
+    axle.rotation.z=Math.PI/2; axle.position.set(0,0.050,-off); cg.add(axle); steel.push(axle);
+    const tyre=new THREE.Mesh(new THREE.CylinderGeometry(0.050,0.050,0.030,14));
+    tyre.rotation.z=Math.PI/2; tyre.position.set(0,0.050,-off); cg.add(tyre); rubber.push(tyre);
+    for(const hs of[-1,1]){
+      const hub=new THREE.Mesh(new THREE.CylinderGeometry(0.024,0.024,0.006,10));
+      hub.rotation.z=Math.PI/2; hub.position.set(hs*0.017,0.050,-off); cg.add(hub); steel.push(hub);
+    }
   }
+  g.updateMatrixWorld(true);                      // the castor groups carry a pose
+  const tint=cartPaintMats[Math.floor(Math.random()*cartPaintMats.length)];
+  const built=[];
+  for(const[arr,m]of[[paint,tint],[rubber,cartRubberMat],[steel,cartSteelMat]]){
+    built.push(mergeStatic(arr,m));
+    for(const p of arr) p.geometry.dispose();
+  }
+  for(const c of[...g.children]) g.remove(c);
+  for(const m of built) g.add(m);
   /* its last load: 2–12 real volumes nobody reshelved — some standing
      (one usually slumped), the rest lying flat on the decks */
   let load=2+Math.floor(Math.random()*11);
-  const decks=[0.16,0.52,0.88];
   let guard=40;
   const used=[];                       // [deckY, x0, x1] claims
   while(load>0&&guard-->0){
-    const sy=decks[Math.floor(Math.random()*decks.length)]+0.0175;
+    const sy=DECKS[Math.floor(Math.random()*DECKS.length)]+0.010;
     const s=Math.random()<0.5?1:-1;
     const des=pickBook();
     const flat=Math.random()<0.35;
     const hw=flat? des.h/2+0.02 : des.tx/2+0.02;
-    const bx=rand(-0.34+hw,0.34-hw);
+    const bx=rand(-0.36+hw,0.36-hw);
     if(used.some(([uy,a,b])=>uy===sy&&a<bx+hw&&b>bx-hw)) continue;
     used.push([sy,bx-hw,bx+hw]);
     spawnBook(g,des,bx,sy,rand(-0.08,0.08),s,
@@ -1000,15 +1323,205 @@ function makeBookCart(){
           : {lean:Math.random()<0.5?(Math.random()-0.5)*0.5:0});
     load--;
   }
-  /* a stencilled RETURNS plaque hanging off the handle end */
-  const plq=new THREE.Mesh(new THREE.PlaneGeometry(0.42,0.105),
+  /* the RETURNS card, in a real holder screwed to the end panel */
+  const hold=new THREE.Mesh(new THREE.BoxGeometry(0.010,0.13,0.44),cartSteelMat);
+  hold.position.set(0.474,0.72,0); g.add(hold);
+  const plq=new THREE.Mesh(new THREE.PlaneGeometry(0.40,0.10),
     new THREE.MeshPhongMaterial({map:makeEndTextTexture("RETURNS"), transparent:true,
       specular:0x000000, shininess:1}));
-  plq.position.set(0.452,0.74,0); plq.rotation.y=Math.PI/2;
+  plq.position.set(0.480,0.72,0); plq.rotation.y=Math.PI/2;
   g.add(plq);
   g.rotation.z=(Math.random()-0.5)*0.02;
   return g;
 }
+/* ================= framed artwork =================
+   Fourteen flat planes with a brown border drawn into the canvas. A picture
+   on a wall is not an image — it is a MOULDING with an image inside it, and
+   the three things that say so are all things a print cannot do: the frame
+   is a profile that steps forward out of the wall and catches the strip
+   lights along its top edge, the mat has a bevel cut through it that takes
+   a different angle of light than the board around it, and there is GLASS,
+   which is most of what anyone actually looks at on a picture.
+   All of it is real geometry here, and none of it is expensive, because
+   every piece's frame/mat/glass is merged ACROSS the whole room by material
+   at the end of the hang: 34 pictures cost ~40 draws, where the 14 flat
+   planes cost 14. The art plates stay individual — each is its own canvas. */
+const texGilt=makeCanvas(128,128,(g,w,h)=>{
+  g.fillStyle="#b89a54";g.fillRect(0,0,w,h);
+  for(let i=0;i<420;i++){                        // the burnish, laid one way
+    g.fillStyle=`rgba(${Math.random()<0.5?142:236},${Math.random()<0.5?116:214},${Math.random()<0.5?58:148},${0.06+Math.random()*0.16})`;
+    g.fillRect(Math.random()*w,Math.random()*h,3+Math.random()*22,1);
+  }
+  for(let i=0;i<40;i++){                         // rubbed back to the red bole
+    const x=Math.random()*w,y=Math.random()*h,r=2+Math.random()*7;
+    g.beginPath();
+    for(let k=0;k<=8;k++){
+      const a=k/8*Math.PI*2, rr=r*(0.5+Math.random()*0.8);
+      const px=x+Math.cos(a)*rr, py=y+Math.sin(a)*rr;
+      k? g.lineTo(px,py) : g.moveTo(px,py);
+    }
+    g.closePath();
+    g.fillStyle=`rgba(${118+Math.random()*30|0},${62+Math.random()*24|0},${40+Math.random()*20|0},${0.35+Math.random()*0.4})`;
+    g.fill();
+  }
+  for(let i=0;i<150;i++){                        // craquelure: short and kinked
+    let px=Math.random()*w, py=Math.random()*h, a=Math.random()*7;
+    g.strokeStyle=`rgba(74,54,26,${0.14+Math.random()*0.24})`;g.lineWidth=0.7;
+    g.beginPath();g.moveTo(px,py);
+    for(let s=0;s<3;s++){
+      a+=(Math.random()-0.5)*1.6;
+      px+=Math.cos(a)*(3+Math.random()*6); py+=Math.sin(a)*(3+Math.random()*6);
+      g.lineTo(px,py);
+    }
+    g.stroke();
+  }
+  for(let i=0;i<300;i++){                        // dust in the hollows
+    g.fillStyle=`rgba(58,48,30,${0.05+Math.random()*0.14})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1,1);
+  }
+});
+texGilt.wrapS=texGilt.wrapT=THREE.RepeatWrapping;
+/* mat board: paper, so almost featureless on purpose — a fibre tooth and
+   the foxing forty damp years puts on rag board, and nothing else */
+const texMatBoard=makeCanvas(128,128,(g,w,h)=>{
+  g.fillStyle="#cdc4ac";g.fillRect(0,0,w,h);
+  for(let i=0;i<1800;i++){
+    const v=Math.random()<0.5;
+    g.fillStyle=`rgba(${v?176:236},${v?168:230},${v?142:206},${0.05+Math.random()*0.1})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*2,1);
+  }
+  for(let i=0;i<14;i++){
+    const x=Math.random()*w,y=Math.random()*h,r=3+Math.random()*13;
+    const gr=g.createRadialGradient(x,y,0.5,x,y,r);
+    gr.addColorStop(0,`rgba(122,90,42,${0.06+Math.random()*0.13})`);
+    gr.addColorStop(1,"rgba(122,90,42,0)");
+    g.fillStyle=gr;g.beginPath();g.arc(x,y,r,0,7);g.fill();
+  }
+});
+texMatBoard.wrapS=texMatBoard.wrapT=THREE.RepeatWrapping;
+/* the glazing's own dirt — alpha-shaped, so it is wipe MARKS and dust, never
+   a translucent sheet. Without it a pane with no light on it is invisible. */
+const texGlassFilm=makeCanvas(128,128,(g,w,h)=>{
+  g.clearRect(0,0,w,h);
+  for(let i=0;i<16;i++){                         // the arcs of a cloth, long ago
+    const y=Math.random()*h, a=(Math.random()-0.5)*0.5;
+    g.save();g.translate(w/2,y);g.rotate(a);
+    const gr=g.createLinearGradient(-w/2,0,w/2,0);
+    gr.addColorStop(0,"rgba(226,232,234,0)");
+    gr.addColorStop(0.5,`rgba(226,232,234,${0.06+Math.random()*0.1})`);
+    gr.addColorStop(1,"rgba(226,232,234,0)");
+    g.fillStyle=gr;g.fillRect(-w/2,-1.5-Math.random()*3,w,3+Math.random()*6);
+    g.restore();
+  }
+  for(let i=0;i<420;i++){
+    g.fillStyle=`rgba(212,216,214,${0.05+Math.random()*0.16})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1,1);
+  }
+});
+texGlassFilm.wrapS=texGlassFilm.wrapT=THREE.RepeatWrapping;
+const frameGiltMat =new THREE.MeshPhongMaterial({map:texGilt, specular:0xa08850, shininess:58});
+const frameEbonyMat=new THREE.MeshPhongMaterial({map:texDeskWood, color:0x4a4038,
+  specular:0x2a241c, shininess:26});
+const frameOakMat  =new THREE.MeshPhongMaterial({map:texShelfWood, color:0x9a8a70,
+  specular:0x241c12, shininess:14});
+const artMatMat  =new THREE.MeshPhongMaterial({map:texMatBoard, specular:0x141210, shininess:4});
+const artBackMat =new THREE.MeshPhongMaterial({color:0x2a251f, specular:0x0a0908, shininess:3});
+const artGlassMat=new THREE.MeshPhongMaterial({map:texGlassFilm, color:0xcdd6da,
+  specular:0xffffff, shininess:120, transparent:true, opacity:0.55, depthWrite:false});
+const FRAME_MATS=[frameGiltMat,frameEbonyMat,frameOakMat];
+/* the hang rejects pieces that will not fit their wall; these are the
+   materials it must NOT dispose on the way out (every piece owns its own
+   art canvas and crack decal, and those it must) */
+const SHARED_ART=new Set([frameGiltMat,frameEbonyMat,frameOakMat,
+                          artMatMat,artBackMat,artGlassMat]);
+/* one hung picture. Everything is built in the piece's own frame with the
+   wall at z=0 and the room at +z; the caller places the group, and the bulk
+   parts are merged room-wide afterwards. */
+function makeFramedArt(sw){
+  const g=new THREE.Group();
+  const bulk=[];                                  // [mesh, material] — merged later
+  const sh=sw*1.25;                               // the plate's own proportion
+  const empty=Math.random()<0.10;
+  const matted=!empty&&Math.random()<0.6;
+  const mb=matted? sw*(0.09+Math.random()*0.07) : 0;
+  const oval=matted&&Math.random()<0.22;
+  const glazed=!empty&&Math.random()<0.78;
+  const ow=sw+2*mb, oh=sh+2*mb;                   // the frame's opening
+  const mw=0.030+Math.random()*0.045, md=0.032+Math.random()*0.036;
+  const fm=FRAME_MATS[Math.floor(Math.random()*FRAME_MATS.length)];
+  const put=(geo,mat,x,y,z)=>{
+    const m=new THREE.Mesh(geo,mat); m.position.set(x,y,z); g.add(m);
+    bulk.push([m,mat]); return m;
+  };
+  const fbox=(w,h,d,x,y,z,mat)=>
+    put(scaleBoxUV(new THREE.BoxGeometry(w,h,d),w,h,d,0.35),mat,x,y,z);
+  /* the backing board fills the rebate — and IS the picture once the plate
+     has gone, which is what an empty frame in this building looks like */
+  fbox(ow+2*mw*0.7,oh+2*mw*0.7,0.014, 0,0,0.007, artBackMat);
+  /* the moulding: three courses stepping FORWARD as they step OUT, so the
+     top member throws a shadow line down the wall and the outer bead is the
+     first thing any light finds */
+  for(const[cw,a,b]of[[mw,0,0.30],[mw*0.70,0.30,0.66],[mw*0.34,0.66,1.0]]){
+    const inW=ow+2*(mw-cw), inH=oh+2*(mw-cw);
+    const z0=a*md, z1=b*md, t=z1-z0, cz=(z0+z1)/2;
+    fbox(inW+2*cw, cw, t, 0, (inH+cw)/2, cz, fm);
+    fbox(inW+2*cw, cw, t, 0,-(inH+cw)/2, cz, fm);
+    fbox(cw, inH, t,  (inW+cw)/2, 0, cz, fm);
+    fbox(cw, inH, t, -(inW+cw)/2, 0, cz, fm);
+  }
+  if(!empty){
+    const art=new THREE.Mesh(new THREE.PlaneGeometry(sw,sh),
+      new THREE.MeshPhongMaterial({map:makeArtTexture(), specular:0x0a0a0a, shininess:8}));
+    art.position.z=0.016; g.add(art);             // its own canvas: never merged
+  }
+  if(matted){
+    const MZ=md*0.30-0.004;
+    if(oval){
+      /* an oval opening cannot be made of boxes, and the oval IS the point
+         of it — a ShapeGeometry with an elliptical hole instead */
+      const s=new THREE.Shape();
+      s.moveTo(-ow/2,-oh/2); s.lineTo(ow/2,-oh/2); s.lineTo(ow/2,oh/2);
+      s.lineTo(-ow/2,oh/2); s.closePath();
+      const hole=new THREE.Path();
+      hole.absellipse(0,0,sw*0.46,sh*0.46,0,Math.PI*2,true);
+      s.holes.push(hole);
+      put(new THREE.ShapeGeometry(s,32),artMatMat,0,0,MZ);
+    } else {
+      for(const[w2,h2,x2,y2]of[[ow,mb,0,(sh+mb)/2],[ow,mb,0,-(sh+mb)/2],
+                               [mb,sh,(sw+mb)/2,0],[mb,sh,-(sw+mb)/2,0]])
+        fbox(w2,h2,0.006, x2,y2,MZ+0.003, artMatMat);
+      /* the BEVEL: a strip turned 45° at the sight edge. It is the same
+         board as the mat and reads as a different tone purely because it
+         faces somewhere else, which is exactly what a cut bevel does. */
+      const bv=mb*0.30;
+      for(const[w2,h2,x2,y2,rx,rz]of[
+        [sw,bv,0, (sh+bv*0.7)/2, -Math.PI/4,0],[sw,bv,0,-(sh+bv*0.7)/2, Math.PI/4,0],
+        [bv,sh,(sw+bv*0.7)/2,0, 0,Math.PI/4],[bv,sh,-(sw+bv*0.7)/2,0, 0,-Math.PI/4]]){
+        const m=fbox(w2,h2,0.004, x2,y2,MZ,artMatMat);
+        m.rotation.x=rx; m.rotation.z=rz;
+      }
+    }
+  }
+  if(glazed){
+    const gz=md*0.66-0.004;
+    put(new THREE.PlaneGeometry(ow*0.99,oh*0.99),artGlassMat,0,0,gz);
+    if(Math.random()<0.16){
+      /* and some of it has gone. makeCrackTexture grows a crack for a 3m
+         wall — stretched over the whole pane it comes out as one black
+         branch the size of the picture. It runs at a THIRD of the opening
+         and off-centre, so it reads as a break from one impact instead. */
+      const cs=Math.min(ow,oh)*0.62;
+      const cr=new THREE.Mesh(new THREE.PlaneGeometry(cs*0.55,cs),
+        new THREE.MeshPhongMaterial({map:makeCrackTexture(), transparent:true,
+          opacity:0.6, depthWrite:false, specular:0x000000, shininess:1}));
+      cr.position.set((Math.random()-0.5)*ow*0.34,(Math.random()-0.5)*oh*0.3,gz+0.002);
+      cr.rotation.z=Math.random()*Math.PI*2;
+      g.add(cr);
+    }
+  }
+  return {g, bulk, w:ow+2*mw, h:oh+2*mw};
+}
+
 /* ---- a floor globe on a wooden stand — the geography is long gone ----
    The old sphere wore seven wobbly blobs on a 128×64 canvas and read, at
    any distance, as a mouldy ball. It is a real cartographic surface now:
@@ -1761,7 +2274,13 @@ export function buildLibrary(){
   {
     const p=cellToWorld2(exC,eyC);
     const dp=new THREE.Vector3(p.x,0,p.z-CELL/2);
-    const elev=makeElevator(dp,Math.PI,{wallH:LIB_WALL_H, wallMat:libWallMat, uvTile:4});
+    /* `wrecked` is what makes this cab the one the brakes failed on rather
+       than a second working elevator: the inspection hatch forced open and
+       hanging into the car, the egg-crate short two bars, the back panel
+       broken, one leaf out of its track. The 0.022 lean was all the damage
+       it used to carry, and a lean on its own just reads as sloppy build. */
+    const elev=makeElevator(dp,Math.PI,{wallH:LIB_WALL_H, wallMat:libWallMat, uvTile:4,
+                                        wrecked:true});
     elev.rotation.z=0.022;                       // it did not land well
     scene.add(elev);
     LIB.elev=elev;
@@ -1867,14 +2386,22 @@ export function buildLibrary(){
      The stretch of south wall holding the crashed cab stays bare: nothing
      may spawn over (or hang beside) the elevator. */
   const wallFaces=[];
+  /* a face is only dressable if the cell in FRONT of it is open: a shelf run
+     that anchors into the perimeter fills the cell against the wall, and
+     anything hung there — a poster, and now a 70mm-deep frame — grows out
+     through the end of the stack */
+  const faceOK=(cx,cy)=>grid2[cy]&&grid2[cy][cx]===0;
   for(let x=1;x<LW-1;x++){
-    wallFaces.push({x:cellToWorld2(x,0).x,        z:cellToWorld2(x,0).z+CELL/2+0.03,  ry:0});
-    if(Math.abs(x-exC)>1)
+    if(faceOK(x,1))
+      wallFaces.push({x:cellToWorld2(x,0).x,      z:cellToWorld2(x,0).z+CELL/2+0.03,  ry:0});
+    if(Math.abs(x-exC)>1&&faceOK(x,LH-2))
       wallFaces.push({x:cellToWorld2(x,LH-1).x,   z:cellToWorld2(x,LH-1).z-CELL/2-0.03, ry:Math.PI});
   }
   for(let y=1;y<LH-1;y++){
-    wallFaces.push({x:cellToWorld2(0,y).x+CELL/2+0.03,  z:cellToWorld2(0,y).z, ry:Math.PI/2});
-    wallFaces.push({x:cellToWorld2(LW-1,y).x-CELL/2-0.03, z:cellToWorld2(LW-1,y).z, ry:-Math.PI/2});
+    if(faceOK(1,y))
+      wallFaces.push({x:cellToWorld2(0,y).x+CELL/2+0.03,  z:cellToWorld2(0,y).z, ry:Math.PI/2});
+    if(faceOK(LW-2,y))
+      wallFaces.push({x:cellToWorld2(LW-1,y).x-CELL/2-0.03, z:cellToWorld2(LW-1,y).z, ry:-Math.PI/2});
   }
   for(let i=wallFaces.length-1;i>0;i--){
     const j=Math.floor(srand()*(i+1)); [wallFaces[i],wallFaces[j]]=[wallFaces[j],wallFaces[i]];
@@ -1902,17 +2429,82 @@ export function buildLibrary(){
     po.rotation.y=f.ry; po.rotation.z=(srand()-0.5)*0.12;
     scene.add(po);
   }
-  /* framed artwork: five families of almost-library pieces — donor
-     portraits with no face, collection maps to nowhere, acuity charts
-     that test something else entirely */
-  for(let i=0;i<14;i++){
-    const f=take();
-    const aw=rand(0.95,1.25);
-    const art=new THREE.Mesh(new THREE.PlaneGeometry(aw,aw*1.29),
-      new THREE.MeshPhongMaterial({map:makeArtTexture(), specular:0x0a0a0a, shininess:8}));
-    art.position.set(f.x,rand(1.6,3.2),f.z);
-    art.rotation.y=f.ry; art.rotation.z=(srand()-0.5)*0.07;
-    scene.add(art);
+  /* ---- the hang ----
+     Nine families of almost-library pieces — donor portraits with no face,
+     collection maps to nowhere, acuity charts that test something else,
+     a staff photograph where the faces never developed — and twice as many
+     of them as before, because 14 pictures spread evenly round a 400m
+     perimeter is one every 28m, which is not a dressed wall, it is a wall
+     with a picture on it.
+     They go up in CLUSTERS, which is how a reading room actually hangs
+     pictures and the only way the eye reads a wall as furnished: 2–5 pieces
+     sharing a face, either on a common centre line or stacked in a block.
+     Every cluster gets one piece well over a metre, and a few go up HIGH —
+     the room is 24m to the ceiling and the old band stopped at 3.2m, which
+     dressed the bottom eighth of it and left the rest bare plaster. */
+  {
+    const hung=[];                              // {x,z,y,w,h} — placed sight rects
+    const bulk=new Map();                       // material → parts, merged room-wide
+    /* 0.045, not 0.22: the cursor deliberately leaves a 0.10–0.19m gap
+       between neighbours, so a separation margin wider than the gap it is
+       checking rejects every second piece in every cluster — which is how
+       a 34-picture hang quietly became a 10-picture one */
+    const free=(f,t,y,w,h)=>{
+      const x=f.dx*t+f.x, z=f.dz*t+f.z;
+      return !hung.some(q=>Math.hypot(q.x-x,q.z-z)<(q.w+w)/2+0.045&&
+                            Math.abs(q.y-y)<(q.h+h)/2+0.045);
+    };
+    let hangs=0;
+    for(let c=0;c<18&&hangs<34;c++){
+      const f=take();
+      /* the wall's own tangent: forward is (sin ry, 0, cos ry), so the run
+         along the face is (cos ry, 0, −sin ry) */
+      f.dx=Math.cos(f.ry); f.dz=-Math.sin(f.ry);
+      const n=2+Math.floor(srand()*4);
+      const tall=srand()<0.30;                  // this cluster hangs high
+      const midY=tall? rand(4.4,7.6) : rand(1.75,2.9);
+      const line=srand()<0.5;                   // a common centre line, or a block
+      /* the pieces are laid out with a running CURSOR, not on a fixed pitch:
+         a salon hang leaves a hand's width between frames, and stepping by
+         a constant ~1.5m scattered five pictures over five metres of wall,
+         which is not a cluster, it is five pictures */
+      const half=[];                            // signed order: 0, −1, +1, −2, +2 …
+      for(let i=0;i<n;i++) half.push(i? (i%2? -Math.ceil(i/2) : Math.ceil(i/2)) : 0);
+      let lft=0, rgt=0;                         // how far the hang already reaches each way
+      for(let i=0;i<n&&hangs<34;i++){
+        /* one piece per cluster is the big one; the rest are its company */
+        const sw=i===0? (tall? rand(1.5,2.4) : rand(0.95,1.45))
+                      : (srand()<0.35? rand(0.42,0.62) : rand(0.62,1.0));
+        const p=makeFramedArt(sw);
+        const gap=0.10+srand()*0.09;
+        const tx=i===0? 0 : (half[i]<0? -(lft+gap+p.w/2) : (rgt+gap+p.w/2));
+        const y=(line? midY : midY+rand(-0.55,0.55)*(tall?2.2:1))+(line?rand(-0.05,0.05):0);
+        if(Math.abs(tx)+p.w/2>1.86||y-p.h/2<0.75||!free(f,tx,y,p.w,p.h)){
+          p.g.traverse(o=>{ if(o.isMesh){ o.geometry.dispose();
+            if(!SHARED_ART.has(o.material)){ if(o.material.map) o.material.map.dispose(); o.material.dispose(); } } });
+          continue;
+        }
+        p.g.position.set(f.x+f.dx*tx, y, f.z+f.dz*tx);
+        p.g.rotation.y=f.ry;
+        p.g.rotation.z=(srand()-0.5)*0.045;     // nothing in this building is level
+        scene.add(p.g);
+        p.g.updateMatrixWorld(true);
+        for(const[m,mat]of p.bulk){
+          if(!bulk.has(mat)) bulk.set(mat,[]);
+          bulk.get(mat).push(m);
+        }
+        hung.push({x:p.g.position.x, z:p.g.position.z, y, w:p.w, h:p.h});
+        if(tx<=0) lft=Math.max(lft,-tx+p.w/2);   // the centre piece sets BOTH
+        if(tx>=0) rgt=Math.max(rgt, tx+p.w/2);
+        hangs++;
+      }
+    }
+    /* collapse every frame, mat, backing and pane in the room down to one
+       mesh per material — the whole reason a real moulding is affordable */
+    for(const[mat,arr]of bulk){
+      scene.add(mergeStatic(arr,mat));
+      for(const m of arr){ if(m.parent) m.parent.remove(m); m.geometry.dispose(); }
+    }
   }
   for(let i=0;i<11;i++){
     const f=take();
@@ -2209,3 +2801,6 @@ markShared(texLibWall,texLibCarpet,texLibCarpetBump,texLibCeil,texShelfWood,texD
 markShared(shelfMat,deskMat,shelfMatH,deskMatH,texShelfWoodH,texDeskWoodH,texBeige,
            darkMetalMat,beigePlastic,beigePlasticDark,plasticWrap,shutterMat,discHubMat,
            bookendMat,accentWood,accentBrass,mannequinMat,mannequinDark,webMat);
+markShared(texWrapFilm,texTape,texCartPaint,texMannequin,             // the graphics pass's own
+           wrapTapeMat,cartRubberMat,cartSteelMat,mannequinIron,
+           ...cartPaintMats, frameGiltMat,frameEbonyMat,frameOakMat,artGlassMat,artMatMat,artBackMat);

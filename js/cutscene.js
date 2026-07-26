@@ -352,7 +352,9 @@ function updateElevator(dt){
   const litBtn=(idx,color)=>u.panelBtns.forEach((bm,i)=>bm.color.set(i===idx?color:0x2a2014));
   /* ---- cues ---- */
   cue("press",T_PRESS,()=>{ sfxElevButton(); u.btnMat.color.set(0x39d24a); });
-  cue("ding",T_DING,()=>sfxElevDing());
+  /* the ding IS the hall lantern: a car has answered, and the down arrow
+     over the head is how a lobby says so before the doors move */
+  cue("ding",T_DING,()=>{ sfxElevDing(); if(u.hallLamps) u.hallLamps[1].color.set(0xffb347); });
   cue("doorsO",T_DOORS_O,()=>sfxElevDoors(1.4));
   cue("cabOn",3.9,()=>{ u.drawFloor("0"); litBtn(0,0x39e052); });
   cue("spawn",T_WALK1,()=>spawnRunner());

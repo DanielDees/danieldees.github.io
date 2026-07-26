@@ -1,9 +1,9 @@
 /* ---------------- props ---------------- */
 import { rand } from "./utils.js";
 import { W, H, CELL, WALL_H as WALL_H0, cellToWorld, randomOpenCell, isWall, losCells } from "./map.js";
-import { makeCanvas, texWall, scaleBoxUV } from "./textures.js";
+import { makeCanvas, texWall, scaleBoxUV, makeCrackTexture } from "./textures.js";
 import { scene, wallMeshes, removeDecalsOnWall, mergeWallMeshes, freezeStaticScene,
-         markShared } from "./scene.js";
+         markShared, mergeStatic } from "./scene.js";
 
 export let interactables=[];    // {kind, mesh, label, taken}
 export let exitDoor=null;
@@ -159,7 +159,159 @@ const texCard=makeCanvas(160,180,(g,w,h)=>{
     g.fillStyle=gr;g.fillRect(x-r,y-r,r*2,r*2);
   }
 });
-markShared(texAlmond,texFuseFace,texCeramic,texPanel,texPlate,texCard);
+/* ================= the elevator's finishes =================
+   Every one of these used to be built INSIDE makeElevator, so both levels
+   paid for a fresh set of canvases on every respawn, and the cab's own wall
+   map carried its panel seams and kick plate PRINTED INTO a texture that
+   then got tiled onto boxes of four different sizes — a unique feature in a
+   tiling map, the mistake level 0's wallpaper had to be reverted for. The
+   seams and the kick are geometry now, so what is left in the map is only
+   the FINISH, and the finish is true everywhere. */
+/* stainless, satin no.4: a vertical grain, and nothing else that repeats.
+   Bright and near-neutral because every metal in the elevator is this one
+   map under a different material tint — bright for the doors and jambs,
+   mid for the cab lining, dark for the trim. Tiled at a fixed world scale
+   (scaleBoxUV) at 0.5m, so a 2.5m door leaf and a 20mm bezel wear the same
+   steel at the same grain size. */
+const texElevSteel=makeCanvas(256,256,(g,w,h)=>{
+  g.fillStyle="#c2c7ca";g.fillRect(0,0,w,h);
+  for(let i=0;i<2400;i++){                       // the satin: vertical, always
+    const v=Math.random();
+    g.fillStyle=`rgba(${v<0.5?150:238},${v<0.5?156:243},${v<0.5?160:246},${0.05+Math.random()*0.16})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1,10+Math.random()*70);
+  }
+  for(let i=0;i<70;i++){                         // the longer draw marks
+    const x=Math.random()*w;
+    g.fillStyle=`rgba(${Math.random()<0.5?128:250},${Math.random()<0.5?134:252},${Math.random()<0.5?138:254},${0.06+Math.random()*0.1})`;
+    g.fillRect(x,0,1+Math.random(),h);
+  }
+  for(let i=0;i<26;i++){                         // hands, forty years of them
+    const x=Math.random()*w,y=Math.random()*h,r=8+Math.random()*22;
+    const gr=g.createRadialGradient(x,y,1,x,y,r);
+    gr.addColorStop(0,`rgba(96,100,102,${0.05+Math.random()*0.1})`);
+    gr.addColorStop(1,"rgba(96,100,102,0)");
+    g.fillStyle=gr;g.beginPath();g.ellipse(x,y,r*0.7,r,0,0,7);g.fill();
+  }
+  for(let i=0;i<110;i++){                        // micro-scratches, every angle
+    const x=Math.random()*w,y=Math.random()*h,a=Math.random()*7,l=3+Math.random()*16;
+    g.strokeStyle=`rgba(${Math.random()<0.5?110:252},${Math.random()<0.5?116:254},${Math.random()<0.5?120:255},${0.10+Math.random()*0.2})`;
+    g.lineWidth=0.7;
+    g.beginPath();g.moveTo(x,y);g.lineTo(x+Math.cos(a)*l,y+Math.sin(a)*l);g.stroke();
+  }
+});
+texElevSteel.wrapS=texElevSteel.wrapT=THREE.RepeatWrapping;
+texElevSteel.anisotropy=4;
+/* the cab floor: resilient sheet, and what reads on one is the METRE-scale
+   blotch of a poured/rolled sheet, not the speckle — the carpet had to
+   learn the same thing twice. Tiled at 1m. */
+const texElevFloor=makeCanvas(256,256,(g,w,h)=>{
+  g.fillStyle="#3a3d42";g.fillRect(0,0,w,h);
+  const wrap=fn=>{ for(const ox of[0,-w,w])for(const oy of[0,-h,h]) fn(ox,oy); };
+  for(let i=0;i<30;i++){                         // the blotch
+    const x=Math.random()*w,y=Math.random()*h,r=30+Math.random()*90;
+    const lite=Math.random()<0.5;
+    wrap((ox,oy)=>{
+      const gr=g.createRadialGradient(x+ox,y+oy,r*0.1,x+ox,y+oy,r);
+      gr.addColorStop(0,lite?`rgba(94,99,106,${0.08+Math.random()*0.09})`
+                           :`rgba(22,24,28,${0.08+Math.random()*0.09})`);
+      gr.addColorStop(1,"rgba(0,0,0,0)");
+      g.fillStyle=gr;g.beginPath();g.arc(x+ox,y+oy,r,0,7);g.fill();
+    });
+  }
+  for(let i=0;i<3000;i++){                       // then the chip, over five tones
+    const v=Math.random();
+    g.fillStyle=v<0.25?"rgba(18,20,24,0.5)":v<0.5?"rgba(120,124,130,0.4)":
+                v<0.7?"rgba(78,72,60,0.35)":v<0.88?"rgba(56,60,66,0.4)":"rgba(150,152,150,0.28)";
+    g.fillRect(Math.random()*w,Math.random()*h,1.6,1.6);
+  }
+  for(let i=0;i<44;i++){                         // scuffed by whatever was rolled in
+    const x=Math.random()*w,y=Math.random()*h,a=Math.random()*7,l=10+Math.random()*50;
+    g.strokeStyle=`rgba(${Math.random()<0.5?26:142},${Math.random()<0.5?28:146},${Math.random()<0.5?32:150},${0.06+Math.random()*0.14})`;
+    g.lineWidth=1+Math.random()*2;
+    g.beginPath();g.moveTo(x,y);
+    g.bezierCurveTo(x+l*0.3,y+(Math.random()-0.5)*10,x+l*0.7,y+(Math.random()-0.5)*10,
+                    x+Math.cos(a)*l,y+Math.sin(a)*l);
+    g.stroke();
+  }
+});
+texElevFloor.wrapS=texElevFloor.wrapT=THREE.RepeatWrapping;
+texElevFloor.anisotropy=4;
+/* ---- the printed hardware. All ENGRAVING: a dark cut with a bright lip
+   under it, on a transparent ground, so the steel plate the plane sits on
+   shows through and the legend reads as cut into it rather than stuck on. */
+const engrave=(g,txt,x,y,font,al)=>{
+  g.font=font; g.textAlign=al||"center";
+  g.fillStyle="rgba(26,28,30,0.82)"; g.fillText(txt,x,y);
+  g.fillStyle="rgba(242,248,250,0.42)"; g.fillText(txt,x,y+1);
+};
+/* the car operating panel. Its layout is a shared table — the canvas and
+   the button meshes both read COP, so a numeral can never drift off the
+   button it belongs to. u runs along +z (toward the doors), v is height. */
+export const COP={y0:0.90, h:0.92, z0:-0.70, w:0.26,
+                  btnU:0.31, lblU:0.63, btnY:[1.62,1.49,1.36,1.23],
+                  dcY:1.10, alarmY:1.02};
+const texCOP=makeCanvas(128,448,(g,w,h)=>{
+  g.clearRect(0,0,w,h);
+  /* u runs along +z (toward the doors), v is height. Anything that has to
+     line up with a BUTTON is placed through CY() off the same table the
+     button meshes read; the loose copy at the foot of the plate is placed
+     in canvas pixels, because nothing out there has to meet hardware. */
+  const CX=u=>u*w, CY=y=>(1-(y-COP.y0)/COP.h)*h;
+  g.textBaseline="middle";
+  engrave(g,"CAR ∅",CX(0.5),22,"bold 11px Courier New");
+  /* the floors this car serves, including the ones it does not come back
+     from — and beside each, six braille cells that spell nothing */
+  const names=["0","−1","−2","−3"];
+  COP.btnY.forEach((by,i)=>{
+    engrave(g,names[i],CX(COP.lblU),CY(by),"bold 24px Courier New");
+    for(let d=0;d<6;d++){
+      if(Math.random()<0.45) continue;
+      g.fillStyle="rgba(30,32,34,0.6)";
+      g.beginPath();g.arc(CX(COP.lblU)+18+(d%2)*5,CY(by)-6+((d/2)|0)*5,1.7,0,7);g.fill();
+    }
+  });
+  engrave(g,"◀▶",CX(COP.btnU),CY(COP.dcY)-16,"11px Courier New");
+  engrave(g,"▶◀",CX(COP.lblU),CY(COP.dcY)-16,"11px Courier New");
+  engrave(g,"ALARM",CX(0.5),CY(COP.alarmY)-22,"bold 10px Courier New");
+  /* the fireman's keyway, cut as a slot */
+  g.fillStyle="rgba(20,22,24,0.85)";g.fillRect(CX(0.5)-8,414,16,4);
+  g.fillStyle="rgba(242,248,250,0.3)";g.fillRect(CX(0.5)-8,418,16,1);
+  engrave(g,"IN CASE OF FIRE",CX(0.5),431,"7px Courier New");
+  engrave(g,"DO NOT USE THIS LIFT",CX(0.5),441,"7px Courier New");
+});
+/* the capacity plate, screwed to the back wall where nobody reads it */
+const texCapPlate=makeCanvas(192,88,(g,w,h)=>{
+  g.clearRect(0,0,w,h);
+  g.textBaseline="middle";
+  engrave(g,"CAPACITY",w/2,16,"bold 13px Courier New");
+  engrave(g,"1000 LB · 13 PERSONS",w/2,34,"9px Courier New");
+  g.fillStyle="rgba(26,28,30,0.5)";g.fillRect(24,44,w-48,1);
+  engrave(g,"LAST INSPECTED",w/2,58,"8px Courier New");
+  engrave(g,"— / — / —",w/2,72,"bold 11px Courier New");
+});
+/* the hall station: two engraved arrows, and the sentence somebody added */
+/* the hall station. HALL is the shared table again: the plate, the print and
+   the two buttons all come off it, so the engraved arrow beside a button
+   cannot end up behind it. Canvas y is measured DOWN from the plate's top,
+   which is what hallY() converts. */
+export const HALL={x:1.222, y:1.16, w:0.19, h:0.33, cw:96, ch:168, upC:50, dnC:104};
+const hallY=cy=>HALL.y+HALL.h/2-(cy/HALL.ch)*HALL.h;
+const texHallFace=makeCanvas(HALL.cw,HALL.ch,(g,w,h)=>{
+  g.clearRect(0,0,w,h);
+  g.textBaseline="middle";
+  engrave(g,"▲",68,HALL.upC,"bold 22px Courier New");
+  engrave(g,"▼",68,HALL.dnC,"bold 22px Courier New");
+  engrave(g,"PRESS ONCE",w/2,148,"7px Courier New");
+});
+/* the floor designation on the jamb — the only place this level is named */
+const texJambNum=makeCanvas(80,120,(g,w,h)=>{
+  g.clearRect(0,0,w,h);
+  g.textBaseline="middle";
+  engrave(g,"0",w/2,52,"bold 46px Courier New");
+  engrave(g,"LEVEL",w/2,92,"bold 10px Courier New");
+});
+markShared(texAlmond,texFuseFace,texCeramic,texPanel,texPlate,texCard,
+           texElevSteel,texElevFloor,texCOP,texCapPlate,texHallFace,texJambNum);
 const glassMat=new THREE.MeshPhongMaterial({color:0xd6e4ea, transparent:true, opacity:0.40,
   specular:0xffffff, shininess:96, side:THREE.DoubleSide});
 const almondMat=new THREE.MeshPhongMaterial({color:0xeadfbe, emissive:0x1a1610,
@@ -313,6 +465,38 @@ function makeBreaker(p,facing){
   g.userData.animated=true;                 // the cutscene swings its door / conjures the fuse
   return g;
 }
+/* ---- the elevator's material set, module-level and shared ----
+   One brushed map under four tints does every metal in it; the trim is
+   painted rather than brushed, so it takes a flat dark colour. Merging is
+   done BY these materials, which is what keeps a cab this detailed to
+   roughly the draw count of the six-box one it replaces. */
+const elevBrightMat=new THREE.MeshPhongMaterial({map:texElevSteel, color:0xbcc2c6,
+  specular:0x9aa2a8, shininess:70});                 // doors, jambs, sills, bezels
+const elevLineMat  =new THREE.MeshPhongMaterial({map:texElevSteel, color:0x8b9198,
+  specular:0x5a6066, shininess:40});                 // the cab's lining
+const elevPanelMat =new THREE.MeshPhongMaterial({map:texElevSteel, color:0x767c83,
+  specular:0x4c5258, shininess:34});                 // its raised panels
+/* the dark panel that stands in for a mirror. Held OFF both extremes on
+   purpose: at a near-black base under a shininess of 110 it flipped between
+   a black rectangle — which in the middle of a back wall reads as a doorway
+   — and a blown-out white blob, depending only on where the car light was. */
+const elevSmokeMat =new THREE.MeshPhongMaterial({map:texElevSteel, color:0x53595f,
+  specular:0x6e767c, shininess:64});
+const elevDarkMat  =new THREE.MeshPhongMaterial({color:0x33373b, specular:0x22262a, shininess:26});
+const elevRubberMat=new THREE.MeshPhongMaterial({color:0x141517, specular:0x1e2022, shininess:10});
+const elevAlarmMat =new THREE.MeshPhongMaterial({color:0x6e1a12, specular:0xd05a40, shininess:60});
+const elevVoidMat  =new THREE.MeshBasicMaterial({color:0x050505});   // the hole above the hatch
+const elevFloorMat =new THREE.MeshPhongMaterial({map:texElevFloor, specular:0x1a1c20, shininess:16});
+const copFaceMat   =new THREE.MeshPhongMaterial({map:texCOP, transparent:true,
+  specular:0x000000, shininess:1});
+const capPlateMat  =new THREE.MeshPhongMaterial({map:texCapPlate, transparent:true,
+  specular:0x000000, shininess:1});
+const hallFaceMat  =new THREE.MeshPhongMaterial({map:texHallFace, transparent:true,
+  specular:0x000000, shininess:1});
+const jambNumMat   =new THREE.MeshPhongMaterial({map:texJambNum, transparent:true,
+  specular:0x000000, shininess:1});
+markShared(elevBrightMat,elevLineMat,elevPanelMat,elevSmokeMat,elevDarkMat,elevRubberMat,
+           elevAlarmMat,elevVoidMat,elevFloorMat,copFaceMat,capPlateMat,hallFaceMat,jambNumMat);
 export const ELEV={OPEN_W:2.0, OPEN_H:2.6, DEPTH:2.6};   // cab dimensions, shared with the cutscene
 export function makeElevator(p,facing,opts={}){
   /* the exit elevator, carved INTO its wall cell: placeProps removes that
@@ -324,156 +508,365 @@ export function makeElevator(p,facing,opts={}){
      cab, passing its own (taller) wall height and wall material. */
   const {OPEN_W,OPEN_H,DEPTH}=ELEV;
   const WALL_H=opts.wallH||WALL_H0;
+  const HW=OPEN_W/2, IN=HW-0.03;            // inner face of the cab lining: x=±0.94
   const g=new THREE.Group();
   const wallM=opts.wallMat||new THREE.MeshPhongMaterial({map:texWall, specular:0x0d0c07, shininess:6});
-  const metal=new THREE.MeshPhongMaterial({color:0x9aa0a4, specular:0x222426, shininess:22});
-  const darkMetal=new THREE.MeshPhongMaterial({color:0x53585c, specular:0x303336, shininess:40});
-  const add=(geo,mat,x,y,z)=>{const m=new THREE.Mesh(geo,mat);m.position.set(x,y,z);g.add(m);return m;};
-  /* rebuilt wall around the opening. With opts.uvTile the odd-sized flank/
-     header boxes map their wall texture at a fixed world scale, so they sit
-     seamlessly beside the regular full-size cells (THE END); level 0 takes
-     raw box UVs, like every other wall on that floor. */
+  /* Everything static goes into a per-material bucket and comes out as one
+     mesh each. This build has roughly five times the parts the old one had
+     and costs FEWER draws than it did, which is the only way a cab can
+     afford real panelling, a real sill, an egg-crate ceiling and a car
+     panel you can read. Anything the cutscene drives — the leaves, the
+     lamps, the buttons, the indicator — stays its own object. */
+  const B=new Map();
+  const put=(mat,geo,x,y,z,rx,ry,rz)=>{
+    const m=new THREE.Mesh(geo);
+    m.position.set(x||0,y||0,z||0);
+    if(rx||ry||rz) m.rotation.set(rx||0,ry||0,rz||0);
+    if(!B.has(mat)) B.set(mat,[]);
+    B.get(mat).push(m);
+    return m;
+  };
+  /* a box wearing its steel at a fixed world scale, so a 2.5m leaf and a
+     20mm bezel carry the same grain */
+  const sbox=(mat,w,h,d,x,y,z,tile)=>
+    put(mat,scaleBoxUV(new THREE.BoxGeometry(w,h,d),w,h,d,tile||0.5),x,y,z);
+  const pbox=(mat,w,h,d,x,y,z,rx)=>put(mat,new THREE.BoxGeometry(w,h,d),x,y,z,rx);
+  const rod=(mat,r,len,x,y,z,rx,ry,rz)=>
+    put(mat,new THREE.CylinderGeometry(r,r,len,9),x,y,z,rx,ry,rz);
+  const flushBuckets=(target)=>{
+    for(const[mat,arr]of B){
+      target.add(mergeStatic(arr,mat));
+      for(const m of arr) m.geometry.dispose();
+    }
+    B.clear();
+  };
+  /* ---------- the wall rebuilt around the opening ----------
+     With opts.uvTile the odd-sized flank/header boxes map their wall texture
+     at a fixed world scale, so they sit seamlessly beside the regular
+     full-size cells (THE END); level 0 takes raw box UVs, like every other
+     wall on that floor. */
   const wallGeo=(w,h,d)=>{
     const geo=new THREE.BoxGeometry(w,h,d);
     if(opts.uvTile) scaleBoxUV(geo,w,h,d,opts.uvTile);
     return geo;
   };
   const flankW=(CELL-OPEN_W)/2;
-  add(wallGeo(flankW,WALL_H,CELL),wallM,-(OPEN_W/2+flankW/2),WALL_H/2,-CELL/2);
-  add(wallGeo(flankW,WALL_H,CELL),wallM, (OPEN_W/2+flankW/2),WALL_H/2,-CELL/2);
-  add(wallGeo(OPEN_W,WALL_H-OPEN_H,CELL),wallM,0,(WALL_H+OPEN_H)/2,-CELL/2);
-  add(wallGeo(OPEN_W,OPEN_H,CELL-DEPTH),wallM,0,OPEN_H/2,-(DEPTH+(CELL-DEPTH)/2));
-  /* ---- cab shell: brushed panelled walls, speckled vinyl floor ---- */
-  const cabWallTex=makeCanvas(256,256,(gx,w,h)=>{
-    gx.fillStyle="#878d91";gx.fillRect(0,0,w,h);
-    for(let i=0;i<1100;i++){                                 // brushed vertical grain
-      const v=Math.random()<0.5;
-      gx.fillStyle=`rgba(${v?116:168},${v?122:174},${v?126:178},0.12)`;
-      gx.fillRect(Math.random()*w,Math.random()*h,1,6+Math.random()*34);
+  put(wallM,wallGeo(flankW,WALL_H,CELL),-(HW+flankW/2),WALL_H/2,-CELL/2);
+  put(wallM,wallGeo(flankW,WALL_H,CELL), (HW+flankW/2),WALL_H/2,-CELL/2);
+  put(wallM,wallGeo(OPEN_W,WALL_H-OPEN_H,CELL),0,(WALL_H+OPEN_H)/2,-CELL/2);
+  put(wallM,wallGeo(OPEN_W,OPEN_H,CELL-DEPTH),0,OPEN_H/2,-(DEPTH+(CELL-DEPTH)/2));
+  /* ---------- cab shell ----------
+     The floor's top sits 2mm UNDER the sill's, deliberately: the sill plates
+     reach back into the cab's footprint, and two coplanar top faces at the
+     same height is a 0.14×2m band of z-fighting right where the camera
+     walks in. */
+  sbox(elevFloorMat, OPEN_W,0.028,DEPTH, 0,0.014,-DEPTH/2, 1.0);
+  sbox(elevLineMat, OPEN_W,0.06,DEPTH, 0,OPEN_H-0.03,-DEPTH/2);        // ceiling slab
+  sbox(elevLineMat, OPEN_W,OPEN_H,0.06, 0,OPEN_H/2,-DEPTH+0.03);       // back
+  for(const s of[-1,1]) sbox(elevLineMat, 0.06,OPEN_H,DEPTH, s*IN,OPEN_H/2,-DEPTH/2);
+  /* the panelling. These seams were PRINTED into the old wall canvas, and
+     that canvas then tiled onto boxes of four different sizes — so the
+     "panels" were a different width on every surface and there were four
+     of them on a 20mm post. They are raised boards between stiles now,
+     which is also the only version that throws a shadow. */
+  const PY0=0.24, PY1=OPEN_H-0.22, PH=PY1-PY0, PCY=(PY0+PY1)/2;
+  for(const s of[-1,1])
+    for(const pz of[-1.94,-0.72]) sbox(elevPanelMat, 0.016,PH,1.06, s*(IN-0.038),PCY,pz);
+  for(const px of[-0.645,0,0.645])
+    sbox(px===0? elevSmokeMat:elevPanelMat, 0.52,PH,0.016, px,PCY,-DEPTH+0.068);
+  /* the crashed car took the impact through the back panel */
+  if(opts.wrecked)
+    put(new THREE.MeshPhongMaterial({map:makeCrackTexture(), transparent:true, opacity:0.85,
+        depthWrite:false, specular:0x000000, shininess:1}),
+      new THREE.PlaneGeometry(0.44,1.5), 0.10,PCY+0.12,-DEPTH+0.078);
+  /* kick and cove, both proud of the lining */
+  for(const s of[-1,1]){
+    pbox(elevDarkMat,0.022,0.20,DEPTH-0.08, s*(IN-0.041),0.10,-DEPTH/2);
+    pbox(elevDarkMat,0.022,0.10,DEPTH-0.08, s*(IN-0.041),OPEN_H-0.12,-DEPTH/2);
+  }
+  pbox(elevDarkMat,OPEN_W-0.14,0.20,0.022, 0,0.10,-DEPTH+0.071);
+  pbox(elevDarkMat,OPEN_W-0.14,0.10,0.022, 0,OPEN_H-0.12,-DEPTH+0.071);
+  /* the front pair sit at −0.13, not −0.10: at −0.10 a post's box and the
+     door leaf's own box share 2mm of z, so the leaf grinds through it for
+     the whole slide */
+  for(const[px,pz]of[[-1,-DEPTH+0.07],[1,-DEPTH+0.07],[-1,-0.13],[1,-0.13]])
+    pbox(elevDarkMat,0.05,OPEN_H,0.05, px*(IN-0.05),OPEN_H/2,pz);
+  /* ---------- the luminous ceiling ----------
+     A dropped frame, the diffuser in it, an egg-crate under that and the
+     inspection hatch beside it. The grid is ROUND BAR for the reason the
+     troffer's guard had to learn: 1.5mm of blade seen edge-on is nothing,
+     and straight up is the one angle anybody ever looks at a cab ceiling
+     from — which in THE END is the first thing you do. */
+  const LZ=-DEPTH/2, LW2=1.44, LD=0.98, LY=OPEN_H-0.10;
+  pbox(elevDarkMat,LW2+0.14,0.08,0.07, 0,LY,LZ-LD/2-0.035);
+  pbox(elevDarkMat,LW2+0.14,0.08,0.07, 0,LY,LZ+LD/2+0.035);
+  pbox(elevDarkMat,0.07,0.08,LD, -LW2/2-0.035,LY,LZ);
+  pbox(elevDarkMat,0.07,0.08,LD,  LW2/2+0.035,LY,LZ);
+  for(let i=0;i<5;i++){
+    /* a wrecked car has lost two bars out of the crate and bent a third —
+       the cheapest damage in the whole cab and the one you look straight at */
+    if(!(opts.wrecked&&i===3))
+      rod(elevDarkMat,0.008,LW2-0.03, 0,LY-0.055,LZ-LD/2+0.10+i*0.195, 0,0,
+          opts.wrecked&&i===1? Math.PI/2+0.16 : Math.PI/2);
+    if(!(opts.wrecked&&i===1))
+      rod(elevDarkMat,0.008,LD-0.03, -LW2/2+0.13+i*0.295,LY-0.071,LZ, Math.PI/2,0,0);
+  }
+  /* the inspection hatch. Its trim is BRIGHT, not dark: 18mm of dark trim
+     on a dark ceiling is invisible, and this hatch is the single most
+     evocative thing in the cab — in THE END you wake on the floor looking
+     straight up at it. When the car is wrecked it is hanging open, and the
+     hole above it is the way something got out. */
+  const HZ=-DEPTH+0.44, HS=0.62, hatch=[];
+  const hbox=(w,h,d,x,y,z)=>{
+    const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d)); m.position.set(x,y,z);
+    hatch.push(m); return m;
+  };
+  /* the aperture: an unlit black plane 2mm under the ceiling, which is all
+     it takes for the opening to read as a hole rather than a lid lying on
+     a solid slab */
+  if(opts.wrecked)
+    put(elevVoidMat,new THREE.PlaneGeometry(HS-0.03,HS-0.03), 0,OPEN_H-0.062,HZ, Math.PI/2);
+  hbox(HS+0.07,0.022,0.045, 0,-0.010,-HS/2);
+  hbox(HS+0.07,0.022,0.045, 0,-0.010, HS/2);
+  hbox(0.045,0.022,HS, -HS/2,-0.010,0);
+  hbox(0.045,0.022,HS,  HS/2,-0.010,0);
+  hbox(HS-0.05,0.014,HS-0.05, 0,-0.004,0);                   // the leaf itself
+  hbox(0.12,0.026,0.06, 0,-0.014, HS/2+0.03);                // the hasp
+  if(opts.wrecked){
+    /* forced from above and left hanging INTO the car off its rear knuckles.
+       Down, not up: swung up it drives 0.5m of lid straight through the
+       ceiling slab it is hinged to. */
+    for(const m of hatch) m.position.z+=HS/2;                 // rebase onto the hinge
+    const lid=mergeStatic(hatch,elevBrightMat);
+    for(const m of hatch) m.geometry.dispose();
+    const pv=new THREE.Group();
+    pv.position.set(0,OPEN_H-0.058,HZ-HS/2);
+    pv.rotation.x=-0.92;
+    pv.add(lid); g.add(pv);
+  } else {
+    for(const m of hatch){ m.position.y+=OPEN_H-0.058; m.position.z+=HZ; }
+    g.add(mergeStatic(hatch,elevBrightMat));
+    for(const m of hatch) m.geometry.dispose();
+  }
+  for(const s of[-1,1]) rod(elevDarkMat,0.016,0.10, s*0.18,OPEN_H-0.070,HZ-HS/2, 0,0,Math.PI/2);
+  /* ---------- handrail, on real brackets ---------- */
+  const RY=0.95;
+  rod(elevBrightMat,0.022,OPEN_W-0.44, 0,RY,-DEPTH+0.135, 0,0,Math.PI/2);
+  for(const bx of[-0.62,0,0.62]){
+    pbox(elevBrightMat,0.075,0.075,0.022, bx,RY,-DEPTH+0.078);
+    rod(elevBrightMat,0.014,0.06, bx,RY,-DEPTH+0.105, Math.PI/2,0,0);
+  }
+  for(const s of[-1,1]){
+    rod(elevBrightMat,0.022,DEPTH-0.62, s*0.865,RY,-DEPTH/2-0.05, Math.PI/2,0,0);
+    for(const bz of[-2.10,-1.30,-0.52]){
+      pbox(elevBrightMat,0.022,0.075,0.075, s*(IN-0.041),RY,bz);
+      rod(elevBrightMat,0.014,0.06, s*0.905,RY,bz, 0,0,Math.PI/2);
     }
-    for(let px=0;px<=w;px+=w/3){                             // panel seams
-      gx.fillStyle="rgba(36,39,41,0.8)";gx.fillRect(px-1,0,2,h);
-      gx.fillStyle="rgba(210,214,216,0.25)";gx.fillRect(px+1,0,1,h);
-    }
-    for(let i=0;i<26;i++){                                   // scuffs, worst low down
-      const y=h-Math.pow(Math.random(),1.6)*h*0.7;
-      gx.fillStyle=`rgba(40,42,44,${0.06+Math.random()*0.12})`;
-      gx.save();gx.translate(Math.random()*w,y);gx.rotate((Math.random()-0.5)*0.6);
-      gx.fillRect(0,0,8+Math.random()*36,1+Math.random()*2.5);gx.restore();
-    }
-    gx.fillStyle="rgba(26,28,30,0.92)";gx.fillRect(0,h-22,w,22);  // kick plate
-    gx.fillStyle="rgba(150,154,158,0.5)";gx.fillRect(0,h-23,w,1);
-  });
-  const cabWallM=new THREE.MeshPhongMaterial({map:cabWallTex, specular:0x191b1d, shininess:18});
-  const cabFloorTex=makeCanvas(128,128,(gx,w,h)=>{
-    gx.fillStyle="#33353a";gx.fillRect(0,0,w,h);
-    for(let i=0;i<2600;i++){                                 // vinyl speckle
-      const v=Math.random();
-      gx.fillStyle=`rgba(${v<0.5?20:90},${v<0.5?22:94},${v<0.5?26:100},0.5)`;
-      gx.fillRect(Math.random()*w,Math.random()*h,1.5,1.5);
-    }
-    const wear=gx.createRadialGradient(w/2,h*0.4,4,w/2,h*0.4,w*0.42);  // foot-worn middle
-    wear.addColorStop(0,"rgba(120,122,126,0.13)");wear.addColorStop(1,"rgba(120,122,126,0)");
-    gx.fillStyle=wear;gx.fillRect(0,0,w,h);
-  });
-  const cabFloorM=new THREE.MeshPhongMaterial({map:cabFloorTex, specular:0x101113, shininess:12});
-  add(new THREE.BoxGeometry(OPEN_W,0.05,DEPTH),cabFloorM,0,0.025,-DEPTH/2);
-  add(new THREE.BoxGeometry(OPEN_W,0.06,DEPTH),new THREE.MeshPhongMaterial({color:0x9fa39f,
-    specular:0x222426, shininess:20}),0,OPEN_H-0.03,-DEPTH/2);
-  add(new THREE.BoxGeometry(OPEN_W,OPEN_H,0.06),cabWallM,0,OPEN_H/2,-DEPTH+0.03);
-  add(new THREE.BoxGeometry(0.06,OPEN_H,DEPTH),cabWallM,-OPEN_W/2+0.03,OPEN_H/2,-DEPTH/2);
-  add(new THREE.BoxGeometry(0.06,OPEN_H,DEPTH),cabWallM, OPEN_W/2-0.03,OPEN_H/2,-DEPTH/2);
-  /* corner posts & door-side reveal posts break up the box read */
-  for(const[px,pz]of[[-1,-DEPTH+0.05],[1,-DEPTH+0.05],[-1,-0.18],[1,-0.18]])
-    add(new THREE.BoxGeometry(0.06,OPEN_H,0.06),darkMetal,px*(OPEN_W/2-0.05),OPEN_H/2,pz);
-  /* threshold sill under the doors */
-  add(new THREE.BoxGeometry(OPEN_W,0.025,0.14),darkMetal,0,0.038,-0.1);
-  /* ---- ceiling light: diffuser panel in a dark trim frame ---- */
+  }
+  /* ---------- return-air grilles ----------
+     In the KICK and the COVE, which are the only two bands of the back wall
+     that are not panelled: anywhere between them and the grille's box and a
+     raised panel's box fight over the same 16mm of z. */
+  for(const[vy,vh]of[[0.105,0.13],[OPEN_H-0.12,0.075]]){
+    pbox(elevDarkMat,0.50,vh+0.024,0.010, 0.52,vy,-DEPTH+0.083);
+    const n=Math.max(3,Math.round(vh/0.028));
+    for(let i=0;i<n;i++)
+      pbox(elevBrightMat,0.46,0.012,0.024, 0.52,vy-vh/2+vh/(2*n)+i*(vh/n),-DEPTH+0.090, -0.55);
+  }
+  /* the capacity plate, proud of the panel it is screwed to */
+  sbox(elevBrightMat,0.36,0.17,0.012, -0.58,1.62,-DEPTH+0.082);
+  /* ---------- the portal, from the hall ---------- */
+  const zg1=-0.062, zg2=-0.140;             // the two sill grooves; zg1 takes the leaves
+  pbox(elevDarkMat,OPEN_W+0.14,0.018,0.26, 0,0.009,-0.098);            // the sill's pan
+  for(const[z0,z1]of[[0.020,zg1+0.013],[zg1-0.013,zg2+0.013],[zg2-0.013,-0.215]])
+    sbox(elevBrightMat,OPEN_W+0.10,0.014,z0-z1, 0,0.023,(z0+z1)/2);
+  for(const s of[-1,1]) pbox(elevDarkMat,0.035,OPEN_H,0.14, s*(HW-0.018),OPEN_H/2,0.055);
+  pbox(elevDarkMat,OPEN_W,0.06,0.14, 0,OPEN_H-0.03,0.055);
+  sbox(elevBrightMat,0.15,OPEN_H+0.20,0.13, -(HW+0.075),(OPEN_H+0.20)/2,0.065);
+  sbox(elevBrightMat,0.15,OPEN_H+0.20,0.13,  (HW+0.075),(OPEN_H+0.20)/2,0.065);
+  sbox(elevBrightMat,OPEN_W+0.45,0.17,0.13, 0,OPEN_H+0.085,0.065);
+  /* the floor designation, cut into a plate on the jamb — the only place
+     in the building that names the floor you are standing on */
+  sbox(elevBrightMat,0.12,0.19,0.012, -(HW+0.075),1.95,0.136);
+  /* the hall station, and the hall lantern over the head */
+  sbox(elevBrightMat,HALL.w+0.03,HALL.h+0.05,0.014, HALL.x+0.038,HALL.y,0.014);
+  for(const[sx,sy]of[[-1,1],[1,1],[-1,-1],[1,-1]])          // its four screws
+    rod(elevBrightMat,0.007,0.007, HALL.x+0.038+sx*0.088,HALL.y+sy*0.15,0.024, Math.PI/2,0,0);
+  for(const cy of[HALL.upC,HALL.dnC])                       // and the two bezels
+    rod(elevBrightMat,0.040,0.008, HALL.x,hallY(cy),0.030, Math.PI/2,0,0);
+  pbox(elevDarkMat,0.42,0.21,0.09, 0,OPEN_H+0.42,0.085);
+  flushBuckets(g);
+  /* ---------- the parts the cutscenes drive ---------- */
+  const printed=(mat,w,h,x,y,z,ry)=>{
+    const m=new THREE.Mesh(new THREE.PlaneGeometry(w,h),mat);
+    m.position.set(x,y,z); if(ry) m.rotation.y=ry;
+    g.add(m); return m;
+  };
+  printed(jambNumMat,0.10,0.15, -(HW+0.075),1.95,0.143);
+  printed(hallFaceMat,HALL.w,HALL.h, HALL.x+0.038,HALL.y,0.0235);
+  printed(capPlateMat,0.34,0.155, -0.58,1.62,-DEPTH+0.089);
+  /* the ceiling diffuser. cabLightMat is the cutscene's handle on it: the
+     panel it drives is the only thing in the cab that reads as "the light
+     is on", quite apart from the point source. */
   const cabLightMat=new THREE.MeshBasicMaterial({color:0x2a2317});
-  const backing=new THREE.Mesh(new THREE.PlaneGeometry(1.3,0.9),
+  const backing=new THREE.Mesh(new THREE.PlaneGeometry(LW2,LD),
     new THREE.MeshPhongMaterial({color:0x2c2e30, specular:0x000000, shininess:4}));
-  backing.rotation.x=Math.PI/2; backing.position.set(0,OPEN_H-0.062,-DEPTH/2);
+  backing.rotation.x=Math.PI/2; backing.position.set(0,LY-0.008,LZ);
   g.add(backing);
-  const lightPanel=new THREE.Mesh(new THREE.PlaneGeometry(1.1,0.7),cabLightMat);
-  lightPanel.rotation.x=Math.PI/2; lightPanel.position.set(0,OPEN_H-0.075,-DEPTH/2);
+  const lightPanel=new THREE.Mesh(new THREE.PlaneGeometry(LW2-0.06,LD-0.06),cabLightMat);
+  lightPanel.rotation.x=Math.PI/2; lightPanel.position.set(0,LY-0.030,LZ);
   g.add(lightPanel); g.userData.cabLightMat=cabLightMat;
   const cabLight=new THREE.PointLight(0xffeecc,0,6,1.8);
-  cabLight.position.set(0,OPEN_H-0.35,-DEPTH/2); g.add(cabLight); g.userData.cabLight=cabLight;
-  /* red emergency lamp over the back wall */
+  cabLight.position.set(0,OPEN_H-0.35,LZ); g.add(cabLight); g.userData.cabLight=cabLight;
+  /* the emergency lamp, in a guarded fitting. `emerg` MUST stay a direct
+     child of g — the elevator cutscene copies its .position straight into a
+     PointLight in the group's frame, and nesting it under a housing would
+     silently reinterpret that as an offset from the housing. */
   const emergMat=new THREE.MeshBasicMaterial({color:0x1c0404});
-  const emerg=new THREE.Mesh(new THREE.SphereGeometry(0.045,8,8),emergMat);
-  emerg.position.set(0,OPEN_H-0.22,-DEPTH+0.1); g.add(emerg);
+  const emerg=new THREE.Mesh(new THREE.SphereGeometry(0.05,10,8),emergMat);
+  emerg.scale.z=0.75; emerg.position.set(0,OPEN_H-0.24,-DEPTH+0.12); g.add(emerg);
   g.userData.emergMat=emergMat; g.userData.emerg=emerg;
-  /* handrails on the back and both sides */
-  const railM=darkMetal;
-  const railB=new THREE.Mesh(new THREE.CylinderGeometry(0.025,0.025,OPEN_W-0.45,8),railM);
-  railB.rotation.z=Math.PI/2; railB.position.set(0,0.95,-DEPTH+0.12); g.add(railB);
-  for(const sx of[-1,1]){
-    const r=new THREE.Mesh(new THREE.CylinderGeometry(0.025,0.025,DEPTH-0.6,8),railM);
-    r.rotation.x=Math.PI/2; r.position.set(sx*(OPEN_W/2-0.085),0.95,-DEPTH/2-0.08); g.add(r);
+  {
+    const gd=[];
+    const gb=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.14,0.05));
+    gb.position.set(0,OPEN_H-0.24,-DEPTH+0.078); gd.push(gb);
+    for(const[rx,ry]of[[0,-Math.PI/2],[Math.PI/2,0]]){
+      const h2=new THREE.Mesh(new THREE.TorusGeometry(0.078,0.006,5,11,Math.PI));
+      h2.rotation.set(rx,ry,0); h2.position.set(0,OPEN_H-0.24,-DEPTH+0.105); gd.push(h2);
+    }
+    g.add(mergeStatic(gd,elevDarkMat));
+    for(const m of gd) m.geometry.dispose();
   }
-  /* interior button column near the doors (the +x wall — screen-left when
-     facing out). One floor button lights at a time; the cutscene drives them. */
-  add(new THREE.BoxGeometry(0.05,0.62,0.22),metal,OPEN_W/2-0.06,1.32,-0.55);
+  /* ---------- the car operating panel ----------
+     Faceplate, print and buttons all read the one COP table, so a numeral
+     can never drift off the button it belongs to — the same rule that put
+     the vintage PC's vents back onto the surfaces they sit on. */
+  const CPX=IN-0.041, PF=CPX-0.011;         // plate centre / its face into the cab
+  sbox(elevBrightMat,0.022,COP.h+0.10,COP.w+0.06, CPX,COP.y0+COP.h/2,COP.z0+COP.w/2);
+  const zAt=u=>COP.z0+u*COP.w;
   g.userData.panelBtns=[];
-  for(let i=0;i<4;i++){
+  COP.btnY.forEach((by,i)=>{
+    put(elevDarkMat,new THREE.CylinderGeometry(0.031,0.031,0.009,14),
+        PF-0.004,by,zAt(COP.btnU), 0,0,Math.PI/2);
     const bm=new THREE.MeshBasicMaterial({color:0x2a2014});
-    const b=new THREE.Mesh(new THREE.CylinderGeometry(0.022,0.022,0.02,8),bm);
-    b.rotation.z=Math.PI/2; b.position.set(OPEN_W/2-0.095,1.52-i*0.13,-0.55); g.add(b);
+    const b=new THREE.Mesh(new THREE.CylinderGeometry(0.023,0.023,0.018,14),bm);
+    b.rotation.z=Math.PI/2; b.position.set(PF-0.013,by,zAt(COP.btnU)); g.add(b);
     g.userData.panelBtns.push(bm);
-  }
-  /* floor indicator high on the same wall, above the button column —
-     the cutscene redraws it */
-  const fdC=document.createElement("canvas"); fdC.width=96; fdC.height=44;
+  });
+  for(const u of[COP.btnU,COP.lblU])        // door open / door close
+    put(elevBrightMat,new THREE.CylinderGeometry(0.019,0.019,0.014,12),
+        PF-0.007,COP.dcY,zAt(u), 0,0,Math.PI/2);
+  put(elevDarkMat,new THREE.CylinderGeometry(0.026,0.026,0.010,14),
+      PF-0.005,COP.alarmY,zAt(0.5), 0,0,Math.PI/2);
+  put(elevAlarmMat,new THREE.CylinderGeometry(0.019,0.019,0.016,14),
+      PF-0.013,COP.alarmY,zAt(0.5), 0,0,Math.PI/2);
+  /* the indicator, in a recess of its own above the column */
+  const DY=COP.y0+COP.h+0.20, DZ=zAt(0.5);
+  sbox(elevBrightMat,0.022,0.30,0.50, CPX,DY,DZ);
+  pbox(elevDarkMat,0.012,0.22,0.44, PF-0.006,DY,DZ);
+  flushBuckets(g);
+  printed(copFaceMat,COP.w,COP.h, PF-0.003,COP.y0+COP.h/2,COP.z0+COP.w/2,-Math.PI/2);
+  const fdC=document.createElement("canvas"); fdC.width=128; fdC.height=56;
   const fdT=new THREE.CanvasTexture(fdC);
   const drawFloor=(txt,color="#ffb347")=>{
     const gx=fdC.getContext("2d");
-    gx.fillStyle="#0a0a0c";gx.fillRect(0,0,96,44);
-    gx.fillStyle=color;gx.font="bold 28px Courier New";gx.textAlign="center";
-    gx.fillText(txt,48,32);
+    gx.fillStyle="#0a0a0c";gx.fillRect(0,0,128,56);
+    gx.fillStyle=color;gx.font="bold 36px Courier New";gx.textAlign="center";
+    gx.textBaseline="middle";gx.fillText(txt,64,31);
     fdT.needsUpdate=true;
   };
   drawFloor("");
-  const fd=new THREE.Mesh(new THREE.PlaneGeometry(0.4,0.18),
+  const fd=new THREE.Mesh(new THREE.PlaneGeometry(0.40,0.18),
     new THREE.MeshBasicMaterial({map:fdT}));
-  fd.position.set(OPEN_W/2-0.065,2.2,-0.55); fd.rotation.y=-Math.PI/2; g.add(fd);
+  fd.position.set(PF-0.014,DY,DZ); fd.rotation.y=-Math.PI/2; g.add(fd);
   g.userData.drawFloor=drawFloor; g.userData.dispLocal=fd.position.clone();
-  /* sliding doors: brushed panels with darkened edges so the closed pair
-     reads as two leaves with a centre seam, not one blank slab */
-  const doorTex=makeCanvas(64,128,(gx,w,h)=>{
-    gx.fillStyle="#9aa0a4";gx.fillRect(0,0,w,h);
-    for(let i=0;i<260;i++){                                  // vertical brush grain
-      const x=Math.random()*w, l=8+Math.random()*40;
-      gx.fillStyle=`rgba(${Math.random()<0.5?120:170},${Math.random()<0.5?126:176},${Math.random()<0.5?130:180},0.18)`;
-      gx.fillRect(x,Math.random()*h,1,l);
+  /* ---------- the leaves ----------
+     Two flat slabs before, with their meeting stiles PRINTED on. A door is
+     a formed panel: a face sheet with the edges folded back at top and
+     bottom, a dark astragal down the leading edge with the rubber safety
+     shoe on it, a kick plate, and a gib underneath riding the sill groove.
+     The groove and the gib share zg1 — one number, so the shoe can never
+     hover over the slot it is supposed to run in. */
+  const LWD=OPEN_W/2+0.03, LHD=OPEN_H-0.06, LCY=OPEN_H/2;
+  const makeLeaf=(side)=>{
+    const d=new THREE.Group();
+    const st=[], dk=[], rb=[];
+    const lb=(arr,w,h,dp,x,y,z,tile)=>{
+      const geo=new THREE.BoxGeometry(w,h,dp);
+      if(tile) scaleBoxUV(geo,w,h,dp,tile);
+      const m=new THREE.Mesh(geo); m.position.set(x,y,z); arr.push(m); return m;
+    };
+    const lead=-side*(LWD/2-0.014);          // the meeting edge faces the centre
+    lb(st,LWD,LHD,0.030, 0,LCY,zg1, 0.5);                    // face sheet
+    lb(st,LWD,0.048,0.056, 0,LCY+LHD/2-0.024,zg1+0.010, 0.5);// folded returns
+    lb(st,LWD,0.048,0.056, 0,LCY-LHD/2+0.024,zg1+0.010, 0.5);
+    lb(st,LWD-0.05,0.26,0.006, 0,0.20,zg1+0.018, 0.5);       // kick plates, both faces
+    lb(st,LWD-0.05,0.26,0.006, 0,0.20,zg1-0.018, 0.5);
+    lb(dk,0.028,LHD,0.062, lead,LCY,zg1);                    // astragal
+    lb(rb,0.014,LHD,0.050, lead-side*0.017,LCY,zg1);         // safety shoe
+    /* the gib: it rides IN zg1, the same number the sill's front groove is
+       cut at, so the shoe can never hover beside the slot it runs in */
+    for(const gx2 of[-0.30,0.30]) lb(dk,0.10,0.014,0.022, gx2,0.025,zg1);
+    for(const[arr,mat]of[[st,elevBrightMat],[dk,elevDarkMat],[rb,elevRubberMat]]){
+      d.add(mergeStatic(arr,mat));
+      for(const m of arr) m.geometry.dispose();
     }
-    gx.fillStyle="rgba(28,30,32,0.85)";                      // stile edges = the seam
-    gx.fillRect(0,0,3,h);gx.fillRect(w-3,0,3,h);
-    gx.fillStyle="rgba(40,42,44,0.5)";
-    gx.fillRect(0,h-6,w,6);gx.fillRect(0,0,w,3);
-  });
-  const doorMat=new THREE.MeshPhongMaterial({map:doorTex, specular:0x222426, shininess:22});
-  const doorGeo=new THREE.BoxGeometry(OPEN_W/2+0.03,OPEN_H-0.06,0.05);
-  const doorL=new THREE.Mesh(doorGeo,doorMat); doorL.position.set(-(OPEN_W/4+0.015),OPEN_H/2,-0.06);
-  const doorR=new THREE.Mesh(doorGeo,doorMat); doorR.position.set( (OPEN_W/4+0.015),OPEN_H/2,-0.06);
+    d.position.set(side*0.515,0,0);
+    /* one leaf came out of its track. This is a ROLL about z, not a
+       translation: the cutscene owns .position.x on both leaves, so any
+       damage that lives in x is wiped the first time the doors move. */
+    if(opts.wrecked&&side>0){ d.rotation.z=-0.018; d.rotation.y=0.022; }
+    return d;
+  };
+  const doorL=makeLeaf(-1), doorR=makeLeaf(1);
   g.add(doorL); g.add(doorR); g.userData.doorL=doorL; g.userData.doorR=doorR;
-  /* portal trim */
-  add(new THREE.BoxGeometry(0.12,OPEN_H+0.14,0.1),darkMetal,-(OPEN_W/2+0.06),OPEN_H/2,0.01);
-  add(new THREE.BoxGeometry(0.12,OPEN_H+0.14,0.1),darkMetal, (OPEN_W/2+0.06),OPEN_H/2,0.01);
-  add(new THREE.BoxGeometry(OPEN_W+0.36,0.14,0.1),darkMetal,0,OPEN_H+0.07,0.01);
-  /* EXIT sign above the lintel — dark until the power is restored */
-  const signC=makeCanvas(128,48,(gx,w,h)=>{gx.fillStyle="#101010";gx.fillRect(0,0,w,h);
-    gx.fillStyle="#39d24a";gx.font="bold 30px Courier New";gx.textAlign="center";gx.fillText("EXIT",w/2,34);});
-  const sign=new THREE.Mesh(new THREE.PlaneGeometry(0.8,0.3),
+  /* ---------- the hall lantern: dark until a car answers ---------- */
+  g.userData.hallLamps=[];
+  for(const[ly,rz]of[[OPEN_H+0.42,0],[OPEN_H+0.42,Math.PI]]){
+    const lm=new THREE.MeshBasicMaterial({color:0x241a06});
+    const tri=new THREE.Mesh(new THREE.CircleGeometry(0.055,3),lm);
+    tri.position.set(rz? 0.10:-0.10,ly,0.132); tri.rotation.z=rz+Math.PI/2;
+    g.add(tri); g.userData.hallLamps.push(lm);
+  }
+  /* ---------- the EXIT sign: a real box, not a decal ---------- */
+  const signC=makeCanvas(256,96,(gx,w,h)=>{
+    gx.fillStyle="#0e120e";gx.fillRect(0,0,w,h);
+    gx.fillStyle="#39d24a";gx.font="bold 58px Courier New";
+    gx.textAlign="center";gx.textBaseline="middle";gx.fillText("EXIT",w/2,h/2+2);
+    for(let i=0;i<260;i++){                  // the grime of a diffuser nobody cleans
+      gx.fillStyle=`rgba(${18+Math.random()*30|0},${22+Math.random()*30|0},${18+Math.random()*26|0},${0.1+Math.random()*0.3})`;
+      gx.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*3,1+Math.random()*3);
+    }
+    const dead=gx.createLinearGradient(0,0,0,h);      // and the tube behind it, sagging
+    dead.addColorStop(0,"rgba(0,0,0,0.35)");dead.addColorStop(0.5,"rgba(0,0,0,0)");
+    dead.addColorStop(1,"rgba(0,0,0,0.45)");
+    gx.fillStyle=dead;gx.fillRect(0,0,w,h);
+  });
+  {
+    const sh=[];
+    const hb=new THREE.Mesh(new THREE.BoxGeometry(0.92,0.38,0.11));
+    hb.position.set(0,OPEN_H+0.82,0.075); sh.push(hb);
+    for(const s of[-1,1]){                    // the brackets it hangs off
+      const br=new THREE.Mesh(new THREE.BoxGeometry(0.05,0.16,0.10));
+      br.position.set(s*0.30,OPEN_H+1.03,0.045); sh.push(br);
+    }
+    g.add(mergeStatic(sh,elevDarkMat));
+    for(const m of sh) m.geometry.dispose();
+  }
+  const sign=new THREE.Mesh(new THREE.PlaneGeometry(0.82,0.29),
     new THREE.MeshBasicMaterial({map:signC}));
-  sign.position.set(0,OPEN_H+0.32,0.06); g.add(sign); g.userData.sign=sign;
+  sign.position.set(0,OPEN_H+0.82,0.131); g.add(sign); g.userData.sign=sign;
   sign.material.color.set(0x333333);
-  /* call button beside the doors */
-  add(new THREE.BoxGeometry(0.16,0.24,0.04),metal,OPEN_W/2+0.21,1.15,0.02);
+  /* ---------- the call buttons ----------
+     DOWN is the one that matters, so DOWN is `btnMat`/`btnLocal` — the ride
+     cutscene lights that material and aims the camera at that position. */
   const btnMat=new THREE.MeshBasicMaterial({color:0x3a1a08});
-  const btn=new THREE.Mesh(new THREE.CylinderGeometry(0.035,0.035,0.03,10),btnMat);
-  btn.rotation.x=Math.PI/2; btn.position.set(OPEN_W/2+0.21,1.15,0.05); g.add(btn);
+  const btn=new THREE.Mesh(new THREE.CylinderGeometry(0.030,0.030,0.020,14),btnMat);
+  btn.rotation.x=Math.PI/2; btn.position.set(HALL.x,hallY(HALL.dnC),0.040); g.add(btn);
   g.userData.btnMat=btnMat; g.userData.btnLocal=btn.position.clone();
+  const up=new THREE.Mesh(new THREE.CylinderGeometry(0.030,0.030,0.020,14),
+    new THREE.MeshBasicMaterial({color:0x231208}));
+  up.rotation.x=Math.PI/2; up.position.set(HALL.x,hallY(HALL.upC),0.040); g.add(up);
   g.position.copy(p); g.rotation.y=facing;
   g.userData.animated=true;                 // doors slide, buttons/sign light during the ride cutscene
   return g;

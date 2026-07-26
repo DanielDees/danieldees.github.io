@@ -1459,35 +1459,50 @@ export function makePosterTexture(){
   return t;
 }
 
-/* framed wall art: five families of almost-library artwork, each grown
+/* framed wall art: nine families of almost-library artwork, each grown
    fresh per call — things that COULD hang in a library, off by just one
-   degree. Frame + mat are shared; the plate inside picks a type. */
+   degree.
+   The frame and the mat used to be PRINTED into this canvas, which is the
+   flattest thing a picture can be: a moulding is a profile catching a light
+   from above, and a printed one is a brown border. Both are geometry now
+   (makeFramedArt), so the whole canvas is the PLATE — which also triples the
+   pixels the image itself gets: at 256 across a 0.72m sight size this runs
+   ~355 px/m, against ~200 for the old inset. */
 export function makeArtTexture(){
-  const type=Math.floor(Math.random()*5);
-  const t=makeCanvas(224,288,(g,w,h)=>{
-    /* dark wood frame + aged mat */
-    g.fillStyle="#382a1a";g.fillRect(0,0,w,h);
-    g.fillStyle="rgba(140,110,70,0.35)";g.fillRect(3,3,w-6,2);g.fillRect(3,3,2,h-6);
-    g.fillStyle="#b3ab94";g.fillRect(12,12,w-24,h-24);
-    const x0=26,y0=26,iw=w-52,ih=h-52;
+  const type=Math.floor(Math.random()*9);
+  const t=makeCanvas(256,320,(g,w,h)=>{
+    const x0=0,y0=0,iw=w,ih=h;
     const ink="rgba(40,34,24,0.85)";
     if(type===0){
       /* MAP OF THE COLLECTION: floor-plan dots and corridors to nowhere */
       g.fillStyle="#a89c80";g.fillRect(x0,y0,iw,ih);
-      g.strokeStyle="rgba(60,50,34,0.7)";g.lineWidth=1.5;
+      g.strokeStyle="rgba(60,50,34,0.7)";g.lineWidth=1.6;
       const pts=[];
-      for(let i=0;i<9;i++) pts.push([x0+14+Math.random()*(iw-28),y0+26+Math.random()*(ih-52)]);
-      for(let i=0;i<10;i++){
+      for(let i=0;i<13;i++) pts.push([x0+18+Math.random()*(iw-36),y0+40+Math.random()*(ih-76)]);
+      for(let i=0;i<16;i++){
         const a=pts[Math.floor(Math.random()*pts.length)],b=pts[Math.floor(Math.random()*pts.length)];
         g.beginPath();g.moveTo(a[0],a[1]);g.lineTo(b[0],a[1]);g.lineTo(b[0],b[1]);g.stroke();
       }
-      for(const p of pts){ g.fillStyle="rgba(60,50,34,0.8)";g.beginPath();g.arc(p[0],p[1],3,0,7);g.fill(); }
-      g.fillStyle="rgba(150,40,30,0.85)";g.font="bold 11px Courier New";g.textAlign="center";
-      const yx=x0+14+Math.random()*(iw-28), yy=y0+30+Math.random()*(ih-60);
+      /* the rooms the corridors serve — hatched, and none of them square-on */
+      g.strokeStyle="rgba(60,50,34,0.45)";g.lineWidth=1;
+      for(let i=0;i<7;i++){
+        const rx=x0+16+Math.random()*(iw-70), ry=y0+38+Math.random()*(ih-100);
+        const rw=22+Math.random()*44, rh=18+Math.random()*36;
+        g.strokeRect(rx,ry,rw,rh);
+        for(let hx=rx+4;hx<rx+rw;hx+=5){
+          g.beginPath();g.moveTo(hx,ry+rh);g.lineTo(hx+rh*0.5,ry);g.stroke();
+        }
+      }
+      for(const p of pts){ g.fillStyle="rgba(60,50,34,0.85)";g.beginPath();g.arc(p[0],p[1],3.4,0,7);g.fill(); }
+      g.fillStyle="rgba(150,40,30,0.9)";g.font="bold 15px Courier New";g.textAlign="center";
+      const yx=x0+30+Math.random()*(iw-60), yy=y0+50+Math.random()*(ih-110);
       g.fillText("✕",yx,yy);
-      g.fillText("YOU WERE HERE",yx,yy+12);
-      g.fillStyle=ink;g.font="bold 12px Courier New";
-      g.fillText("MAP OF THE COLLECTION",x0+iw/2,y0+14);
+      g.font="bold 12px Courier New";
+      g.fillText("YOU WERE HERE",yx,yy+15);
+      g.fillStyle=ink;g.font="bold 15px Courier New";
+      g.fillText("MAP OF THE COLLECTION",x0+iw/2,y0+22);
+      g.font="9px Courier New";g.fillStyle="rgba(40,34,24,0.55)";
+      g.fillText("SCALE: ONE FLOOR TO ONE FLOOR",x0+iw/2,y0+ih-12);
     } else if(type===1){
       /* a donor portrait with nothing where the face goes */
       g.fillStyle="#2a241d";g.fillRect(x0,y0,iw,ih);
@@ -1498,10 +1513,24 @@ export function makeArtTexture(){
       g.fillStyle="#13100c";
       g.beginPath();g.ellipse(cx,y0+ih*0.34,iw*0.16,ih*0.15,0,0,7);g.fill();   // head
       g.beginPath();g.ellipse(cx,y0+ih*0.78,iw*0.32,ih*0.3,0,Math.PI,0);g.fill(); // shoulders
-      g.fillStyle="#8a7340";g.fillRect(x0+iw*0.2,y0+ih-22,iw*0.6,14);          // brass plaque
-      g.fillStyle="#241c10";g.font="bold 9px Courier New";g.textAlign="center";
-      g.fillText(["THE FIRST LIBRARIAN","HEAD ARCHIVIST, 19∅∅","OUR FOUNDER","PATRON OF QUIET"][Math.floor(Math.random()*4)],
-        x0+iw/2,y0+ih-12);
+      /* a collar and a high stock, so the silhouette is dressed rather than
+         a snowman: two pale wedges meeting under where the chin would be */
+      g.fillStyle="rgba(196,186,164,0.62)";
+      for(const s of[-1,1]){
+        g.beginPath();g.moveTo(cx,y0+ih*0.49);
+        g.lineTo(cx+s*iw*0.11,y0+ih*0.56);g.lineTo(cx+s*iw*0.03,y0+ih*0.66);g.closePath();g.fill();
+      }
+      /* the only light in the painting falls where the face should be, and
+         finds nothing there */
+      const fg=g.createRadialGradient(cx,y0+ih*0.34,1,cx,y0+ih*0.34,iw*0.17);
+      fg.addColorStop(0,"rgba(150,132,98,0.30)");fg.addColorStop(1,"rgba(150,132,98,0)");
+      g.fillStyle=fg;g.beginPath();g.ellipse(cx,y0+ih*0.34,iw*0.17,ih*0.16,0,0,7);g.fill();
+      g.fillStyle="#8a7340";g.fillRect(x0+iw*0.16,y0+ih-30,iw*0.68,19);        // brass plaque
+      g.fillStyle="rgba(60,48,22,0.5)";g.fillRect(x0+iw*0.16,y0+ih-30,iw*0.68,2);
+      g.fillStyle="#241c10";g.font="bold 12px Courier New";g.textAlign="center";
+      g.fillText(["THE FIRST LIBRARIAN","HEAD ARCHIVIST, 19∅∅","OUR FOUNDER","PATRON OF QUIET",
+                  "KEEPER OF THE LOWER STACK"][Math.floor(Math.random()*5)],
+        x0+iw/2,y0+ih-16);
     } else if(type===2){
       /* botanical plate: a specimen with labels pointing at nothing */
       g.fillStyle="#cfc6a8";g.fillRect(x0,y0,iw,ih);
@@ -1516,53 +1545,452 @@ export function makeArtTexture(){
         g.beginPath();g.ellipse(0,0,16+Math.random()*8,6,0,0,7);g.fill();g.restore();
       }
       g.strokeStyle="rgba(40,34,24,0.6)";g.lineWidth=1;
-      g.fillStyle=ink;g.font="9px Courier New";g.textAlign="left";
-      const labels=["fig. ∅","leaf (?)","hrs.","stem, late","do not water"];
-      for(let i=0;i<4;i++){
-        const ly=y0+34+Math.random()*(ih-80), tx=Math.random()<0.5? x0+4: x0+iw-44;
-        g.beginPath();g.moveTo(tx<sx?tx+38:tx,ly);
-        g.lineTo(sx+(Math.random()-0.5)*60,ly+(Math.random()-0.5)*30);g.stroke();
+      g.fillStyle=ink;g.font="11px Courier New";g.textAlign="left";
+      const labels=["fig. ∅","leaf (?)","hrs.","stem, late","do not water","rootstock, absent"];
+      for(let i=0;i<5;i++){
+        const ly=y0+44+Math.random()*(ih-100), tx=Math.random()<0.5? x0+6: x0+iw-64;
+        g.beginPath();g.moveTo(tx<sx?tx+56:tx,ly);
+        g.lineTo(sx+(Math.random()-0.5)*76,ly+(Math.random()-0.5)*38);g.stroke();
         g.fillText(labels[Math.floor(Math.random()*labels.length)],tx,ly+3);
       }
-      g.textAlign="center";g.font="italic 10px Courier New";
-      g.fillText("SPECIMEN: HOURS, PERENNIAL",x0+iw/2,y0+ih-8);
+      g.textAlign="center";g.font="italic 13px Courier New";
+      g.fillText("SPECIMEN: HOURS, PERENNIAL",x0+iw/2,y0+ih-12);
     } else if(type===3){
       /* an acuity chart that tests something else */
       g.fillStyle="#d8d2c0";g.fillRect(x0,y0,iw,ih);
       const rows=["SH","HUSH","QUIETLY","RETURNALL","THEENDTHEEND","sshhhhhhhhhhh"];
-      let yy=y0+34;
+      let yy=y0+46;
       g.fillStyle=ink;g.textAlign="center";
       rows.forEach((r,i)=>{
-        g.font=`bold ${Math.max(6,30-i*5)}px Courier New`;
+        g.font=`bold ${Math.max(7,38-i*6)}px Courier New`;
         g.fillText(r.split("").join(" "),x0+iw/2,yy);
-        yy+=Math.max(14,36-i*4);
+        yy+=Math.max(17,44-i*5);
       });
       g.strokeStyle="rgba(40,34,24,0.4)";g.lineWidth=1;
-      g.beginPath();g.moveTo(x0+12,y0+ih-26);g.lineTo(x0+iw-12,y0+ih-26);g.stroke();
-      g.font="8px Courier New";
-      g.fillText("IF YOU CAN READ THIS ROW IT HEARD YOU",x0+iw/2,y0+ih-12);
-    } else {
+      g.beginPath();g.moveTo(x0+16,y0+ih-32);g.lineTo(x0+iw-16,y0+ih-32);g.stroke();
+      g.font="10px Courier New";
+      g.fillText("IF YOU CAN READ THIS ROW IT HEARD YOU",x0+iw/2,y0+ih-14);
+    } else if(type===4){
       /* nocturne: hills, a moon, no library anywhere in sight */
       const gr=g.createLinearGradient(0,y0,0,y0+ih);
       gr.addColorStop(0,"#11151d");gr.addColorStop(0.65,"#2a3140");gr.addColorStop(1,"#3a4252");
       g.fillStyle=gr;g.fillRect(x0,y0,iw,ih);
-      g.fillStyle="rgba(214,210,190,0.85)";
-      g.beginPath();g.arc(x0+iw*(0.25+Math.random()*0.5),y0+ih*0.25,11,0,7);g.fill();
-      for(let i=0;i<3;i++){
+      const mx=x0+iw*(0.25+Math.random()*0.5), my=y0+ih*0.24;
+      const mg=g.createRadialGradient(mx,my,2,mx,my,44);       // its own halo in the haze
+      mg.addColorStop(0,"rgba(214,210,190,0.34)");mg.addColorStop(1,"rgba(214,210,190,0)");
+      g.fillStyle=mg;g.beginPath();g.arc(mx,my,44,0,7);g.fill();
+      g.fillStyle="rgba(214,210,190,0.88)";
+      g.beginPath();g.arc(mx,my,13,0,7);g.fill();
+      for(let i=0;i<4;i++){
         g.fillStyle=`rgba(${10+i*6},${12+i*6},${16+i*7},0.95)`;
         g.beginPath();g.moveTo(x0,y0+ih);
-        for(let xx=0;xx<=iw;xx+=8)
-          g.lineTo(x0+xx,y0+ih*(0.55+i*0.13)+Math.sin(xx*0.05+i*9)*8);
+        for(let xx=0;xx<=iw;xx+=6)
+          g.lineTo(x0+xx,y0+ih*(0.52+i*0.11)+Math.sin(xx*0.045+i*9)*10+Math.sin(xx*0.14+i*3)*3);
         g.lineTo(x0+iw,y0+ih);g.closePath();g.fill();
       }
-      g.fillStyle="#8a7340";g.fillRect(x0+iw*0.25,y0+ih-16,iw*0.5,11);
-      g.fillStyle="#241c10";g.font="bold 8px Courier New";g.textAlign="center";
-      g.fillText("VIEW FROM THE STACKS",x0+iw/2,y0+ih-8);
+      g.fillStyle="#8a7340";g.fillRect(x0+iw*0.22,y0+ih-22,iw*0.56,15);
+      g.fillStyle="#241c10";g.font="bold 10px Courier New";g.textAlign="center";
+      g.fillText("VIEW FROM THE STACKS",x0+iw/2,y0+ih-11);
+    } else if(type===5){
+      /* the staff photograph. Rows of them, and every face has gone —
+         not scratched out, just never developed */
+      g.fillStyle="#3a3126";g.fillRect(x0,y0,iw,ih);
+      const vg=g.createRadialGradient(x0+iw/2,y0+ih*0.45,10,x0+iw/2,y0+ih*0.45,ih*0.62);
+      vg.addColorStop(0,"rgba(178,158,120,0.5)");vg.addColorStop(1,"rgba(178,158,120,0)");
+      g.fillStyle=vg;g.fillRect(x0,y0,iw,ih);
+      for(let row=0;row<3;row++){
+        const n=5+row, by=y0+ih*(0.34+row*0.19), sc=1+row*0.1;
+        for(let i=0;i<n;i++){
+          const px=x0+iw*(i+0.5)/n+(Math.random()-0.5)*5;
+          g.fillStyle="rgba(24,20,15,0.92)";
+          g.beginPath();g.ellipse(px,by+26*sc,iw*0.075*sc,ih*0.075*sc,0,Math.PI,0);g.fill();  // shoulders
+          g.beginPath();g.ellipse(px,by,iw*0.036*sc,ih*0.034*sc,0,0,7);g.fill();              // head
+          /* the face: a soft smear of the paper's own tone, no features */
+          const hg=g.createRadialGradient(px,by,0.5,px,by,iw*0.034*sc);
+          hg.addColorStop(0,"rgba(196,176,138,0.62)");hg.addColorStop(1,"rgba(196,176,138,0)");
+          g.fillStyle=hg;g.beginPath();g.arc(px,by,iw*0.034*sc,0,7);g.fill();
+        }
+      }
+      g.fillStyle="rgba(232,222,196,0.85)";g.font="italic 12px Courier New";g.textAlign="center";
+      g.fillText("STAFF OF THE READING ROOM",x0+iw/2,y0+26);
+      g.font="10px Courier New";g.fillStyle="rgba(232,222,196,0.6)";
+      g.fillText("(names on reverse)",x0+iw/2,y0+ih-16);
+    } else if(type===6){
+      /* the building in section — and it has one floor too many at the
+         bottom, unlabelled, with no stair drawn to it */
+      g.fillStyle="#dbd3bc";g.fillRect(x0,y0,iw,ih);
+      const bx=x0+26, bw=iw-52, top=y0+44, fl=7, fh=(ih-96)/fl;
+      g.strokeStyle="rgba(40,34,24,0.8)";g.lineWidth=1.4;
+      g.strokeRect(bx,top,bw,fh*fl);
+      for(let i=1;i<fl;i++){
+        g.beginPath();g.moveTo(bx,top+fh*i);g.lineTo(bx+bw,top+fh*i);g.stroke();
+      }
+      /* shelving hatched into every floor but the last */
+      g.strokeStyle="rgba(40,34,24,0.35)";g.lineWidth=0.8;
+      for(let i=0;i<fl-1;i++)
+        for(let sx2=bx+8;sx2<bx+bw-8;sx2+=9){
+          g.beginPath();g.moveTo(sx2,top+fh*i+fh-4);g.lineTo(sx2,top+fh*i+5);g.stroke();
+        }
+      /* the stair: it stops one floor short */
+      g.strokeStyle="rgba(40,34,24,0.75)";g.lineWidth=1.2;
+      for(let i=0;i<fl-1;i++){
+        g.beginPath();g.moveTo(bx+bw*0.62,top+fh*(i+1));
+        g.lineTo(bx+bw*0.80,top+fh*i);g.stroke();
+      }
+      g.fillStyle=ink;g.font="10px Courier New";g.textAlign="right";
+      for(let i=0;i<fl-1;i++) g.fillText(`${fl-1-i}`,bx-6,top+fh*i+fh*0.62);
+      g.fillStyle="rgba(150,40,30,0.8)";g.fillText("?",bx-6,top+fh*(fl-1)+fh*0.62);
+      g.textAlign="center";g.fillStyle=ink;g.font="bold 13px Courier New";
+      g.fillText("LONGITUDINAL SECTION",x0+iw/2,y0+24);
+      g.font="9px Courier New";g.fillStyle="rgba(40,34,24,0.55)";
+      g.fillText("DRAWING ∅ OF ∅ · NOT TO SCALE",x0+iw/2,y0+ih-14);
+    } else if(type===7){
+      /* a certificate whose recipient line was never filled in */
+      g.fillStyle="#e2d9bd";g.fillRect(x0,y0,iw,ih);
+      g.strokeStyle="rgba(122,98,48,0.8)";g.lineWidth=2.5;
+      g.strokeRect(x0+14,y0+14,iw-28,ih-28);
+      g.lineWidth=0.9;g.strokeRect(x0+21,y0+21,iw-42,ih-42);
+      g.fillStyle="rgba(60,50,28,0.9)";g.textAlign="center";
+      g.font="bold 17px Courier New";
+      g.fillText("AWARDED",x0+iw/2,y0+58);
+      g.font="italic 12px Courier New";g.fillStyle="rgba(60,50,28,0.7)";
+      for(const[i,ln]of["for service to the collection,","rendered without interruption,",
+                        "for the whole of the hours."].entries())
+        g.fillText(ln,x0+iw/2,y0+84+i*17);
+      /* the blank the name goes on, and the pen that never came */
+      g.strokeStyle="rgba(60,50,28,0.6)";g.lineWidth=1;
+      g.beginPath();g.moveTo(x0+34,y0+164);g.lineTo(x0+iw-34,y0+164);g.stroke();
+      g.beginPath();g.moveTo(x0+52,y0+ih-52);g.lineTo(x0+iw-52,y0+ih-52);g.stroke();
+      g.font="9px Courier New";g.fillStyle="rgba(60,50,28,0.55)";
+      g.fillText("signature of the head librarian",x0+iw/2,y0+ih-38);
+      /* the seal: a wax disc with a ring of teeth, pressed off-centre */
+      const sx3=x0+iw*0.28, sy3=y0+ih-92;
+      g.fillStyle="rgba(126,44,32,0.85)";
+      g.beginPath();
+      for(let k=0;k<=28;k++){
+        const a=k/28*Math.PI*2, rr=22*(k%2?0.86:1);
+        k? g.lineTo(sx3+Math.cos(a)*rr,sy3+Math.sin(a)*rr) : g.moveTo(sx3+Math.cos(a)*rr,sy3+Math.sin(a)*rr);
+      }
+      g.closePath();g.fill();
+      g.fillStyle="rgba(74,22,16,0.7)";g.beginPath();g.arc(sx3,sy3,13,0,7);g.fill();
+      g.fillStyle="rgba(216,190,150,0.75)";g.font="bold 11px Courier New";
+      g.fillText("∅",sx3,sy3+4);
+    } else {
+      /* in memoriam: an engraved list of the fallen, and it is one name,
+         over and over, all the way down the plate */
+      const gr2=g.createLinearGradient(x0,y0,x0+iw,y0+ih);
+      gr2.addColorStop(0,"#5e5334");gr2.addColorStop(0.45,"#8a7a4a");gr2.addColorStop(1,"#4e452c");
+      g.fillStyle=gr2;g.fillRect(x0,y0,iw,ih);
+      for(let i=0;i<900;i++){                    // the brush of a rolled brass plate
+        g.fillStyle=`rgba(${Math.random()<0.5?60:210},${Math.random()<0.5?54:196},${Math.random()<0.5?34:150},0.06)`;
+        g.fillRect(Math.random()*w,Math.random()*h,10+Math.random()*40,1);
+      }
+      const name=["A. WREN","M. HOLLOWAY","E. VASS","J. ODELL","R. QUAY"][Math.floor(Math.random()*5)];
+      g.textAlign="center";
+      /* engraving = a dark cut with a bright lip below it */
+      const cut=(txt,cy,fs)=>{
+        g.font=`bold ${fs}px Courier New`;
+        g.fillStyle="rgba(30,24,10,0.8)";g.fillText(txt,x0+iw/2,cy);
+        g.fillStyle="rgba(246,236,196,0.30)";g.fillText(txt,x0+iw/2,cy+1.2);
+      };
+      cut("IN MEMORIAM",y0+40,18);
+      g.fillStyle="rgba(30,24,10,0.5)";g.fillRect(x0+42,y0+50,iw-84,1.5);
+      for(let i=0;i<10;i++) cut(name,y0+80+i*22,13);
+      cut("· AND THE REST ·",y0+ih-22,11);
     }
+    /* every plate is behind glass in a building that has been damp for
+       longer than anyone: foxing on the paper, and a bloom of dust across
+       the inside of the glazing */
+    for(let i=0;i<9;i++){
+      const fx=Math.random()*w,fy=Math.random()*h,r=8+Math.random()*30;
+      const fg2=g.createRadialGradient(fx,fy,1,fx,fy,r);
+      fg2.addColorStop(0,`rgba(108,80,38,${0.05+Math.random()*0.11})`);
+      fg2.addColorStop(1,"rgba(108,80,38,0)");
+      g.fillStyle=fg2;g.beginPath();g.arc(fx,fy,r,0,7);g.fill();
+    }
+    const dust=g.createLinearGradient(0,0,0,h);
+    dust.addColorStop(0,"rgba(196,190,172,0.12)");
+    dust.addColorStop(0.4,"rgba(196,190,172,0.02)");
+    dust.addColorStop(1,"rgba(60,54,44,0.10)");
+    g.fillStyle=dust;g.fillRect(0,0,w,h);
   });
   t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearFilter; t.generateMipmaps=false;
   return t;
 }
+
+/* ================= polythene: the film things are left wrapped in ==========
+   The wrap was a box at 0.18 opacity with a flat blue-grey on it, which from
+   any angle is a CUBE OF FOG — a solid you can partly see through, not a
+   sheet. What makes film read as film is never the tint: it is the CREASES.
+   A sheet of polythene is optically almost nothing across its faces and goes
+   milk-white exactly where it has folded back on itself, so the alpha here is
+   CREASE-SHAPED — the cave's silk rule again, and for the same reason. Break
+   it with one broad translucent fill and the bundle turns back into frosted
+   glass. u wraps the bundle, v runs base → gather at the top.
+   POT + mipmapped: distant wrapped chairs must soften to haze rather than
+   alias their creases into a field of scratches. */
+export function makeWrapTexture(){
+  const t=makeCanvas(256,256,(g,w,h)=>{
+    g.clearRect(0,0,w,h);
+    /* the body of the sheet: barely there at all */
+    g.fillStyle="rgba(222,230,234,0.045)";g.fillRect(0,0,w,h);
+    const wrapX=fn=>{ for(const ox of[0,-w,w]) fn(ox); };
+    /* THERE ARE NO SOFT BLOOMS HERE, and there must never be. The first pass
+       laid down nine radial gradients up to a third of the canvas across as
+       "where the sheet lies doubled" — and a 60px soft ellipse at 0.12 alpha
+       is not a fold, it is a milky PATCH, which on the bag came out as a
+       glowing oval floating over the object inside. Same rule, same reason
+       as the cave's silk: alpha is CREASE-shaped, full stop. Everything
+       below is a stroke. */
+    /* a crease is a WALK, not a line — but an ANGULAR one. The polythene
+       here folds and folds back; smooth arcs across a translucent shell read
+       as scratches on glass, which is what turned the first bundle into a
+       bell jar. Big heading jitter, long steps, hard kinks. */
+    const crease=(x,y,ang,len,a,wid)=>{
+      const pts=[[x,y]];
+      let cx=x, cy=y, ca=ang;
+      for(let s=0;s<len;s+=11){
+        ca+=(Math.random()-0.5)*1.15;
+        cx+=Math.sin(ca)*11; cy+=Math.cos(ca)*11;
+        pts.push([cx,cy]);
+      }
+      wrapX(ox=>{
+        for(const[lw,al]of[[wid+2.6,a*0.16],[wid,a]]){
+          g.strokeStyle=`rgba(244,249,251,${al})`;g.lineWidth=lw;
+          g.lineJoin="miter";g.lineCap="butt";     // a fold has a corner on it
+          g.beginPath();g.moveTo(pts[0][0]+ox,pts[0][1]);
+          for(let i=1;i<pts.length;i++) g.lineTo(pts[i][0]+ox,pts[i][1]);
+          g.stroke();
+        }
+      });
+    };
+    /* Heading matters more than count. A field of long near-parallel
+       verticals is a HAIRNET, which is what the first pass came out as — so
+       most of these run at a real angle, and they are short: a crease is
+       where the sheet folded once, not a thread running the height of the
+       bundle. */
+    for(let i=0;i<26;i++){
+      const diag=Math.random()<0.6;
+      crease(Math.random()*w, Math.random()*h,
+        diag? (Math.random()<0.5?1:-1)*(0.6+Math.random()*0.8) : (Math.random()-0.5)*0.5,
+        34+Math.random()*90, 0.22+Math.random()*0.32, 0.8+Math.random()*1.4);
+    }
+    /* the gather: a few converging on the twist at the top, and no more —
+       this family IS parallel by construction, so it has to stay small */
+    const apex=Math.random()*w;
+    for(let i=0;i<7;i++){
+      const x0=Math.random()*w;
+      let dx=apex-x0; if(dx>w/2) dx-=w; if(dx<-w/2) dx+=w;
+      crease(x0,h*(0.5+Math.random()*0.26),Math.atan2(dx*0.55,-h*0.4),
+        40+Math.random()*60, 0.18+Math.random()*0.26, 0.7+Math.random());
+    }
+    /* fine wrinkle: short, every angle, well under the crease alpha */
+    for(let i=0;i<300;i++){
+      const x=Math.random()*w,y=Math.random()*h,a=Math.random()*7,l=4+Math.random()*18;
+      wrapX(ox=>{
+        g.strokeStyle=`rgba(238,244,246,${0.06+Math.random()*0.13})`;g.lineWidth=1;
+        g.beginPath();g.moveTo(x+ox,y);g.lineTo(x+ox+Math.cos(a)*l,y+Math.sin(a)*l);g.stroke();
+      });
+    }
+    /* dust settled on the outside, and the grey of a storeroom */
+    for(let i=0;i<380;i++){
+      wrapX(ox=>{
+        g.fillStyle=`rgba(198,202,201,${0.06+Math.random()*0.16})`;
+        g.fillRect(Math.random()*w+ox,Math.random()*h,1,1);
+      });
+    }
+    /* storeroom grime, as SMEARS rather than blooms — same rule again */
+    for(let i=0;i<26;i++){
+      const x=Math.random()*w,y=Math.random()*h,a=Math.random()*7,l=8+Math.random()*26;
+      wrapX(ox=>{
+        g.strokeStyle=`rgba(112,120,124,${0.05+Math.random()*0.1})`;
+        g.lineWidth=1+Math.random()*2.4;
+        g.beginPath();g.moveTo(x+ox,y);g.lineTo(x+ox+Math.cos(a)*l,y+Math.sin(a)*l);g.stroke();
+      });
+    }
+    /* somebody started opening one: torn holes, ragged, never a rectangle */
+    g.globalCompositeOperation="destination-out";
+    for(let i=0;i<3;i++){
+      const x=Math.random()*w, y=h*(0.15+Math.random()*0.45);
+      wrapX(ox=>{
+        g.beginPath();g.moveTo(x+ox,y);
+        let tx=x+ox, ty=y, ta=Math.random()*7;
+        for(let s=0;s<9;s++){
+          ta+=(Math.random()-0.5)*1.6;
+          tx+=Math.cos(ta)*(4+Math.random()*11); ty+=Math.sin(ta)*(4+Math.random()*11);
+          g.lineTo(tx,ty);
+        }
+        g.closePath();g.fillStyle="rgba(0,0,0,1)";g.fill();
+      });
+    }
+    g.globalCompositeOperation="source-over";
+  });
+  t.wrapS=THREE.RepeatWrapping; t.wrapT=THREE.ClampToEdgeWrapping;
+  t.anisotropy=4;
+  return t;
+}
+/* the tape holding it shut: frosted, stretched along its length, and dull
+   where the adhesive has crept out past the edge */
+export const texTape=makeCanvas(128,32,(g,w,h)=>{
+  g.fillStyle="rgba(212,204,182,0.72)";g.fillRect(0,0,w,h);
+  for(let i=0;i<180;i++){                        // adhesive drawn out into fibres
+    const y=Math.random()*h;
+    g.fillStyle=`rgba(${Math.random()<0.5?168:238},${Math.random()<0.5?160:234},${Math.random()<0.5?138:214},${0.10+Math.random()*0.2})`;
+    g.fillRect(Math.random()*w,y,6+Math.random()*40,1);
+  }
+  for(let i=0;i<8;i++){                          // trapped air, in lens shapes
+    const x=Math.random()*w,y=Math.random()*h,r=2+Math.random()*5;
+    const gr=g.createRadialGradient(x,y,0,x,y,r);
+    gr.addColorStop(0,"rgba(252,250,240,0.55)");gr.addColorStop(1,"rgba(252,250,240,0)");
+    g.fillStyle=gr;g.beginPath();g.ellipse(x,y,r*1.9,r,0,0,7);g.fill();
+  }
+  g.fillStyle="rgba(150,142,120,0.35)";g.fillRect(0,0,w,1.5);g.fillRect(0,h-1.5,w,1.5);
+});
+texTape.wrapS=THREE.RepeatWrapping; texTape.wrapT=THREE.ClampToEdgeWrapping;
+
+/* ================= the returns trolley's paintwork =================
+   Institutional enamel over sheet steel, TILEABLE at a fixed world scale
+   (scaleBoxUV), so an end panel and a 20mm deck lip carry the same finish.
+   It is kept BRIGHT and near-neutral on purpose: three cart colours are the
+   same map under three different material tints, and a map that multiplies a
+   colour has to average high or every truck comes out black.
+   Chips are PATHS, never fillRect — a rectangular chip is a decal, not
+   damage — and nothing here is unique enough to notice repeating. */
+export const texCartPaint=makeCanvas(256,256,(g,w,h)=>{
+  g.fillStyle="#c8cbc8";g.fillRect(0,0,w,h);
+  /* orange peel: the fine roll of a sprayed enamel */
+  for(let i=0;i<2600;i++){
+    const v=Math.random()<0.5;
+    g.fillStyle=`rgba(${v?176:236},${v?180:240},${v?176:238},${0.05+Math.random()*0.12})`;
+    g.beginPath();g.arc(Math.random()*w,Math.random()*h,0.8+Math.random()*1.8,0,7);g.fill();
+  }
+  /* broad tonal drift so no facet is ever one flat value */
+  for(let i=0;i<20;i++){
+    const x=Math.random()*w,y=Math.random()*h,r=30+Math.random()*80;
+    const gr=g.createRadialGradient(x,y,r*0.1,x,y,r);
+    gr.addColorStop(0,Math.random()<0.5?"rgba(160,164,162,0.10)":"rgba(246,248,246,0.10)");
+    gr.addColorStop(1,"rgba(0,0,0,0)");
+    g.fillStyle=gr;g.beginPath();g.arc(x,y,r,0,7);g.fill();
+  }
+  /* scratches down to the primer — thin, short, at every angle */
+  for(let i=0;i<130;i++){
+    const x=Math.random()*w,y=Math.random()*h,a=Math.random()*7,l=4+Math.random()*26;
+    g.strokeStyle=`rgba(${118+Math.random()*30|0},${104+Math.random()*26|0},${92+Math.random()*24|0},${0.16+Math.random()*0.3})`;
+    g.lineWidth=0.7+Math.random();
+    g.beginPath();g.moveTo(x,y);g.lineTo(x+Math.cos(a)*l,y+Math.sin(a)*l);g.stroke();
+    g.strokeStyle="rgba(250,252,250,0.18)";g.lineWidth=0.6;
+    g.beginPath();g.moveTo(x,y+1);g.lineTo(x+Math.cos(a)*l,y+Math.sin(a)*l+1);g.stroke();
+  }
+  /* chips: a ragged loop of oxide primer with a bright lifted lip, and a
+     bare-steel eye in the deepest few. Sparse — at 512 px/m an end panel
+     covers about two tiles, and 58 a tile put a hundred dark specks on it,
+     which reads as sandpaper rather than as a truck that has been shoved
+     into a shelf end a few thousand times. */
+  for(let i=0;i<24;i++){
+    const x=Math.random()*w,y=Math.random()*h,r=1.6+Math.random()*3.6;
+    const path=()=>{
+      g.beginPath();
+      for(let k=0;k<=9;k++){
+        const a=k/9*Math.PI*2, rr=r*(0.55+Math.random()*0.75);
+        const px=x+Math.cos(a)*rr, py=y+Math.sin(a)*rr;
+        k? g.lineTo(px,py) : g.moveTo(px,py);
+      }
+      g.closePath();
+    };
+    g.fillStyle=`rgba(${128+Math.random()*26|0},${106+Math.random()*22|0},${88+Math.random()*20|0},0.7)`;
+    path();g.fill();
+    g.strokeStyle="rgba(252,254,252,0.3)";g.lineWidth=0.8;path();g.stroke();
+    if(Math.random()<0.35){
+      g.fillStyle="rgba(158,164,168,0.65)";
+      g.beginPath();g.arc(x,y,r*0.42,0,7);g.fill();
+    }
+  }
+});
+texCartPaint.wrapS=texCartPaint.wrapT=THREE.RepeatWrapping;
+texCartPaint.anisotropy=4;
+
+/* ================= the display forms' fibreglass =================
+   A FITTED map, not a tiling one: u wraps the body, v runs base → neck, so
+   the two MOULD PARTING SEAMS are VERTICAL strokes at u=0 and u=0.5 — the
+   lathe orientation contract the spider's carapace had to learn. Everything
+   else is what forty years does to a painted shell: crazing (short and
+   angular; long smooth curves tile into worms and, on a body, read as
+   veins), chips down to the dark core, dust caught on the upward faces.
+   Bright and near-neutral — two materials tint it light and dark. */
+export const texMannequin=makeCanvas(256,512,(g,w,h)=>{
+  g.fillStyle="#d6d0c4";g.fillRect(0,0,w,h);
+  const wrapX=fn=>{ for(const ox of[0,-w,w]) fn(ox); };
+  for(let i=0;i<40;i++){                          // the mottle of an old finish
+    const x=Math.random()*w,y=Math.random()*h,r=18+Math.random()*70;
+    wrapX(ox=>{
+      const gr=g.createRadialGradient(x+ox,y,r*0.1,x+ox,y,r);
+      gr.addColorStop(0,Math.random()<0.5?`rgba(168,158,142,${0.05+Math.random()*0.08})`
+                                         :`rgba(240,236,226,${0.05+Math.random()*0.08})`);
+      gr.addColorStop(1,"rgba(0,0,0,0)");
+      g.fillStyle=gr;g.beginPath();g.arc(x+ox,y,r,0,7);g.fill();
+    });
+  }
+  /* dust on the shoulders (high v), grime gathered at the hip cut (low v) */
+  let gr=g.createLinearGradient(0,h*0.72,0,h);
+  gr.addColorStop(0,"rgba(228,224,214,0)");gr.addColorStop(1,"rgba(228,224,214,0.22)");
+  g.fillStyle=gr;g.fillRect(0,h*0.72,w,h*0.28);
+  gr=g.createLinearGradient(0,h*0.16,0,0);
+  gr.addColorStop(0,"rgba(96,88,74,0)");gr.addColorStop(1,"rgba(96,88,74,0.20)");
+  g.fillStyle=gr;g.fillRect(0,0,w,h*0.16);
+  /* crazing: a mesh of SHORT kinked hairlines, never a long sweep */
+  for(let i=0;i<220;i++){
+    const x=Math.random()*w, y=Math.random()*h;
+    let cx=x, cy=y, a=Math.random()*7;
+    wrapX(ox=>{
+      g.strokeStyle=`rgba(122,112,96,${0.14+Math.random()*0.26})`;g.lineWidth=0.7;
+      g.beginPath();g.moveTo(cx+ox,cy);
+      let px=cx, py=cy, pa=a;
+      for(let s=0;s<4;s++){
+        pa+=(Math.random()-0.5)*1.5;
+        px+=Math.cos(pa)*(3+Math.random()*7); py+=Math.sin(pa)*(3+Math.random()*7);
+        g.lineTo(px+ox,py);
+      }
+      g.stroke();
+    });
+  }
+  /* chips down to the darker core, with a lifted lip. Sparse: 34 of them
+     drawn three times each for the u-wrap put a hundred dark specks on a
+     body, and a hundred dark specks on a pale shell is not damage, it is
+     flies. */
+  for(let i=0;i<15;i++){
+    const x=Math.random()*w,y=Math.random()*h,r=2+Math.random()*4;
+    wrapX(ox=>{
+      g.beginPath();
+      for(let k=0;k<=8;k++){
+        const a=k/8*Math.PI*2, rr=r*(0.5+Math.random()*0.8);
+        const px=x+ox+Math.cos(a)*rr, py=y+Math.sin(a)*rr;
+        k? g.lineTo(px,py) : g.moveTo(px,py);
+      }
+      g.closePath();
+      g.fillStyle=`rgba(${128+Math.random()*26|0},${118+Math.random()*22|0},${102+Math.random()*20|0},0.52)`;g.fill();
+      g.strokeStyle="rgba(252,250,244,0.30)";g.lineWidth=0.7;g.stroke();
+    });
+  }
+  /* the two mould seams, wavering slightly the way a hand-finished one does */
+  for(const sx of[0,w/2]){
+    let x=sx;
+    for(let y=0;y<h;y+=4){
+      x+=(Math.random()-0.5)*0.7; x=sx+Math.max(-2,Math.min(2,x-sx));
+      wrapX(ox=>{
+        g.fillStyle="rgba(128,118,102,0.36)";g.fillRect(x+ox,y,1.1,4.2);
+        g.fillStyle="rgba(250,248,242,0.24)";g.fillRect(x+ox+1.1,y,0.9,4.2);
+      });
+    }
+  }
+  /* the maker's stamp, low on the hip where a real form carries it */
+  g.save();
+  g.translate(w*0.22,h*0.07);g.rotate(-0.05);
+  g.fillStyle="rgba(96,88,74,0.5)";g.font="bold 11px Courier New";g.textAlign="center";
+  g.fillText("FORM 7 · SIZE ∅",0,0);
+  g.restore();
+});
+texMannequin.wrapS=THREE.RepeatWrapping; texMannequin.wrapT=THREE.ClampToEdgeWrapping;
+texMannequin.anisotropy=4;
 
 /* cut a vertical strip [u0,u1] out of a colony texture — used when a colony
    overhangs its wall section and continues around a corner. flip mirrors the
