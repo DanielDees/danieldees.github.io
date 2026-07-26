@@ -42,8 +42,8 @@ warren lit only by veins of blue fungus: crawl-squeezes the spider can't follow 
 through, a black stream that hides your footsteps while you wade it, loud scree, a rock
 bridge over a chasm, and silk that thickens toward what it protects. Beside the dead
 stair, a corpse still cradles a **hand-crank lantern**, its ember glowing faintly in
-all that blue: take it, and its warm ring of flame-light physically drives the eyeless,
-cat-sized **hatchlings** back all around you — but cranking it is loud, and a flame held
+all that blue: take it, and its warm ring of flame-light physically drives the
+eight-eyed, cat-sized **hatchlings** back all around you — but cranking it is loud, and a flame held
 burning in open cave is a beacon the **matriarch** reads fluently. She tends her four egg clutches on a
 patrol; near the nests the silk-laced ground carries your footfalls to her at twice the
 range. Ignite all four clutches — a three-second channel, stationary, sparking — and
@@ -84,7 +84,7 @@ track by ear.
   runs down, cranking it back up is loud, and a flame held burning in open cave steers
   the matriarch to you. Both of its lights live in the scene from boot at intensity 0,
   so switching it on can never trigger a shader recompile.
-- **The hatchlings.** 5–6 eyeless, sound-hunting, photophobic skitterers with their own
+- **The hatchlings.** 5–6 sound-hunting, photophobic skitterers with their own
   territories. One that reaches you latches on — stamina bleed, screen-corner horror,
   and a screech that feeds the matriarch your position until you shake it off or burn
   it off with the lantern. At range their taps are tuned to be mistakable for dripwater.
@@ -164,8 +164,8 @@ track by ear.
   the spider stays half-readable inside it. When the dust settles there is a **round
   hole** rimmed with flung dirt, a **stone spiral stair** winding down its wall, and a
   blue glow/fog that lets you read two or three turns before it swallows the depths.
-  The camera settles back into your eyes — and the terminal's CRT burns red with one
-  line: **I WARNED YOU**.
+  The camera settles back into your eyes — and the terminal's CRT burns red with a
+  crying face, drawn in chunky pixels, weeping for as long as you stand there.
 - **Enter the hole.** A new final objective — and the stairs are *real*. Walk over
   the rim and descend the spiral yourself, tread by tread, the shaft wall at your
   shoulder and the blue fog thickening with every turn. A couple of spirals down,

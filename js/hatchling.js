@@ -1,13 +1,13 @@
 /* ---------------- the brood — THE NEST's alarm system with legs ----------------
-   A handful of cat-sized, eyeless, photophobic hatchlings. Each patrols its
-   own territory in the dark and hunts by sound. One that reaches you LATCHES:
+   A handful of cat-sized, photophobic hatchlings. Each patrols its own
+   territory in the dark and hunts by sound. One that reaches you LATCHES:
    screen shake, stamina drain — and a continuous screech that tells the
    matriarch exactly where its child is. They are not the death in this
    level; they are the alarm. The lantern's beam physically drives them back. */
 import { clamp, lerp, rand } from "./utils.js";
 import { STATE, spider } from "./state.js";
 import { CELL } from "./map.js";
-import { scene, markShared } from "./scene.js";
+import { scene, markShared, mergeStatic } from "./scene.js";
 import { CAVE, cellAt3, hatchBlocked, worldToCell3, cellToWorld3, surfaceNoiseGain,
          floorYAt } from "./cave.js";
 import { inBeam } from "./lantern.js";
@@ -51,13 +51,94 @@ function hatchLegGeo(){
 /* module-level and reused by every hatchling of every visit — clearLevelScene
    disposes anything it isn't told to keep */
 const LEG_GEO=markShared(hatchLegGeo());
+
+/* ---- the face ----------------------------------------------------------
+   They used to be built with nothing where eyes should be, and at hatchling
+   scale that left two pale spheres with legs: a blob. They have their
+   mother's eight eyes now, in her two rows, scaled down — and the eight of
+   them are what makes a shape in the dark resolve as an ANIMAL. It costs
+   the lore nothing: the eyes are why the light hurts, and a spider that
+   hunts by sound in a cave 60m down has no more use for them than it ever
+   did. They still catch the lantern from across a chamber, which is the
+   point — a faint eyeshine emissive so a distant one is eight pinpricks
+   before it is anything else.
+
+   Head parts are placed by a POINT and a DIRECTION, the same rule the
+   matriarch's face follows: an eye is seated by projecting its direction
+   onto the cephalothorax ellipsoid (p = c + R·d̂), never by hand-picked
+   xyz, and every spike is built along +Y from its base and then aimed — so
+   a part cannot come out inside-out or buried under the skin.
+   All of it merges into TWO geometries (one per material), so the whole
+   face costs 2 draws, not 14. */
+const eyeMat=new THREE.MeshPhongMaterial({color:0x14100e, emissive:0x1c0a05,
+  specular:0xe8dcc4, shininess:110});
+markShared(eyeMat);
+const CEPH_C=[0,BODY_Y,0.08], CEPH_R=[0.09,0.072,0.09];
+/* [dx,dy,dz, radius] — anterior median pair biggest, then the laterals,
+   then the posterior row set higher and further back on the dome */
+const EYES=[[0.22,0.16,0.96,0.017],[-0.22,0.16,0.96,0.017],
+            [0.62,0.10,0.78,0.012],[-0.62,0.10,0.78,0.012],
+            [0.28,0.62,0.74,0.013],[-0.28,0.62,0.74,0.013],
+            [0.70,0.52,0.50,0.011],[-0.70,0.52,0.50,0.011]];
+const _v=(a)=>new THREE.Vector3(a[0],a[1],a[2]);
+/* the ellipsoid surface point in the direction d, and its outward normal */
+function onCeph(d){
+  const u=_v(d).normalize();
+  return new THREE.Vector3(CEPH_C[0]+u.x*CEPH_R[0], CEPH_C[1]+u.y*CEPH_R[1],
+                           CEPH_C[2]+u.z*CEPH_R[2]);
+}
+/* a tapered spike: built along +Y with its BASE at the origin, then aimed
+   down `dir` — so it can only ever grow outward from where it is rooted */
+function spike(r0,r1,len,from,dir){
+  const geo=new THREE.CylinderGeometry(r1,r0,len,6);
+  geo.translate(0,len/2,0);
+  const m=new THREE.Mesh(geo);
+  m.position.copy(from);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),_v(dir).normalize());
+  return m;
+}
+function buildFace(){
+  /* the dark set: eight lenses + the fang tips */
+  const dark=[];
+  const lensGeo=new THREE.SphereGeometry(1,7,6);
+  for(const[dx,dy,dz,r]of EYES){
+    const p=onCeph([dx,dy,dz]);
+    const m=new THREE.Mesh(lensGeo);
+    m.position.copy(p);
+    m.lookAt(p.clone().add(_v([dx,dy,dz]).normalize()));   // local +z = the surface normal
+    m.scale.set(r,r*0.86,r*0.5);                           // a flattened lens, not a bead
+    dark.push(m);
+  }
+  /* the pale set: chelicerae under the front eyes, a pedipalp either side,
+     and the low dorsal ridge that breaks the abdomen's bare sphere */
+  const pale=[];
+  for(const s of[-1,1]){
+    const ch=spike(0.015,0.006,0.052,onCeph([s*0.28,-0.35,0.90]),[s*0.10,-0.86,0.50]);
+    pale.push(ch);
+    /* the fang hangs off the chelicera's tip, curling back under the mouth */
+    const tip=ch.position.clone().add(_v([s*0.10,-0.86,0.50]).normalize().multiplyScalar(0.052));
+    dark.push(spike(0.0055,0.0012,0.022,tip,[s*0.05,-0.93,0.36]));
+    pale.push(spike(0.011,0.0065,0.088,onCeph([s*0.72,-0.20,0.64]),[s*0.52,-0.50,0.69]));
+  }
+  const ridge=new THREE.Mesh(new THREE.SphereGeometry(1,8,6));
+  ridge.scale.set(0.062,0.030,0.115); ridge.position.set(0,BODY_Y+0.115,-0.145);
+  pale.push(ridge);
+  const dg=mergeStatic(dark,eyeMat).geometry, pg=mergeStatic(pale,paleDark).geometry;
+  /* the eight lenses all share lensGeo — dedupe or it gets disposed nine times */
+  const src=new Set(); for(const m of[...dark,...pale]) src.add(m.geometry);
+  for(const s of src) s.dispose();
+  return [markShared(dg),markShared(pg)];
+}
+const [EYE_GEO,FACE_GEO]=buildFace();
+
 function makeHatchMesh(){
   const g=new THREE.Group();
   const abd=new THREE.Mesh(new THREE.SphereGeometry(0.13,10,8),paleMat);
   abd.scale.set(1,0.9,1.3); abd.position.set(0,BODY_Y+0.02,-0.13); g.add(abd);
   const ceph=new THREE.Mesh(new THREE.SphereGeometry(0.09,9,7),paleMat);
   ceph.scale.set(1,0.8,1); ceph.position.set(0,BODY_Y,0.08); g.add(ceph);
-  /* no eyes. Nothing where eyes should be. */
+  g.add(new THREE.Mesh(EYE_GEO,eyeMat));
+  g.add(new THREE.Mesh(FACE_GEO,paleDark));
   const legs=[];
   const PHI=[0.9,0.35,-0.25,-0.8];
   for(let side=0;side<2;side++)for(let i=0;i<4;i++){

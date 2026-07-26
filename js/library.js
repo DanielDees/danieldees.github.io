@@ -16,8 +16,9 @@
 import { rand, clamp, lerp, srand, hash } from "./utils.js";
 import { CELL } from "./map.js";
 import { STATE } from "./state.js";
-import { scene, camera, renderer, lights, hemi, amb, makeLightRecord, markShared, mergeStatic, freezeStaticScene } from "./scene.js";
-import { makeCanvas, texLibWall, texLibCarpet, texLibCeil, texShelfWood, texDeskWood,
+import { scene, camera, renderer, lights, hemi, amb, makeLightRecord, markShared, mergeStatic, freezeStaticScene, tubeTex } from "./scene.js";
+import { makeCanvas, texLibWall, texLibCarpet, texLibCarpetBump, texLibCeil, texShelfWood, texDeskWood,
+         texCaveRock, texGalv, texBeige, makeKeyboardTexture, makeFloppyTexture,
          makeCrackTexture, makeEndTextTexture, makePosterTexture, makeArtTexture,
          makeBookCoverTexture, BOOK_TITLES, BOOK_BASES,
          makeArchiveBoxTexture, BOX_LABELS,
@@ -44,6 +45,7 @@ export const LIB={
   blackActive:false, blackElapsed:0, blackDur:0, nextBlack:35,   // periodic light failures (staggered 2s wave)
   webs:[], webGroup:null,             // the spider's silk: live rappel strands + shrivelled coils left on the ceiling
   hole:null,                          // the dug way down: {x,z,r,group,plug,lights,glow,stair} (see buildHole)
+  weeping:false, weepT:0, weepPaint:0,// the terminal's last face, still crying after the cutscene hands you back
 };
 /* the stacks' shared dimensions: collision, the ladders and the disc sites
    all derive from these so a resize can never strand them again */
@@ -335,11 +337,47 @@ function genLibrary(){
 }
 
 /* ---------------- prop builders ---------------- */
+/* THE GRAIN HAS A DIRECTION. Both wood canvases are drawn with the grain
+   running down the image (v), which is right for an upright — a stile, a
+   leg, a shelf end — and wrong for everything that lies along its length.
+   Left alone with world-scaled UVs, a 3.6m tabletop wore its grain running
+   across the 90mm edge and smeared flat over the face, which is what made
+   every board in the building read as painted board rather than timber.
+   A rotated CLONE fixes it for nothing: the same image, u and v swapped,
+   so horizontal members get grain that runs the way they were cut. */
+const grainH=t=>{ const c=t.clone(); c.center.set(0.5,0.5); c.rotation=Math.PI/2; c.needsUpdate=true; return c; };
+const texShelfWoodH=grainH(texShelfWood), texDeskWoodH=grainH(texDeskWood);
 const shelfMat=new THREE.MeshPhongMaterial({map:texShelfWood, specular:0x16100a, shininess:8});
 const deskMat =new THREE.MeshPhongMaterial({map:texDeskWood,  specular:0x1c1408, shininess:12});
+const shelfMatH=new THREE.MeshPhongMaterial({map:texShelfWoodH, specular:0x16100a, shininess:8});
+const deskMatH =new THREE.MeshPhongMaterial({map:texDeskWoodH,  specular:0x1c1408, shininess:12});
+/* every wooden member is a box with world-scaled UVs — one grain density
+   across the whole building, whatever the member's size */
+const woodBox=(w,h,d,x,y,z,m)=>{
+  const b=new THREE.Mesh(scaleBoxUV(new THREE.BoxGeometry(w,h,d),w,h,d,m||0.9));
+  b.position.set(x,y,z);
+  return b;
+};
+/* a box that narrows toward its LOW end on `axis` — the vertices past zero
+   pulled in by k. A leg that tapers to the floor and a CRT that isn't a
+   perfect cuboid are most of the distance between furniture and crates.
+   Box vertices are per-face duplicates, so recomputing normals afterwards
+   keeps the facets hard instead of rounding the whole thing off. */
+function taperBox(w,h,d,k,axis){
+  const g=scaleBoxUV(new THREE.BoxGeometry(w,h,d),w,h,d,0.9);
+  const p=g.attributes.position, byZ=axis==="z";
+  for(let i=0;i<p.count;i++){
+    if((byZ? p.getZ(i):p.getY(i))>0) continue;      // the wide end stays put
+    p.setX(i,p.getX(i)*k);
+    if(byZ) p.setY(i,p.getY(i)*k); else p.setZ(i,p.getZ(i)*k);
+  }
+  g.computeVertexNormals();
+  return g;
+}
 const darkMetalMat=new THREE.MeshPhongMaterial({color:0x474b50, specular:0x303336, shininess:36});
-const beigePlastic=new THREE.MeshPhongMaterial({color:0xb6ad97, specular:0x2a2822, shininess:18});
-const beigePlasticDark=new THREE.MeshPhongMaterial({color:0x8e8672, specular:0x222018, shininess:14});
+const beigePlastic=new THREE.MeshPhongMaterial({map:texBeige, specular:0x2a2822, shininess:18});
+const beigePlasticDark=new THREE.MeshPhongMaterial({map:texBeige, color:0x6f6a5b,
+  specular:0x222018, shininess:14});
 /* untouched objects "wrapped in plastic packaging" */
 const plasticWrap=new THREE.MeshPhongMaterial({color:0xcfd6da, specular:0x888d92, shininess:60,
   transparent:true, opacity:0.18, depthWrite:false});
@@ -595,21 +633,40 @@ function placeAccent(g,sx,yTop,sz){
 function makeShelfRun(run){
   /* one continuous double-sided open stack: uprights at every cell seam,
      boards spanning the whole run — and, as of v2.1.0, properly stocked:
-     row after row of spines with gaps, strays and library clutter between */
+     row after row of spines with gaps, strays and library clutter between.
+     v3.1: it is joinery now rather than five slabs. A plinth it stands on,
+     a crown rail across the top, a lipped front edge on every board (that
+     shadow line under the lip is most of what tells your eye a shelf is a
+     shelf), and a brass card holder on each end. The whole carcass merges
+     to THREE draws — grain-along, grain-up, and the brass — where the five
+     bare slabs alone used to cost ten. */
   const g=new THREE.Group();
   const len=run.cells.length*CELL, H=SHELF_H, D=SHELF_D;
-  const boardGeo=new THREE.BoxGeometry(len,0.055,D);
+  const along=[], upright=[], brass=[];
   for(const by of BOARD_Y){
-    const b=new THREE.Mesh(boardGeo,shelfMat); b.position.y=by; g.add(b);
+    along.push(woodBox(len,0.055,D, 0,by,0));
+    /* the front lip, both faces — proud of the board and a touch deeper */
+    for(const s of[-1,1]) along.push(woodBox(len,0.075,0.022, 0,by-0.006,s*(D/2-0.011)));
   }
-  const upGeo=new THREE.BoxGeometry(0.09,H,D);
-  for(let i=0;i<=run.cells.length;i++){
-    const u=new THREE.Mesh(upGeo,shelfMat);
-    u.position.set(-len/2+i*CELL,H/2,0); g.add(u);
+  for(let i=0;i<=run.cells.length;i++)
+    upright.push(woodBox(0.09,H,D, -len/2+i*CELL,H/2,0));
+  if(Math.random()<0.75)                       // a thin centre back panel, most runs
+    along.push(woodBox(len,H-0.2,0.04, 0,H/2,0));
+  /* plinth and crown are held flush with the collision slab (SHELF_D/2 +
+     0.02) — anything proud of that is something you can walk your face
+     through */
+  along.push(woodBox(len+0.05,0.10,D+0.04, 0,0.05,0));        // plinth
+  along.push(woodBox(len+0.06,0.07,D+0.04, 0,H+0.035,0));     // crown rail
+  /* the card holders: what shelf this is, if anyone still filed by it */
+  for(const s of[-1,1])for(const f of[-1,1]){
+    const p=new THREE.Mesh(new THREE.BoxGeometry(0.075,0.05,0.006));
+    p.position.set(s*(len/2-0.045),1.34,f*(D/2+0.004));
+    brass.push(p);
   }
-  if(Math.random()<0.75){                      // a thin centre back panel, most runs
-    const sp=new THREE.Mesh(new THREE.BoxGeometry(len,H-0.2,0.04),shelfMat);
-    sp.position.y=H/2; g.add(sp);
+  for(const arr of[[along,shelfMatH],[upright,shelfMat],[brass,accentBrass]]){
+    if(!arr[0].length) continue;
+    g.add(mergeStatic(arr[0],arr[1]));
+    for(const m of arr[0]) m.geometry.dispose();
   }
   /* ---- the books ----
      Thinned out, not stripped: every board keeps 0–20 volumes (≈8 on
@@ -729,35 +786,71 @@ function makeShelfRun(run){
   if(run.axis===1) g.rotation.y=Math.PI/2;
   return g;
 }
+/* a heavy reading table: just tall enough, easily wide and long enough to
+   crouch under. Now built like one — a plank top with real board seams and
+   a bullnose edge band, a deep apron all four sides carrying a bead, and
+   square legs that taper to a chamfered foot.
+   NOTHING GOES UNDER IT. The obvious next move is stretchers between the
+   legs, and it is wrong: a table cell is passable to a crouched player and
+   the collision island is a plain 3.1m square, so a bar down at shin height
+   is a bar you crawl straight through while hiding under the only cover in
+   the room. The apron carries the visual weight instead. */
+const TABLE_W=3.6, TABLE_D=3.0, TABLE_Y=1.3;
 function makeTable(){
-  /* just tall enough, easily wide and long enough to crouch under */
   const g=new THREE.Group();
-  const top=new THREE.Mesh(new THREE.BoxGeometry(3.6,0.09,3.0),deskMat);
-  top.position.y=1.3; g.add(top);
-  const skirtL=new THREE.Mesh(new THREE.BoxGeometry(3.3,0.12,0.06),deskMat);
-  skirtL.position.set(0,1.2,1.32); g.add(skirtL);
-  const skirtR=skirtL.clone(); skirtR.position.z=-1.32; g.add(skirtR);
-  const legGeo=new THREE.BoxGeometry(0.12,1.26,0.12);
+  const flat=[], upright=[];
+  /* the top, as five boards with the seams showing */
+  const nb=5, bw=TABLE_D/nb;
+  for(let i=0;i<nb;i++)
+    flat.push(woodBox(TABLE_W,0.075,bw-0.008, 0,TABLE_Y,-TABLE_D/2+bw*(i+0.5)));
+  /* bullnose band around the whole edge, proud of the boards */
+  flat.push(woodBox(TABLE_W+0.05,0.095,0.055, 0,TABLE_Y-0.004, TABLE_D/2+0.005));
+  flat.push(woodBox(TABLE_W+0.05,0.095,0.055, 0,TABLE_Y-0.004,-TABLE_D/2-0.005));
+  for(const s of[-1,1]){
+    flat.push(woodBox(0.055,0.095,TABLE_D+0.05, s*(TABLE_W/2+0.005),TABLE_Y-0.004,0));
+    /* the apron, and the bead that catches the light along its bottom edge */
+    flat.push(woodBox(0.055,0.19,TABLE_D-0.30, s*(TABLE_W/2-0.09),TABLE_Y-0.15,0));
+    flat.push(woodBox(0.075,0.028,TABLE_D-0.30, s*(TABLE_W/2-0.09),TABLE_Y-0.245,0));
+    flat.push(woodBox(TABLE_W-0.34,0.19,0.055, 0,TABLE_Y-0.15,s*(TABLE_D/2-0.09)));
+    flat.push(woodBox(TABLE_W-0.34,0.028,0.075, 0,TABLE_Y-0.245,s*(TABLE_D/2-0.09)));
+  }
   for(const[sx,sz]of[[-1,-1],[1,-1],[-1,1],[1,1]]){
-    const l=new THREE.Mesh(legGeo,deskMat);
-    l.position.set(sx*1.62,0.63,sz*1.32); g.add(l);
+    const lx=sx*(TABLE_W/2-0.18), lz=sz*(TABLE_D/2-0.18);
+    upright.push(woodBox(0.14,0.30,0.14, lx,TABLE_Y-0.20,lz));        // the block at the apron
+    const leg=new THREE.Mesh(taperBox(0.125,0.94,0.125,0.68));        // tapering to the floor
+    leg.position.set(lx,0.05+0.47,lz); upright.push(leg);
+    upright.push(woodBox(0.135,0.05,0.135, lx,0.025,lz));             // and a foot pad
+  }
+  for(const arr of[[flat,deskMatH],[upright,deskMat]]){
+    g.add(mergeStatic(arr[0],arr[1]));
+    for(const m of arr[0]) m.geometry.dispose();
   }
   return g;
 }
 function makeChair(wrapped){
   const g=new THREE.Group();
-  const seat=new THREE.Mesh(new THREE.BoxGeometry(0.46,0.05,0.44),deskMat);
-  seat.position.y=0.47; g.add(seat);
-  const back=new THREE.Mesh(new THREE.BoxGeometry(0.46,0.5,0.05),deskMat);
-  back.position.set(0,0.74,-0.21); g.add(back);
-  const legGeo=new THREE.BoxGeometry(0.05,0.46,0.05);
+  const flat=[], upright=[];
+  flat.push(woodBox(0.46,0.045,0.44, 0,0.47,0));                      // seat
+  flat.push(woodBox(0.48,0.022,0.46, 0,0.446,0));                     // and its underframe
+  /* three slats between two stiles — the stiles stand on the back legs */
+  for(const s of[-1,1]) upright.push(woodBox(0.05,0.56,0.05, s*0.205,0.75,-0.19));
+  for(const[by,bh]of[[0.66,0.10],[0.85,0.13],[1.00,0.06]])
+    flat.push(woodBox(0.36,bh,0.028, 0,by,-0.19));
   for(const[sx,sz]of[[-1,-1],[1,-1],[-1,1],[1,1]]){
-    const l=new THREE.Mesh(legGeo,deskMat);
-    l.position.set(sx*0.19,0.23,sz*0.18); g.add(l);
+    const leg=new THREE.Mesh(taperBox(0.05,0.45,0.05,0.7));
+    leg.position.set(sx*0.19,0.225,sz*0.18); upright.push(leg);
+  }
+  /* stretchers between the front and back legs — a chair is not cover, so
+     these are free, and they are most of what stops it reading as a stool */
+  for(const s of[-1,1]) flat.push(woodBox(0.028,0.028,0.34, s*0.19,0.15,0));
+  flat.push(woodBox(0.36,0.026,0.026, 0,0.13,0.18));
+  for(const arr of[[flat,deskMatH],[upright,deskMat]]){
+    g.add(mergeStatic(arr[0],arr[1]));
+    for(const m of arr[0]) m.geometry.dispose();
   }
   if(wrapped){
-    const wrap=new THREE.Mesh(new THREE.BoxGeometry(0.56,1.04,0.56),plasticWrap);
-    wrap.position.y=0.52; g.add(wrap);
+    const wrap=new THREE.Mesh(new THREE.BoxGeometry(0.56,1.12,0.56),plasticWrap);
+    wrap.position.y=0.56; g.add(wrap);
   }
   return g;
 }
@@ -778,14 +871,29 @@ function makeLadder(){
   g.rotation.x=LADDER_LEAN;
   return g;
 }
+/* the reading stands. Three boxes on a stick before — a plinth, a turned
+   column and a slanted desk with a real ledge to stop the book sliding off
+   it now, which is the detail that makes a lectern read as a lectern. */
 function makeLectern(){
   const g=new THREE.Group();
-  const col=new THREE.Mesh(new THREE.BoxGeometry(0.14,1.1,0.14),shelfMat);
-  col.position.y=0.55; g.add(col);
-  const foot=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.06,0.5),shelfMat);
-  foot.position.y=0.03; g.add(foot);
-  const top=new THREE.Mesh(new THREE.BoxGeometry(0.62,0.04,0.48),deskMat);
-  top.position.y=1.16; top.rotation.x=-0.25; g.add(top);
+  const dark=[], light=[];
+  light.push(woodBox(0.50,0.05,0.50, 0,0.025,0));                 // the plinth,
+  light.push(woodBox(0.42,0.05,0.42, 0,0.068,0));                 // stepped
+  light.push(woodBox(0.16,0.06,0.16, 0,0.118,0));
+  const col=new THREE.Mesh(new THREE.CylinderGeometry(0.055,0.075,0.94,10));
+  col.position.y=0.62; light.push(col);
+  for(const[cy,r0,r1,ch]of[[0.17,0.09,0.075,0.045],[1.06,0.075,0.10,0.05]]){   // collars
+    const c=new THREE.Mesh(new THREE.CylinderGeometry(r1,r0,ch,10));
+    c.position.y=cy; light.push(c);
+  }
+  const top=woodBox(0.62,0.04,0.48, 0,1.16,0);
+  top.rotation.x=-0.25; dark.push(top);
+  const ledge=woodBox(0.62,0.045,0.035, 0,1.10,0.222);            // the book stop
+  ledge.rotation.x=-0.25; dark.push(ledge);
+  for(const[arr,mat]of[[light,shelfMat],[dark,deskMatH]]){
+    g.add(mergeStatic(arr,mat));
+    for(const m of arr) m.geometry.dispose();
+  }
   /* some still hold what their reader walked away from */
   if(OPEN_BOOK&&Math.random()<0.4){
     const ob=OPEN_BOOK.clone();
@@ -901,70 +1009,216 @@ function makeBookCart(){
   g.rotation.z=(Math.random()-0.5)*0.02;
   return g;
 }
-/* a floor globe on a wooden stand — the geography is long gone */
-const globeTex=()=>makeCanvas(128,64,(c,w,h)=>{
-  c.fillStyle="#2c3a42";c.fillRect(0,0,w,h);
-  c.fillStyle="rgba(94,88,60,0.85)";
-  for(let i=0;i<7;i++){
-    const x=Math.random()*w, y=h*0.18+Math.random()*h*0.64;
-    c.beginPath();
-    for(let a=0;a<Math.PI*2;a+=0.5)
-      c.lineTo(x+Math.cos(a)*(6+Math.random()*14),y+Math.sin(a)*(4+Math.random()*9));
-    c.closePath();c.fill();
+/* ---- a floor globe on a wooden stand — the geography is long gone ----
+   The old sphere wore seven wobbly blobs on a 128×64 canvas and read, at
+   any distance, as a mouldy ball. It is a real cartographic surface now:
+   graticule at proper 15° spacing, a warm ocean plate with depth banding,
+   plausible continental masses grown from lobed blobs at plate scale, an
+   equator and tropics picked out heavier than the rest, and the varnish
+   gone amber and crazed. You still cannot find anywhere you have been on
+   it, which is the point. */
+const globeTex=()=>makeCanvas(512,256,(c,w,h)=>{
+  c.fillStyle="#3c5566";c.fillRect(0,0,w,h);
+  for(let i=0;i<34;i++){                       // ocean depth plates
+    const x=Math.random()*w,y=Math.random()*h,r=24+Math.random()*90;
+    const gr=c.createRadialGradient(x,y,2,x,y,r);
+    gr.addColorStop(0,`rgba(${Math.random()<0.5?"30,58,74":"86,116,132"},0.20)`);
+    gr.addColorStop(1,"rgba(40,64,80,0)");
+    c.fillStyle=gr;c.fillRect(x-r,y-r,r*2,r*2);
   }
-  c.strokeStyle="rgba(180,170,140,0.18)";c.lineWidth=1;
-  for(let i=1;i<6;i++){ c.beginPath();c.moveTo(0,h*i/6);c.lineTo(w,h*i/6);c.stroke(); }
+  /* landmasses: a few seeds each grown from overlapping lobes, so the
+     coastline comes out ragged instead of round */
+  const land=(cx,cy,sc,n)=>{
+    c.fillStyle="#8a8054";
+    for(let i=0;i<n;i++){
+      const a=Math.random()*Math.PI*2, rr=Math.random()*sc*0.8;
+      const x=cx+Math.cos(a)*rr, y=cy+Math.sin(a)*rr*0.62;
+      const r=sc*(0.20+Math.random()*0.34);
+      c.beginPath();
+      for(let t=0;t<Math.PI*2;t+=0.4)
+        c.lineTo(x+Math.cos(t)*r*(0.6+Math.random()*0.8), y+Math.sin(t)*r*(0.5+Math.random()*0.8));
+      c.closePath();c.fill();
+    }
+  };
+  land(80,80,58,9); land(150,170,44,7); land(250,70,70,11);
+  land(300,180,40,6); land(410,110,62,10); land(455,205,28,5);
+  c.globalCompositeOperation="source-atop";     // relief, only on the land
+  for(let i=0;i<900;i++){
+    const v=Math.random();
+    c.fillStyle=v<0.4? "rgba(112,96,58,0.30)" : v<0.7? "rgba(150,142,104,0.22)"
+                                               : "rgba(74,86,52,0.22)";
+    c.fillRect(Math.random()*w,Math.random()*h,2+Math.random()*7,1+Math.random()*4);
+  }
+  c.globalCompositeOperation="source-over";
+  /* the graticule: 15° everywhere, the equator and tropics heavier */
+  for(let i=1;i<12;i++){
+    c.strokeStyle=i===6? "rgba(50,38,22,0.55)" : (i===4||i===8)? "rgba(60,46,26,0.32)"
+                                               : "rgba(214,206,178,0.13)";
+    c.lineWidth=i===6? 2:1;
+    c.beginPath();c.moveTo(0,h*i/12);c.lineTo(w,h*i/12);c.stroke();
+  }
+  for(let i=0;i<24;i++){
+    c.strokeStyle=i%6===0? "rgba(60,46,26,0.30)":"rgba(214,206,178,0.11)";
+    c.lineWidth=1;
+    c.beginPath();c.moveTo(w*i/24,0);c.lineTo(w*i/24,h);c.stroke();
+  }
+  /* varnish: gone amber, and crazed with age */
+  const am=c.createLinearGradient(0,0,0,h);
+  am.addColorStop(0,"rgba(120,88,34,0.26)");
+  am.addColorStop(0.5,"rgba(150,116,52,0.10)");
+  am.addColorStop(1,"rgba(120,88,34,0.26)");
+  c.fillStyle=am;c.fillRect(0,0,w,h);
+  c.strokeStyle="rgba(58,44,24,0.14)";c.lineWidth=1;
+  for(let i=0;i<70;i++){
+    c.beginPath();
+    let x=Math.random()*w,y=Math.random()*h;
+    c.moveTo(x,y);
+    for(let k=0;k<4;k++){ x+=(Math.random()-0.5)*26; y+=(Math.random()-0.5)*20; c.lineTo(x,y); }
+    c.stroke();
+  }
 });
 function makeGlobe(){
   const g=new THREE.Group(); g.userData.prop="globe";
-  const wood=new THREE.MeshPhongMaterial({color:0x41301d, specular:0x161208, shininess:12});
-  const foot=new THREE.Mesh(new THREE.CylinderGeometry(0.2,0.24,0.04,12),wood);
-  foot.position.y=0.02; g.add(foot);
-  const col=new THREE.Mesh(new THREE.CylinderGeometry(0.032,0.045,0.5,8),wood);
-  col.position.y=0.29; g.add(col);
-  const ring=new THREE.Mesh(new THREE.TorusGeometry(0.31,0.018,8,24),darkMetalMat);
-  ring.rotation.x=Math.PI/2-0.41; ring.position.y=0.85; g.add(ring);
-  const globe=new THREE.Mesh(new THREE.SphereGeometry(0.27,14,12),
-    new THREE.MeshPhongMaterial({map:globeTex(), specular:0x1a2026, shininess:30}));
+  const wood=new THREE.MeshPhongMaterial({map:texDeskWood, color:0x8a7050,
+    specular:0x161208, shininess:12});
+  /* a three-legged cradle rather than a post in a dinner plate */
+  const parts=[];
+  const ring=new THREE.Mesh(new THREE.TorusGeometry(0.205,0.016,6,18));
+  ring.rotation.x=Math.PI/2; ring.position.y=0.055; parts.push(ring);
+  for(let i=0;i<3;i++){
+    const a=i/3*Math.PI*2;
+    const leg=new THREE.Mesh(new THREE.CylinderGeometry(0.019,0.028,0.12,7));
+    leg.position.set(Math.cos(a)*0.205,0.0,Math.sin(a)*0.205);
+    parts.push(leg);
+    const brace=new THREE.Mesh(new THREE.CylinderGeometry(0.013,0.013,0.30,6));
+    brace.position.set(Math.cos(a)*0.105,0.24,Math.sin(a)*0.105);
+    brace.rotation.z=-Math.cos(a)*0.36; brace.rotation.x=Math.sin(a)*0.36;
+    parts.push(brace);
+  }
+  const col=new THREE.Mesh(new THREE.CylinderGeometry(0.030,0.048,0.44,8));
+  col.position.y=0.31; parts.push(col);
+  const knop=new THREE.Mesh(new THREE.SphereGeometry(0.052,9,7));
+  knop.scale.y=0.7; knop.position.y=0.52; parts.push(knop);
+  g.add(mergeStatic(parts,wood));
+  for(const m of parts) m.geometry.dispose();
+  /* the meridian and its yoke, in brass */
+  const br=[];
+  const mer=new THREE.Mesh(new THREE.TorusGeometry(0.305,0.014,6,26));
+  mer.rotation.x=Math.PI/2-0.41; mer.position.y=0.85; br.push(mer);
+  for(const s of[-1,1]){                        // the axle pins through the poles
+    const pin=new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.012,0.07,6));
+    pin.position.set(s*Math.sin(0.41)*0.29,0.85+s*Math.cos(0.41)*0.29,0);
+    pin.rotation.z=0.41; br.push(pin);
+  }
+  g.add(mergeStatic(br,accentBrass));
+  for(const m of br) m.geometry.dispose();
+  const globe=new THREE.Mesh(new THREE.SphereGeometry(0.27,20,16),
+    new THREE.MeshPhongMaterial({map:globeTex(), specular:0x2a3038, shininess:44}));
   globe.position.y=0.85; globe.rotation.z=0.41; globe.rotation.y=Math.random()*Math.PI*2;
   g.add(globe);
   return g;
 }
-/* a 3.5" floppy disk — the only thing in this library worth taking */
+/* ---- a 3.5" floppy disk — the only thing in this library worth taking ----
+   It was three untextured boxes, and it is the ONE prop the whole level
+   asks you to look for: it earns a printed label somebody actually wrote
+   on, the shutter with its window, the hub ring on the underside and the
+   write-protect tab. The label keeps its faint phosphor sheen — that
+   emissive is what makes it findable on a murky shelf and it is a gameplay
+   property, not a decorative one. */
+let FLOPPY=null;
+function ensureFloppy(){
+  if(FLOPPY) return FLOPPY;
+  /* four labels, one geometry. The UV regions are identical across the
+     variants, so the box is built once and only the map differs — twenty
+     disks in one room all carrying the same handwriting reads as one prop
+     copied twenty times, which is exactly what they are otherwise. */
+  const mats=[];
+  let uv=null;
+  for(let i=0;i<4;i++){
+    const f=makeFloppyTexture();
+    uv=f.uv;
+    const m=new THREE.MeshPhongMaterial({map:f.tex, emissive:0x1a1c14,
+      specular:0x3a3e46, shininess:34});
+    markShared(f.tex,m);
+    mats.push(m);
+  }
+  const body=new THREE.BoxGeometry(0.27,0.022,0.28);
+  setFaceUV(body,2,...uv.top);                            // +y: the label face
+  for(const f of[0,1,3,4,5]) setFaceUV(body,f,...uv.plain);
+  FLOPPY={mats, geo:markShared(body)};
+  return FLOPPY;
+}
+const shutterMat=new THREE.MeshPhongMaterial({color:0x9aa0a6, emissive:0x0a0c0e,
+  specular:0x70757c, shininess:74});
+const discHubMat=new THREE.MeshPhongMaterial({color:0x5f666d, specular:0x40454a, shininess:40});
 function makeDisc(){
+  const F=ensureFloppy();
   const g=new THREE.Group();
-  const body=new THREE.Mesh(new THREE.BoxGeometry(0.27,0.022,0.27),
-    new THREE.MeshPhongMaterial({color:0x181b22, emissive:0x0e1424, specular:0x30343c, shininess:30}));
-  g.add(body);
-  /* the label carries a faint phosphor sheen — findable in the murk */
-  const label=new THREE.Mesh(new THREE.BoxGeometry(0.2,0.024,0.13),
-    new THREE.MeshPhongMaterial({color:0xcfc8b4, emissive:0x2a2618, specular:0x111111, shininess:4}));
-  label.position.set(0,0.002,0.05); g.add(label);
-  const shutter=new THREE.Mesh(new THREE.BoxGeometry(0.16,0.026,0.07),
-    new THREE.MeshPhongMaterial({color:0x9aa0a6, specular:0x55585c, shininess:60}));
-  shutter.position.set(-0.01,0,-0.09); g.add(shutter);
+  g.add(new THREE.Mesh(F.geo,F.mats[Math.floor(Math.random()*F.mats.length)]));
+  /* the sprung steel shutter, standing a hair proud of the shell, with the
+     window cut through it */
+  const sh=[];
+  sh.push(new THREE.Mesh(new THREE.BoxGeometry(0.185,0.026,0.045)));
+  for(const sx of[-0.072,0.072]){
+    const e=new THREE.Mesh(new THREE.BoxGeometry(0.042,0.027,0.052)); e.position.x=sx; sh.push(e);
+  }
+  const shut=mergeStatic(sh,shutterMat);
+  /* +z, because that is the end the LABEL's printed shutter landed on once
+     the top face's v was flipped — steel on one end and the printed slot on
+     the other is the kind of mismatch nobody names but everybody sees */
+  shut.position.set(-0.008,0.001,0.116); g.add(shut);
+  for(const m of sh) m.geometry.dispose();
+  /* the hub, underneath, at the other end */
+  const hub=new THREE.Mesh(new THREE.CylinderGeometry(0.043,0.043,0.006,12),discHubMat);
+  hub.position.set(0,-0.012,-0.03); g.add(hub);
   g.scale.setScalar(1.35);                       // readable from a few metres out
   g.userData.animated=true;                      // idle-spins/hovers in updateProps
   return g;
 }
-/* vintage personal computer: CRT + case + keyboard, in pristine condition.
-   Returns the group plus a tiny screen-painting API the boot sequences use. */
+/* ---- vintage personal computer: CRT + case + keyboard ----
+   The one machine you are sent to feed, and eight more scattered on the
+   tables, so it is worth building properly: the CRT genuinely TAPERS to
+   its neck now (a cuboid monitor is the single loudest "this is a box with
+   a picture on it" tell), the tube is recessed behind a real bezel and
+   bulges the way glass does, the case has vents and a drive bay and a
+   badge, and the keyboard is a drawn keyfield rather than a dark slab.
+   Everything static merges by material — 4 draws, down from 9 — and the
+   pieces the cutscenes drive (the screen canvas, the drive LED) stay their
+   own meshes because their materials are written to at runtime. */
 export function makeVintagePC(scale=1){
   const g=new THREE.Group();
-  const cse=new THREE.Mesh(new THREE.BoxGeometry(0.62,0.16,0.5),beigePlastic);
-  cse.position.y=0.08; g.add(cse);
-  /* drive bays + the slot the discs go into */
-  const slot=new THREE.Mesh(new THREE.BoxGeometry(0.26,0.035,0.02),beigePlasticDark);
-  slot.position.set(-0.1,0.08,0.251); g.add(slot);
+  const pale=[], dark=[];
+  const paleBox=(w,h,d,x,y,z)=>{ pale.push(woodBox(w,h,d,x,y,z,0.34)); };
+  const darkBox=(w,h,d,x,y,z)=>{ dark.push(woodBox(w,h,d,x,y,z,0.34)); };
+  paleBox(0.62,0.16,0.5, 0,0.08,0);                       // the case
+  paleBox(0.66,0.022,0.54, 0,0.163,0);                    // its lid overhang
+  for(const sz of[-1,1])for(let i=0;i<7;i++)              // cooling slots down each flank
+    darkBox(0.026,0.006,0.24, -0.2+i*0.062,0.128,sz*0.251);
+  /* the drive bay: a recessed face, the slot, the eject button */
+  darkBox(0.30,0.075,0.014, -0.1,0.085,0.249);
+  darkBox(0.245,0.012,0.02, -0.1,0.092,0.252);
+  paleBox(0.03,0.022,0.018, 0.03,0.062,0.252);
   const led=new THREE.Mesh(new THREE.BoxGeometry(0.02,0.02,0.012),
     new THREE.MeshBasicMaterial({color:0x201008}));
   led.position.set(0.18,0.08,0.252); g.add(led); g.userData.led=led.material;
-  /* CRT body, slightly tapered toward the back */
-  const crt=new THREE.Mesh(new THREE.BoxGeometry(0.56,0.46,0.5),beigePlastic);
-  crt.position.y=0.16+0.25; crt.scale.z=1;
-  g.add(crt);
-  const back=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.34,0.12),beigePlasticDark);
-  back.position.set(0,0.41,-0.3); g.add(back);
+  /* the badge nobody has read in thirty years */
+  const badge=new THREE.Mesh(new THREE.PlaneGeometry(0.17,0.028),
+    new THREE.MeshPhongMaterial({map:makeEndTextTexture("ARCHIVE"), transparent:true,
+      specular:0x000000, shininess:1}));
+  badge.position.set(0.16,0.128,0.2515); g.add(badge);
+  /* CRT: a real frustum, wide at the glass and pinched at the neck */
+  const crt=new THREE.Mesh(taperBox(0.56,0.46,0.52,0.72,"z"));
+  crt.position.set(0,0.16+0.25,-0.01); pale.push(crt);
+  paleBox(0.30,0.26,0.10, 0,0.40,-0.31);                  // the neck housing
+  for(let i=0;i<6;i++) darkBox(0.34,0.008,0.016, 0,0.615+i*0.014,-0.14);  // vents on the crown
+  /* The bezel and the glass stack in front of the CRT's own front face, at
+     z 0.25. Getting this order wrong is not subtle: with the glass BEHIND
+     that face, the only part of the screen that showed was the patch where
+     the tube's bulge cleared it — a black OVAL floating on a beige box. */
+  darkBox(0.50,0.38,0.008, 0,0.41,0.2465);                // the dark surround
+  paleBox(0.56,0.055,0.03, 0,0.605,0.262);                // moulding, four sides
+  paleBox(0.56,0.055,0.03, 0,0.215,0.262);
+  for(const s of[-1,1]) paleBox(0.055,0.44,0.03, s*0.2525,0.41,0.262);
   /* the screen: its own canvas so each machine can boot/static/die alone */
   const cv=document.createElement("canvas"); cv.width=192; cv.height=144;
   const tex=new THREE.CanvasTexture(cv); tex.minFilter=THREE.LinearFilter; tex.generateMipmaps=false;
@@ -991,27 +1245,110 @@ export function makeVintagePC(scale=1){
       ctx.fillStyle="rgba(120,128,126,0.05)";       // the faintest burn-in ghost
       ctx.font="bold 30px Courier New"; ctx.textAlign="center"; ctx.textBaseline="middle";
       ctx.fillText("THE END",96,72); tex.needsUpdate=true; },
-    warn(alpha=1){ /* the machine's last words, burning red */
+    /* the machine's last word, burning red — and it doesn't use words.
+       A crying face, drawn on the coarsest grid the glass can hold: 8px
+       cells, nothing off-grid, no antialiasing anywhere. The tears run on
+       their own clock (`t`), so the thing goes on weeping for as long as
+       you stand there. */
+    warn(alpha=1,t=0){
       ctx.fillStyle="#0a0202"; ctx.fillRect(0,0,192,144);
       const gr=ctx.createRadialGradient(96,72,8,96,72,112);
       gr.addColorStop(0,`rgba(140,14,8,${0.55*alpha})`);
       gr.addColorStop(1,"rgba(30,3,2,0)");
       ctx.fillStyle=gr; ctx.fillRect(0,0,192,144);
-      ctx.fillStyle=`rgba(255,58,38,${alpha})`;
-      ctx.font="bold 21px Courier New"; ctx.textAlign="center"; ctx.textBaseline="middle";
-      ctx.fillText("I WARNED YOU",96,72);
-      ctx.fillStyle=`rgba(255,58,38,${alpha*0.28})`; ctx.fillText("I WARNED YOU",96,72); // bloom
+      /* 24×18 cells of 8px. The grid's centre is the SEAM between columns
+         11 and 12, so every feature is stamped as a mirrored pair and the
+         face cannot come out lopsided.
+
+         EVERY FEATURE HAS TO CLEAR THE OUTLINE. At this resolution the
+         head is only about seven cells of radius and a one-cell ring, so
+         anything drawn near the top of the face touches it — the first
+         pass put a lid over each eye at r 7.1 straight through a ring that
+         runs 6.5–7.5, and under the tube's bloom the whole top half fused
+         into one lump with two dark holes in it. The head is an ELLIPSE
+         (a face is taller than it is wide), the ring is tested in the
+         ellipse's own normalised radius, and there is a clear cell of
+         black between it and everything inside. */
+      const P=8, CX=11.5, CY=8.5, RX=7.5, RY=8.0;
+      const er=(x,y)=>Math.sqrt(((x-CX)/RX)**2+((y-CY)/RY)**2);
+      const px=(x,y,w=1,h=1)=>{
+        const yy=Math.round(y);
+        if(yy>17||yy+h<0) return;
+        ctx.fillRect(Math.round(x)*P,yy*P,w*P,h*P);
+      };
+      const mir=(x,y,w=1,h=1)=>{ px(x,y,w,h); px(23-x-(w-1),y,w,h); };
+      const face=()=>{
+        for(let y=0;y<18;y++)for(let x=0;x<24;x++){
+          const r=er(x,y);
+          if(r>0.875&&r<=1) px(x,y);
+        }
+        mir(8,6,2,2);                 // eyes
+        /* THE STREAK IS THE WHOLE THING. Three loose drops under an eye
+           read as noise on the tube; a standing wet line down the cheek is
+           what makes the face crying rather than merely sad, and the drops
+           below it are then legible as drops. */
+        mir(8,9,1,3);
+        /* the mouth: corners turned down — in screen space a frown is the
+           middle riding HIGHEST, so the row grows with the offset. It is
+           kept clear of column 8, which the tears own all the way down. */
+        mir(11,13); mir(10,14); mir(9,14);
+        for(let k=0;k<2;k++){
+          const y0=12+((t*3.2+k*3.0)%6.2), y1=12+((t*3.2+k*3.0+1.5)%6.2);
+          px(8,y0,1,y0>15?2:1); px(15,y1,1,y1>15?2:1);   // stretching as they fall
+        }
+      };
+      /* the glass blooms: one soft halo pass under one hard one. Two blur
+         passes closed every gap the layout just bought. */
+      ctx.save();
+      ctx.shadowColor=`rgba(255,58,34,${alpha})`; ctx.shadowBlur=5;
+      ctx.fillStyle=`rgba(226,46,28,${alpha*0.8})`;
+      face();
+      ctx.restore();
+      ctx.fillStyle=`rgba(255,138,112,${alpha})`;
+      face();
+      ctx.fillStyle="rgba(10,2,2,0.26)";            // the tube's own scanlines
+      for(let y=0;y<144;y+=3) ctx.fillRect(0,y,192,1);
       tex.needsUpdate=true; },
   };
   screen.off();
   const scrMat=new THREE.MeshBasicMaterial({map:tex});
-  const scr=new THREE.Mesh(new THREE.PlaneGeometry(0.42,0.3),scrMat);
-  scr.position.set(0,0.41,0.252); g.add(scr);
+  /* the glass BULGES. A CRT face is a section of a very large sphere, and a
+     dead-flat quad behind a bezel reads as a photograph in a frame */
+  const glass=new THREE.PlaneGeometry(0.44,0.32,6,6);
+  {
+    const p=glass.attributes.position;
+    for(let i=0;i<p.count;i++){
+      const x=p.getX(i)/0.22, y=p.getY(i)/0.16;
+      p.setZ(i, 0.019*Math.max(0,1-(x*x+y*y)*0.5));
+    }
+    glass.computeVertexNormals();
+  }
+  const scr=new THREE.Mesh(glass,scrMat);
+  scr.position.set(0,0.41,0.2515); g.add(scr);   // clear of the tube face, under the bezel's lip
   g.userData.screen=screen; g.userData.scrMat=scrMat;
-  const kb=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.035,0.2),beigePlastic);
-  kb.position.set(0,0.018,0.45); kb.rotation.x=0.06; g.add(kb);
-  const keys=new THREE.Mesh(new THREE.BoxGeometry(0.44,0.02,0.15),beigePlasticDark);
-  keys.position.set(0,0.042,0.448); keys.rotation.x=0.06; g.add(keys);
+  /* the keyboard: a wedge with the keyfield printed on its top face */
+  const kb=new THREE.Group();
+  kb.position.set(0,0.012,0.46); kb.rotation.x=0.07; g.add(kb);
+  const kbGeo=taperBox(0.52,0.042,0.21,0.86,"z");
+  const kbody=new THREE.Mesh(kbGeo,beigePlastic); kb.add(kbody);
+  const keys=new THREE.Mesh(new THREE.PlaneGeometry(0.48,0.175),
+    new THREE.MeshPhongMaterial({map:makeKeyboardTexture(), specular:0x18160f, shininess:8}));
+  keys.rotation.x=-Math.PI/2; keys.position.set(0,0.0215,0.004); kb.add(keys);
+  /* the coil back to the case, in two dropping arcs */
+  {
+    const c=[];
+    for(let i=0;i<7;i++){
+      const k=i/6, seg=new THREE.Mesh(new THREE.BoxGeometry(0.012,0.012,0.05));
+      seg.position.set(-0.02+Math.sin(k*4.2)*0.03, 0.006+Math.sin(k*Math.PI)*0.012, 0.32-k*0.075);
+      c.push(seg);
+    }
+    g.add(mergeStatic(c,beigePlasticDark));
+    for(const m of c) m.geometry.dispose();
+  }
+  for(const arr of[[pale,beigePlastic],[dark,beigePlasticDark]]){
+    g.add(mergeStatic(arr[0],arr[1]));
+    for(const m of arr[0]) m.geometry.dispose();
+  }
   g.scale.setScalar(scale);
   return g;
 }
@@ -1021,13 +1358,29 @@ function makeDesk(cx0,cy0){
   const g=new THREE.Group();
   const p=cellToWorld2(cx0,cy0);
   g.position.set(p.x,0,p.z);
-  const len=3*CELL-1.2;
-  const body=new THREE.Mesh(new THREE.BoxGeometry(len,1.12,1.7),deskMat);
-  body.position.y=0.56; g.add(body);
-  const top=new THREE.Mesh(new THREE.BoxGeometry(len+0.3,0.07,1.95),deskMat);
-  top.position.y=1.155; g.add(top);
-  const kick=new THREE.Mesh(new THREE.BoxGeometry(len,0.16,1.74),
-    new THREE.MeshPhongMaterial({color:0x241a10, specular:0x000000, shininess:2}));
+  /* An eleven-metre slab with one 4m tile smeared over it was the largest
+     untextured surface in the building. It is panelled now: a recessed
+     field between stiles on the public face, a counter with a nosing and a
+     raised transaction ledge, and a plinth it stands on. */
+  const len=3*CELL-1.2, front=[], up=[];
+  up.push(woodBox(len,1.12,1.7, 0,0.56,0));                       // the carcass
+  const nP=7, pw=(len-0.2)/nP;
+  for(let i=0;i<nP;i++){                                          // stiles between panels
+    const x=-len/2+0.1+pw*i;
+    up.push(woodBox(0.10,1.04,0.05, x,0.60,0.868));
+  }
+  up.push(woodBox(0.10,1.04,0.05, len/2-0.1,0.60,0.868));
+  front.push(woodBox(len,0.07,0.055, 0,1.09,0.868));              // top and bottom rails
+  front.push(woodBox(len,0.09,0.055, 0,0.145,0.868));
+  front.push(woodBox(len+0.30,0.07,1.95, 0,1.155,0));             // the counter
+  front.push(woodBox(len+0.34,0.035,1.99, 0,1.108,0));            // its nosing
+  front.push(woodBox(len-1.0,0.09,0.40, 0,1.235,-0.62));          // the transaction ledge
+  for(const arr of[[front,deskMatH],[up,deskMat]]){
+    g.add(mergeStatic(arr[0],arr[1]));
+    for(const m of arr[0]) m.geometry.dispose();
+  }
+  const kick=new THREE.Mesh(scaleBoxUV(new THREE.BoxGeometry(len,0.16,1.74),len,0.16,1.74,0.9),
+    new THREE.MeshPhongMaterial({map:texShelfWood, color:0x6a5238, specular:0x000000, shininess:2}));
   kick.position.y=0.08; g.add(kick);
   /* the terminal, facing the south approach (toward the elevator) */
   const pc=makeVintagePC(1);
@@ -1050,29 +1403,87 @@ function makeDesk(cx0,cy0){
      dependable light in the building used to survive "every light lets go") */
   return {group:g, pc, lamp, bulbMat:bulb.material};
 }
-/* a hanging twin-tube strip light, chained down from the high dark */
-const tubeGeo2=new THREE.CylinderGeometry(0.038,0.038,2.0,8); tubeGeo2.rotateZ(Math.PI/2);
-const housingGeo2=new THREE.BoxGeometry(2.2,0.1,0.34);
-const housingMat2=new THREE.MeshPhongMaterial({color:0x6a6e66,emissive:0x070706,
+/* ---- a hanging twin-tube strip light, chained down from the high dark ----
+   It used to be a flat slab with two sticks under it: from directly below —
+   which is how you see a hundred of them — a lit rectangle with no depth,
+   and from the side a floating plank. It is a REFLECTOR now: a pressed
+   spine with two wings splayed down and out to throw the tubes' light, end
+   caps closing the trough, sockets over the glass ends, and a guard cage
+   slung underneath. All of that is galvanized sheet, so it merges to ONE
+   mesh; only the backplate and the tubes stay separate, because lights.js
+   repaints their materials every frame. Three draws a fixture — half of
+   what the flat slab cost, with five times the hardware on it.
+
+   The wings are placed by their EDGES, not by eye: a plate's local +z under
+   a rotation θ about x points at (y=−sinθ, z=cosθ), so hinging one at the
+   spine's z edge and running it out along that direction lands the outer
+   edge exactly where the trough should open. */
+const tubeGeo2=new THREE.CylinderGeometry(0.036,0.036,2.0,8,1,true); tubeGeo2.rotateZ(Math.PI/2);
+const housingMat2=new THREE.MeshPhongMaterial({map:texGalv,color:0x7c8078,emissive:0x070706,
   specular:0x3a3c36,shininess:40});
-const cordGeo=new THREE.CylinderGeometry(0.012,0.012,1,4);
+const FIX_LEN=2.2, WING_A=0.5, WING_W=0.115;
+/* the turned hardware, built once for the whole building */
+const SOCK_GEO=new THREE.CylinderGeometry(0.052,0.052,0.07,8); SOCK_GEO.rotateZ(Math.PI/2);
+const GUARD_GEO=new THREE.CylinderGeometry(0.009,0.009,FIX_LEN-0.06,4); GUARD_GEO.rotateZ(Math.PI/2);
+const RIB_GEO=new THREE.CylinderGeometry(0.009,0.009,0.40,4); RIB_GEO.rotateX(Math.PI/2);
+const CORD_GEO=new THREE.CylinderGeometry(0.013,0.013,1,5);
+const EYE_GEO=new THREE.TorusGeometry(0.032,0.008,4,10);
+const SHELL_GEOS=new Set([SOCK_GEO,GUARD_GEO,RIB_GEO,CORD_GEO,EYE_GEO]);
+/* every shell member: [w,h,d, x,y,z, rotX] with y measured from the hang line */
+const boxAt=(w,h,d,x,y,z,rx,m)=>{
+  const b=new THREE.Mesh(scaleBoxUV(new THREE.BoxGeometry(w,h,d),w,h,d,m||0.5));
+  b.position.set(x,y,z); if(rx) b.rotation.x=rx;
+  return b;
+};
+function fixtureShell(FY){
+  const parts=[];
+  parts.push(boxAt(FIX_LEN,0.06,0.30, 0,FY+0.125,0));                       // reflector spine
+  for(const s of[-1,1]){                                                     // the two wings
+    const cz=s*(0.15+WING_W/2*Math.cos(WING_A)), cy=FY+0.095-WING_W/2*Math.sin(WING_A);
+    parts.push(boxAt(FIX_LEN,0.016,WING_W, 0,cy,cz, s*WING_A));
+    parts.push(boxAt(0.05,0.24,0.46, s*(FIX_LEN/2+0.02),FY+0.055,0));        // end cap
+  }
+  /* sockets: the lampholders the glass plugs into, one per tube end */
+  for(const sx of[-1,1])for(const tz of[-0.09,0.09]){
+    const m=new THREE.Mesh(SOCK_GEO); m.position.set(sx*1.015,FY-0.02,tz); parts.push(m);
+  }
+  /* the guard: four rods the length of the trough on three cross ribs */
+  for(const rz of[-0.16,-0.055,0.055,0.16]){
+    const m=new THREE.Mesh(GUARD_GEO); m.position.set(0,FY-0.115,rz); parts.push(m);
+  }
+  for(const rx of[-0.72,0,0.72]){
+    const m=new THREE.Mesh(RIB_GEO); m.position.set(rx,FY-0.113,0); parts.push(m);
+  }
+  /* the drop: a rod to the ceiling off each end, with an eye at the fixture
+     and a fixing plate where it meets the dark */
+  const cordLen=LIB_WALL_H-(FY+0.16);
+  for(const sx of[-0.95,0.95]){
+    const c=new THREE.Mesh(CORD_GEO);
+    c.scale.y=cordLen; c.position.set(sx,FY+0.16+cordLen/2,0); parts.push(c);
+    const e=new THREE.Mesh(EYE_GEO); e.position.set(sx,FY+0.17,0); parts.push(e);
+    parts.push(boxAt(0.14,0.02,0.14, sx,LIB_WALL_H-0.01,0));
+  }
+  const shell=mergeStatic(parts,housingMat2);
+  /* only the boxes were built for this fixture; the turned parts are
+     module-level and shared by every strip in the building */
+  const own=new Set(); for(const p of parts) if(!SHELL_GEOS.has(p.geometry)) own.add(p.geometry);
+  for(const gg of own) gg.dispose();
+  return shell;
+}
 function makeFixture(wx,wz,alongZ,fy=3.78){     // base layer hung +20% higher (3.15→3.78) to widen each pool against the new dropoff
   const g=new THREE.Group();
   const glowMat=new THREE.MeshBasicMaterial({color:0x111008});
-  const tubeMat=new THREE.MeshBasicMaterial({color:0x111008});
+  const tubeMat=new THREE.MeshBasicMaterial({map:tubeTex, color:0x111008});
   const FY=fy;                                     // hung this high; the cord reaches up from here to the ceiling
-  const housing=new THREE.Mesh(housingGeo2,housingMat2);
-  housing.position.y=FY+0.05; g.add(housing);
-  const plate=new THREE.Mesh(new THREE.PlaneGeometry(2.1,0.3),glowMat);
-  plate.rotation.x=Math.PI/2; plate.position.y=FY+0.01; g.add(plate);
-  for(const tz of[-0.09,0.09]){
-    const tube=new THREE.Mesh(tubeGeo2,tubeMat);
-    tube.position.set(0,FY-0.045,tz); g.add(tube);
-  }
-  const cordLen=LIB_WALL_H-(FY+0.1);
-  for(const sx of[-0.95,0.95]){
-    const c=new THREE.Mesh(cordGeo,darkMetalMat);
-    c.scale.y=cordLen; c.position.set(sx,FY+0.1+cordLen/2,0); g.add(c);
+  g.add(fixtureShell(FY));
+  const plate=new THREE.Mesh(new THREE.PlaneGeometry(2.14,0.29),glowMat);
+  plate.rotation.x=Math.PI/2; plate.position.y=FY+0.088; g.add(plate);
+  {
+    const t=[];
+    for(const tz of[-0.09,0.09]){
+      const tube=new THREE.Mesh(tubeGeo2); tube.position.set(0,FY-0.02,tz); t.push(tube);
+    }
+    g.add(mergeStatic(t,tubeMat));                 // both tubes, one draw, one material
   }
   g.position.set(wx,0,wz);
   if(alongZ) g.rotation.y=Math.PI/2;
@@ -1114,13 +1525,18 @@ function buildHole(hc,carpetMat){
     new THREE.CylinderGeometry(HOLE_R+0.05,HOLE_R+0.4,HOLE_DEPTH,40,1,true),shaftMat);
   shaft.position.set(hc.x,-HOLE_DEPTH/2,hc.z); g.add(shaft);
   /* the stair: chunky stone treads hugging the wall, one merged mesh.
-     Entry tread on the south rim (the desk side — where you arrive from). */
-  const stepMat=new THREE.MeshPhongMaterial({map:texStone, color:0xbcc8d2,
-    emissive:0x0c141b, specular:0x141a22, shininess:12});
+     Entry tread on the south rim (the desk side — where you arrive from).
+     These are THE NEST's slabs: the same rock map, the same bump, the same
+     world-scaled UVs. They have to be — you walk down this flight and step
+     off the bottom of it onto the cave's own continuation of it, and the
+     old local packed-earth canvas at raw box UVs crammed a 4m tile onto a
+     1.25m tread, which averaged out to a flat grey slab with no grain. */
+  const stepMat=new THREE.MeshPhongMaterial({map:texCaveRock, bumpMap:texCaveRock,
+    bumpScale:0.06, color:0x525a63, emissive:0x0a1017, specular:0x141a22, shininess:8});
   const stair={a0:Math.PI/2, dir:1, rc:HOLE_R-0.62, rise:STAIR_RISE, steps:STAIR_STEPS,
                n:Math.round(4.5*STAIR_STEPS)};
   {
-    const stepGeo=new THREE.BoxGeometry(1.3,0.24,1.05);
+    const stepGeo=scaleBoxUV(new THREE.BoxGeometry(1.3,0.24,1.05),1.3,0.24,1.05,2);
     const steps=[];
     const n=stair.n;                             // ~4½ turns; the glow takes the rest
     for(let i=0;i<n;i++){
@@ -1186,6 +1602,7 @@ function buildHole(hc,carpetMat){
   const spr=new THREE.Sprite(new THREE.SpriteMaterial({map:texStone, transparent:true, opacity:0}));
   spr.scale.set(0.001,0.001,1); spr.position.set(hc.x,-2,hc.z); g.add(spr);
   renderer.initTexture(texStone); renderer.initTexture(shaftTex);
+  renderer.initTexture(texCaveRock);         // the treads' map — first upload here, not at the reveal
   scene.add(g);
   /* the plug: a carpet-matched disc hiding all of it until the dig */
   const plugGeo=new THREE.CircleGeometry(HOLE_R+0.14,44);
@@ -1214,6 +1631,7 @@ export function revealHole(){
 export function buildLibrary(){
   ensureBooks();                       // the design pool, built on first visit
   LIB.hole=null;
+  LIB.weeping=false; LIB.weepT=0; LIB.weepPaint=0;
   LIB.obstacles=[]; LIB.pcAnims=[]; LIB.blackActive=false; LIB.blackElapsed=0; LIB.nextBlack=35;
   LIB.webs=[]; LIB.webGroup=new THREE.Group(); LIB.webGroup.userData.animated=true;   // strands spawn/reskin at runtime
   scene.add(LIB.webGroup);
@@ -1227,8 +1645,12 @@ export function buildLibrary(){
      two cells behind the desk (the protected clearing keeps those cells open)
      — the librarian's way down. A carpet plug covers it seamlessly until the
      terminal ending digs it open (revealHole). */
-  texLibCarpet.repeat.set(LW,LH);
-  const carpetMat=new THREE.MeshPhongMaterial({map:texLibCarpet, specular:0x000000, shininess:1});
+  texLibCarpet.repeat.set(LW,LH); texLibCarpetBump.repeat.set(LW,LH);
+  /* a whisper of specular: real broadloom is not matte, it just isn't shiny —
+     without it the pile's bump has nothing to catch and the floor stays the
+     flat plane it always was */
+  const carpetMat=new THREE.MeshPhongMaterial({map:texLibCarpet,
+    bumpMap:texLibCarpetBump, bumpScale:0.022, specular:0x0a0c10, shininess:3});
   const holeC=cellToWorld2(cx0,cy0-2);
   {
     const shape=new THREE.Shape();
@@ -1693,6 +2115,12 @@ export function updateLibrary(dt){
     }
   }
   LIB.pcAnims=LIB.pcAnims.filter(a=>a.phase!=="dead");
+  /* the terminal keeps crying once the cutscene hands you back — a tear
+     frozen halfway down the glass is a picture, not a face */
+  if(LIB.weeping&&LIB.term){
+    LIB.weepT+=dt;
+    if(LIB.weepT-LIB.weepPaint>0.085){ LIB.weepPaint=LIB.weepT; LIB.term.screen.warn(1,LIB.weepT); }
+  }
   /* the open hole breathes: its glow discs swell and settle, out of phase */
   if(STATE.holeOpen&&LIB.hole){
     const tN=performance.now()/1000;
@@ -1728,7 +2156,10 @@ export function startDeadPC(it){
 
 /* ---- shared-asset registration (module-level singletons reused across every
    library build; teardown must never dispose these) ---- */
-markShared(texLibWall,texLibCarpet,texLibCeil,texShelfWood,texDeskWood,texPages,texPagesAged,texBrushed);
-markShared(shelfMat,deskMat,darkMetalMat,beigePlastic,beigePlasticDark,plasticWrap,
+markShared(texLibWall,texLibCarpet,texLibCarpetBump,texLibCeil,texShelfWood,texDeskWood,texPages,texPagesAged,texBrushed,
+           texCaveRock,   // the way down is cut in THE NEST's rock (cave.js marks it too — the Set dedupes)
+           texGalv,housingMat2,tubeGeo2,
+           SOCK_GEO,GUARD_GEO,RIB_GEO,CORD_GEO,EYE_GEO);   // the strip lights' shared hardware
+markShared(shelfMat,deskMat,shelfMatH,deskMatH,texShelfWoodH,texDeskWoodH,texBeige,
+           darkMetalMat,beigePlastic,beigePlasticDark,plasticWrap,shutterMat,discHubMat,
            bookendMat,accentWood,accentBrass,mannequinMat,mannequinDark,webMat);
-markShared(tubeGeo2,housingGeo2,housingMat2,cordGeo);

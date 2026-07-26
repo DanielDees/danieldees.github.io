@@ -42,8 +42,9 @@ ground itself is laced with silk: it feels footfalls through the web the way a f
 the line. Out in the open cave it is duller than you remember — slower to commit, reliant on
 sound carried to it. Near the eggs, it is faster than you have ever seen it.
 
-**Hatchlings.** A handful — five, six, no account agrees — cat-sized, pale, eyeless, each
-patrolling its own territory in the dark. They hunt by sound and they fear light: a strong
+**Hatchlings.** A handful — five, six, no account agrees — cat-sized, pale, each wearing
+its mother's eight eyes and using none of them, each patrolling its own territory in the
+dark. They hunt by sound and they fear light: a strong
 beam physically drives them back, hissing, at its edge. Alone, one cannot kill you. That is
 not its job. One that reaches you *latches* — and screams, a continuous carrying shriek that
 tells the parent exactly where its child is and what its child has found. They are not the
@@ -164,7 +165,8 @@ Librarian (glow-seek steering while lit beyond a threshold time).
 
 ### Hatchlings (5–6)
 
-Territorial, eyeless, sound-hunting, photophobic. Cheap steering (no BFS needed — territory
+Territorial, sound-hunting, photophobic (the eight eyes are why the light hurts, not how
+they find you). Cheap steering (no BFS needed — territory
 leash + sound pursuit). On reach: latch — screen shake, stamina drain, continuous screech that
 beacons the Librarian (feeds its `lastKnown` every frame while latched). Removed by beam-burn
 or shake-off (mash/rapid-turn). Not individually lethal; they are the alarm system.

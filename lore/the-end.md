@@ -74,7 +74,8 @@ torn carpet, breathing cold blue light, with a stair spiralling down into fog.
 There is no record of what is at the bottom of the stair, because everyone who has ever
 written for this database stopped writing at the top of it.
 
-The terminal's last words are the only exit sign THE END has ever hung: **I WARNED YOU.**
+The terminal's last word is the only exit sign THE END has ever hung, and it is not a
+word at all: a crying face, in pixels the size of your thumbnail, still weeping.
 
 ## Field Notes
 
@@ -131,7 +132,7 @@ Dev-facing; the lore parser ignores this section.
   the countdown and add speed; distant pickups trigger wall/ceiling transits); crouched
   movement is silent; tables are crouch-only sanctuary with a stalk timeout; flicker radar;
   125s post-first-pickup light drop + blackouts; terminal ending → dig cutscene →
-  `revealHole()` → CRT burns red "I WARNED YOU" → ENTER THE HOLE objective → walkable spiral
+  `revealHole()` → CRT burns red with a weeping pixel face → ENTER THE HOLE objective → walkable spiral
   stair, depth fog, fade below −8.5m.
 - "The End" per canon flavor: the infinite library at the bottom of the Backrooms, keeper
   entity, knowledge of every level, no exits. Ours adds the hole as the contradiction.

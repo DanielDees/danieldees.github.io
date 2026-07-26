@@ -647,57 +647,92 @@ export function startTerminalCine(){
 let puffTex=null;
 function ensurePuffTex(){
   if(puffTex) return;
-  puffTex=makeCanvas(128,128,(g,w,h)=>{
+  /* THREE puffs, not one. A single sprite map repeated 150 times reads as
+     150 copies of the same blob however you tint it — the eye finds the
+     repeat immediately. And each one is built from soft lumps AND a coarse
+     grain pass: a smooth radial falloff is fog. Dust is particulate, and
+     what makes it read as dust is that its edges are dirty. */
+  puffTex=[0,1,2].map(v=>makeCanvas(128,128,(g,w,h)=>{
     g.clearRect(0,0,w,h);
-    /* several offset soft discs merge into one irregular puff */
-    for(let i=0;i<8;i++){
-      const a=Math.random()*Math.PI*2, rr=Math.random()*20;
-      const x=64+Math.cos(a)*rr, y=64+Math.sin(a)*rr, r=24+Math.random()*20;
+    const lumps=6+v*3;
+    for(let i=0;i<lumps;i++){
+      const a=Math.random()*Math.PI*2, rr=Math.random()*(16+v*7);
+      const x=64+Math.cos(a)*rr, y=64+Math.sin(a)*rr, r=20+Math.random()*(18+v*4);
       const gr=g.createRadialGradient(x,y,0,x,y,r);
-      gr.addColorStop(0,"rgba(255,255,255,0.32)");
-      gr.addColorStop(0.55,"rgba(255,255,255,0.15)");
+      gr.addColorStop(0,"rgba(255,255,255,0.30)");
+      gr.addColorStop(0.55,"rgba(255,255,255,0.14)");
       gr.addColorStop(1,"rgba(255,255,255,0)");
       g.fillStyle=gr;
       g.beginPath(); g.arc(x,y,r,0,Math.PI*2); g.fill();
     }
-  });
-  markShared(puffTex);                 // module-level, reused across every ending
+    /* the grain: motes punched through the body, thinning to nothing at
+       the rim so the sprite still has no edge of its own */
+    for(let i=0;i<340;i++){
+      const a=Math.random()*Math.PI*2, rr=Math.pow(Math.random(),0.6)*58;
+      const fall=1-rr/58;
+      g.fillStyle=`rgba(255,255,255,${(0.05+Math.random()*0.20)*fall*fall})`;
+      g.fillRect(64+Math.cos(a)*rr,64+Math.sin(a)*rr,1+Math.random()*2.5,1+Math.random()*2.5);
+    }
+  }));
+  markShared(...puffTex);              // module-level, reused across every ending
 }
-const PUFF_TINTS=[0x6a543c,0x54432e,0x4a5666,0x3a4756,0x5d4d3a,0x435264];
+/* carpet blues and subsoil browns, with two near-black entries in the mix.
+   Sprites are UNLIT, so every puff renders at full strength in a room this
+   dark and a cloud of uniformly mid-tone ones turns into a cotton ball
+   hanging over the desk. The darks are what give the mass its shadow side
+   once the billows start overlapping. */
+const PUFF_TINTS=[0x6a543c,0x54432e,0x4a5666,0x3a4756,0x5d4d3a,0x435264,
+                  0x7a6448,0x3a2e20,0x252d38];
 function makeDigFx(){
   ensurePuffTex();
   const g=new THREE.Group();
   scene.add(g);
   const puffs=[];
-  for(let i=0;i<150;i++){
-    const m=new THREE.SpriteMaterial({map:puffTex, color:PUFF_TINTS[i%PUFF_TINTS.length],
+  for(let i=0;i<210;i++){
+    const m=new THREE.SpriteMaterial({map:puffTex[i%3], color:PUFF_TINTS[i%PUFF_TINTS.length],
       transparent:true, opacity:0, depthWrite:false});
     const s=new THREE.Sprite(m);
     s.visible=false; g.add(s);
-    puffs.push({s,m,vx:0,vy:0,vz:0,life:0,max:1,scale0:1,grow:1,peak:0.6,rotV:0});
+    puffs.push({s,m,vx:0,vy:0,vz:0,life:0,max:1,scale0:1,grow:1,peak:0.6,rotV:0,fade:1});
   }
-  /* debris: little clods of earth & carpet backing, tumbling as they fly */
-  const mats=[0x5a3f24,0x42301b,0x37424e,0x2b3542].map(c=>new THREE.MeshBasicMaterial({color:c}));
+  /* debris: clods of earth and shreds of carpet backing, tumbling as they
+     fly. Two shapes — lumps and flat torn strips, which flutter */
+  const mats=[0x5a3f24,0x42301b,0x37424e,0x2b3542,0x6b5334].map(c=>new THREE.MeshBasicMaterial({color:c}));
   const chipGeo=new THREE.BoxGeometry(1,1,1);
   const chips=[];
-  for(let i=0;i<64;i++){
+  for(let i=0;i<88;i++){
     const m=new THREE.Mesh(chipGeo,mats[i%mats.length]);
     m.visible=false;
-    m.scale.set(rand(0.025,0.06),rand(0.02,0.045),rand(0.025,0.07));
+    const flat=i%3===0;                              // a third are carpet shreds
+    m.scale.set(flat? rand(0.05,0.11):rand(0.025,0.06),
+                flat? 0.006:rand(0.02,0.045),
+                flat? rand(0.04,0.10):rand(0.025,0.07));
     g.add(m);
-    chips.push({m,vx:0,vy:0,vz:0,life:0,spin:rand(-9,9)});
+    chips.push({m,vx:0,vy:0,vz:0,life:0,spin:rand(-9,9),flat,spin2:rand(-7,7)});
   }
-  return {g,puffs,chips,chipGeo,mats,accP:0,accG:0,accC:0,burstDone:false};
+  return {g,puffs,chips,chipGeo,mats,accP:0,accG:0,accC:0,accV:0,burstDone:false};
 }
-function spawnPuff(F,x,y,z,vx,vy,vz,scale0,grow,life,peak){
+function spawnPuff(F,x,y,z,vx,vy,vz,scale0,grow,life,peak,fade){
   const p=F.puffs.find(p=>p.life<=0);
   if(!p) return;
   p.life=p.max=life; p.scale0=scale0; p.grow=grow; p.peak=peak;
+  p.fade=fade||1;                                  // >1 = sinks away faster than it swelled
   p.vx=vx; p.vy=vy; p.vz=vz; p.rotV=rand(-0.7,0.7);
   p.m.rotation=Math.random()*Math.PI*2;
   p.s.position.set(x,y,z);
   p.s.scale.set(scale0,scale0,1);
   p.s.visible=true;
+}
+/* dust does not come off a dig one puff at a time — it comes off in
+   BILLOWS. Two or three at once, at different sizes and slightly out of
+   step, is the difference between a churn and a bead curtain. */
+function billow(F,n,x,y,z,vx,vy,vz,scale0,grow,life,peak){
+  for(let i=0;i<n;i++){
+    const k=0.7+Math.random()*0.7;
+    spawnPuff(F, x+rand(-0.22,0.22), y+rand(-0.08,0.14), z+rand(-0.22,0.22),
+      vx*k+rand(-0.25,0.25), vy*k, vz*k+rand(-0.25,0.25),
+      scale0*k, grow, life*(0.8+Math.random()*0.45), peak*(0.75+Math.random()*0.5));
+  }
 }
 function spawnChip(F,sp,up){
   const c=F.chips.find(c=>c.life<=0);
@@ -706,6 +741,7 @@ function spawnChip(F,sp,up){
   c.vx=Math.cos(a)*sp; c.vz=Math.sin(a)*sp; c.vy=up;
   c.life=rand(0.8,1.5);
   c.m.position.set(h.x+rand(-0.5,0.5),rand(0.15,0.5),h.z+rand(-0.5,0.5));
+  c.m.rotation.set(Math.random()*7,Math.random()*7,Math.random()*7);
   c.m.visible=true;
 }
 function updateDigFx(dt,t){
@@ -715,43 +751,69 @@ function updateDigFx(dt,t){
   const env=seg(t,TC_DIG+0.4,TC_SINK0)*(1-seg(t,TC_CLEAR0,TC_CLEAR1));
   const digging=t>=TC_DIG&&t<TC_SINK1-0.3;
   if(digging){
-    /* churn: fresh dust boiling up out of the work */
-    F.accP+=dt*30;
+    /* churn: fresh dust boiling up out of the work, in billows. The legs
+       are throwing it, so it comes in gusts rather than a steady stream */
+    const gust=0.72+0.55*Math.pow(Math.abs(Math.sin(t*4.1)),1.6)+0.25*hash(Math.floor(t*7));
+    F.accP+=dt*13*gust;
     while(F.accP>=1){
       F.accP-=1;
       const a=Math.random()*Math.PI*2, rr=Math.random()*0.9;
-      const dir=Math.random()*Math.PI*2, sp=rand(0.5,1.7);
-      spawnPuff(F, h.x+Math.cos(a)*rr, rand(0.15,0.8), h.z+Math.sin(a)*rr,
-        Math.cos(dir)*sp, rand(0.4,1.3), Math.sin(dir)*sp,
-        rand(0.7,1.2), rand(2.0,2.9), rand(1.2,2.0), rand(0.45,0.68));
+      const dir=Math.random()*Math.PI*2, sp=rand(0.5,1.9);
+      billow(F, 2+(Math.random()<0.45?1:0),
+        h.x+Math.cos(a)*rr, rand(0.15,0.8), h.z+Math.sin(a)*rr,
+        Math.cos(dir)*sp, rand(0.4,1.4), Math.sin(dir)*sp,
+        rand(0.7,1.2), rand(2.0,2.9), rand(1.2,2.0), rand(0.32,0.52));
     }
     /* the ground shroud: heavy dust rolling out along the carpet — this is
        the layer that swallows the floor (hole + rim included) at the sink */
-    F.accG+=dt*22;
+    F.accG+=dt*20;
     while(F.accG>=1){
       F.accG-=1;
       const a=Math.random()*Math.PI*2, rr=rand(0.3,3.0);
       const drift=a+rand(-0.6,0.6);
       spawnPuff(F, h.x+Math.cos(a)*rr, rand(0.2,0.55), h.z+Math.sin(a)*rr,
         Math.cos(drift)*rand(0.15,0.5), rand(0.02,0.12), Math.sin(drift)*rand(0.15,0.5),
-        rand(1.8,2.9), rand(1.4,1.8), rand(2.4,3.6), rand(0.68,0.85));
+        rand(1.8,2.9), rand(1.4,1.8), rand(2.4,3.6), rand(0.50,0.68));
+    }
+    /* the VEIL: the fine fraction that never settles. It climbs slowly, way
+       out past the shroud, and holds for six seconds at almost no opacity —
+       this is what gives the shot a volume for the aerial camera to look
+       down THROUGH, instead of a flat mat of dust on the floor. */
+    F.accV+=dt*6;
+    while(F.accV>=1){
+      F.accV-=1;
+      const a=Math.random()*Math.PI*2, rr=rand(0.6,2.6);
+      spawnPuff(F, h.x+Math.cos(a)*rr, rand(0.5,2.4), h.z+Math.sin(a)*rr,
+        Math.cos(a)*rand(0.05,0.35), rand(0.28,0.62), Math.sin(a)*rand(0.05,0.35),
+        rand(2.2,3.6), rand(2.2,3.2), rand(4.5,6.5), rand(0.12,0.22), 1.8);
     }
     /* debris spray while the legs work */
-    F.accC+=dt*22;
+    F.accC+=dt*26;
     while(F.accC>=1){ F.accC-=1; spawnChip(F,rand(1.4,4.2),rand(2.2,5.2)); }
   }
-  /* the breakthrough: one violent ring of dust and clods as the floor lets go */
+  /* the breakthrough: the floor lets go. A ring blown out along the carpet,
+     a column punched straight up out of the shaft it just opened, and every
+     clod it had left */
   if(t>=TC_SWAP&&!F.burstDone){
     F.burstDone=true;
-    for(let i=0;i<20;i++){
-      const a=i/20*Math.PI*2+rand(-0.15,0.15);
-      spawnPuff(F, h.x+Math.cos(a)*rand(0.8,2.0), rand(0.2,0.9), h.z+Math.sin(a)*rand(0.8,2.0),
-        Math.cos(a)*rand(0.9,1.8), rand(0.3,0.9), Math.sin(a)*rand(0.9,1.8),
-        rand(1.2,1.9), rand(1.8,2.4), rand(1.8,2.8), rand(0.55,0.8));
+    for(let i=0;i<24;i++){
+      const a=i/24*Math.PI*2+rand(-0.15,0.15);
+      billow(F, 2, h.x+Math.cos(a)*rand(0.8,2.0), rand(0.2,0.9), h.z+Math.sin(a)*rand(0.8,2.0),
+        Math.cos(a)*rand(1.1,2.2), rand(0.3,0.9), Math.sin(a)*rand(1.1,2.2),
+        rand(1.2,1.9), rand(1.8,2.4), rand(1.8,2.8), rand(0.42,0.62));
     }
-    for(let i=0;i<22;i++) spawnChip(F,rand(2.2,5.2),rand(3.0,6.0));
+    for(let i=0;i<14;i++){                        // the column out of the hole
+      const a=Math.random()*Math.PI*2, rr=Math.random()*h.r*0.8;
+      spawnPuff(F, h.x+Math.cos(a)*rr, rand(0.1,0.6), h.z+Math.sin(a)*rr,
+        Math.cos(a)*rand(0.1,0.6), rand(2.2,4.4), Math.sin(a)*rand(0.1,0.6),
+        rand(1.4,2.4), rand(2.4,3.4), rand(2.6,3.8), rand(0.32,0.50));
+    }
+    for(let i=0;i<30;i++) spawnChip(F,rand(2.2,5.2),rand(3.0,6.4));
   }
-  /* dust: drag, slow rise, growth, spin; in fast, out slow */
+  /* dust: drag, slow rise, growth, spin; in fast, out slow. The rise is a
+     buoyancy that DECAYS — a fresh puff is hot off the work and climbs,
+     an old one has cooled and just hangs, which is what stops the whole
+     cloud drifting away as one rigid body. */
   for(const p of F.puffs){
     if(p.life<=0) continue;
     p.life-=dt;
@@ -760,20 +822,26 @@ function updateDigFx(dt,t){
     const drag=Math.pow(0.42,dt);
     p.vx*=drag; p.vz*=drag; p.vy*=Math.pow(0.55,dt);
     p.s.position.x+=p.vx*dt;
-    p.s.position.y+=p.vy*dt+0.06*dt;             // dust wants up, gently
+    p.s.position.y+=p.vy*dt+0.09*(1-k)*dt;
     p.s.position.z+=p.vz*dt;
     const sc=p.scale0*(1+(p.grow-1)*k);
     p.s.scale.set(sc,sc,1);
     p.m.rotation+=p.rotV*dt;
-    p.m.opacity=p.peak*Math.min(1,k*5)*(1-k*k)*env;
+    /* fade 1 is the old 1−k²; higher holds the plateau longer and drops it
+       at the end, which is how the fine veil outlives the churn under it */
+    p.m.opacity=p.peak*Math.min(1,k*5)*Math.max(0,1-Math.pow(k,2*p.fade))*env;
   }
-  /* debris: gravity, tumble — and a little puff where each clod lands */
+  /* debris: gravity, tumble — and a little puff where each clod lands.
+     Flat shreds of carpet backing flutter instead of dropping: they lose
+     their fall speed and slew, which reads as WEIGHT on the lumps beside
+     them, and it costs one line. */
   for(const c of F.chips){
     if(c.life<=0) continue;
     c.life-=dt;
-    c.vy-=9.5*dt;
+    c.vy-=(c.flat? 3.6:9.5)*dt;
+    if(c.flat){ c.vx*=Math.pow(0.45,dt); c.vz*=Math.pow(0.45,dt); c.vy=Math.max(c.vy,-1.5); }
     c.m.position.x+=c.vx*dt; c.m.position.y+=c.vy*dt; c.m.position.z+=c.vz*dt;
-    c.m.rotation.x+=c.spin*dt; c.m.rotation.z+=c.spin*0.7*dt;
+    c.m.rotation.x+=c.spin*dt; c.m.rotation.z+=c.spin*0.7*dt; c.m.rotation.y+=c.spin2*dt;
     if(c.life<=0||c.m.position.y<0.03){
       if(c.m.position.y<0.03&&Math.random()<0.6)
         spawnPuff(F, c.m.position.x, 0.12, c.m.position.z,
@@ -884,7 +952,7 @@ function updateTerminal(dt){
     if(t-D.lastStatic>0.09){
       D.lastStatic=t;
       const a=Math.min(1,(t-TC_WARN)*1.1)*(0.82+0.18*hash(Math.floor(t*13)));
-      screen.warn(a);
+      screen.warn(a,t);
     }
   }
   /* ---- camera: onto the screen, up and out, hold, back into your eyes ---- */
@@ -916,7 +984,8 @@ function updateTerminal(dt){
   STATE.yaw=yaw; STATE.pitch=pitch;
   setCam(cx,cy,cz,yaw,pitch);
   if(t>=TC_END){
-    screen.warn(1);                    // the words stay on the glass for good
+    screen.warn(1,t);                  // the face stays on the glass for good…
+    LIB.weeping=true; LIB.weepT=t;     // …and updateLibrary keeps the tears running
     disposeDigFx();
     CINE.active=false; CINE.kind=null; D=null;
     ui.dread.style.opacity=0;

@@ -59,6 +59,81 @@ export const texCeil = makeCanvas(256,256,(g,w,h)=>{
   for(let i=0;i<1800;i++){g.fillStyle=`rgba(90,80,50,${Math.random()*0.1})`;
     g.fillRect(Math.random()*w,Math.random()*h,2,2);}
 });
+/* ---- the filament: the one asset every electric light in the game shares ----
+   Level 0's troffers and THE END's hanging strips run the same tubes, so
+   they get the same map. CylinderGeometry's v axis runs end-to-end, so this
+   canvas's HEIGHT is the length of the tube — which is what makes the two
+   details that sell a fluorescent lamp possible at all:
+
+     · END BLACKENING. A tube that has been burning since before you were
+       born has its mercury baked onto the glass at the electrodes. Without
+       it a "tube" is a uniformly glowing stick, i.e. a neon rod.
+     · the cathode caps themselves, and the faint mottle of worn phosphor
+       between them.
+
+   It must stay BRIGHT on average: lights.js drives tubeMat.color every
+   frame and the map multiplies it, so anything dark here comes straight
+   off the fixture's output. The blackening is deliberately short. */
+export function makeTubeTexture(warm){
+  return makeCanvas(16,256,(g,w,h)=>{
+    if(warm){
+      const gr=g.createLinearGradient(0,0,0,h);      // end-of-life hue drift
+      gr.addColorStop(0,"#ffdf94"); gr.addColorStop(0.5,"#ff9742"); gr.addColorStop(1,"#ffdf94");
+      g.fillStyle=gr;
+    } else g.fillStyle="#fffaf0";
+    g.fillRect(0,0,w,h);
+    /* worn phosphor: faint rings of uneven coating along the bore */
+    for(let i=0;i<70;i++){
+      const y=Math.random()*h, hh=1+Math.random()*5;
+      g.fillStyle=`rgba(${warm?"255,214,150":"236,240,255"},${0.05+Math.random()*0.10})`;
+      g.fillRect(0,y,w,hh);
+    }
+    for(let i=0;i<26;i++){                            // and its cold spots
+      const y=Math.random()*h, hh=1+Math.random()*4;
+      g.fillStyle=`rgba(150,140,120,${0.04+Math.random()*0.07})`;
+      g.fillRect(0,y,w,hh);
+    }
+    /* the burn at each end, then the metal cap over it */
+    for(const end of[0,1]){
+      const y0=end? h:0, y1=end? h*0.86:h*0.14;
+      const gr=g.createLinearGradient(0,y0,0,y1);
+      gr.addColorStop(0,"rgba(38,30,24,0.92)");
+      gr.addColorStop(0.35,"rgba(96,80,62,0.55)");
+      gr.addColorStop(1,"rgba(150,132,110,0)");
+      g.fillStyle=gr; g.fillRect(0,Math.min(y0,y1),w,Math.abs(y1-y0));
+      g.fillStyle="#3b3a36";
+      g.fillRect(0,end? h-9:0,w,9);
+    }
+  });
+}
+/* galvanized sheet for every fixture shell — spangle crystals, a scatter of
+   dust and old water runs. Non-directional and seam-safe, because it maps
+   at a fixed world scale (scaleBoxUV) across members of wildly different
+   sizes: a 2.2m reflector spine and a 0.09m end cap wear the same steel. */
+export const texGalv = makeCanvas(128,128,(g,w,h)=>{
+  g.fillStyle="#8e918c";g.fillRect(0,0,w,h);
+  for(let i=0;i<110;i++){                 // spangle: the frozen-crystal facets
+    const x=Math.random()*w, y=Math.random()*h, r=4+Math.random()*13;
+    const v=Math.random()<0.5? 168:120;
+    g.fillStyle=`rgba(${v},${v+3},${v-2},${0.08+Math.random()*0.13})`;
+    g.beginPath();
+    for(let a=0;a<Math.PI*2;a+=Math.PI/3) g.lineTo(x+Math.cos(a)*r*(0.6+Math.random()*0.6),
+                                                   y+Math.sin(a)*r*(0.6+Math.random()*0.6));
+    g.closePath();g.fill();
+  }
+  for(let i=0;i<900;i++){                 // mill grain
+    g.fillStyle=`rgba(${60+Math.random()*120|0},${62+Math.random()*120|0},${58+Math.random()*118|0},${0.05+Math.random()*0.10})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*3,1);
+  }
+  for(let i=0;i<9;i++){                    // dust settled in the pressings
+    const x=Math.random()*w, ww=3+Math.random()*9;
+    const gr=g.createLinearGradient(x,0,x+ww,0);
+    gr.addColorStop(0,"rgba(52,46,36,0)");
+    gr.addColorStop(0.5,`rgba(52,46,36,${0.10+Math.random()*0.14})`);
+    gr.addColorStop(1,"rgba(52,46,36,0)");
+    g.fillStyle=gr;g.fillRect(x,0,ww,h);
+  }
+});
 /* ceiling stains: a mixed population of irregular dried rings, soft filled
    blotches, and dark mold clusters. Lives on its own overlay plane tiled at
    a non-integer rate so a tile's stains never visibly repeat on the grid.
@@ -323,11 +398,15 @@ export const texLibWall = makeCanvas(256,256,(g,w,h)=>{
 });
 /* rescale a BoxGeometry's per-face UVs so a RepeatWrapping texture maps at
    `m` meters per tile on every face, whatever the box dimensions — adjacent
-   odd-sized boxes (walls, elevator flanks, headers) then share one scale */
-export function scaleBoxUV(geo,w,h,d,m){
+   odd-sized boxes (walls, elevator flanks, headers) then share one scale.
+   `skip` lists face indices (±x, ±y, ±z = 0..5) to leave alone: a box with
+   one FITTED face — the troffer's trim flange, a printed label — must keep
+   that face's 0–1 mapping while the rest of it tiles. */
+export function scaleBoxUV(geo,w,h,d,m,skip){
   const uv=geo.attributes.uv;
   const dims=[[d,h],[d,h],[w,d],[w,d],[w,h],[w,h]];   // ±x, ±y, ±z face sizes
   for(let f=0;f<6;f++){
+    if(skip&&skip.includes(f)) continue;
     const [fw,fh]=dims[f];
     for(let i=0;i<4;i++){
       const idx=f*4+i;
@@ -337,23 +416,75 @@ export function scaleBoxUV(geo,w,h,d,m){
   uv.needsUpdate=true;
   return geo;
 }
-/* the thick grey-blue carpet that mutes every footstep */
-export const texLibCarpet = makeCanvas(512,512,(g,w,h)=>{
-  g.fillStyle="#3a4250";g.fillRect(0,0,w,h);
-  for(let i=0;i<26000;i++){const v=Math.random();
-    g.fillStyle=`rgba(${v<.5?24:74},${v<.5?28:84},${v<.5?38:104},0.28)`;
-    g.fillRect(Math.random()*w,Math.random()*h,1.5,1.5);}
-  /* faint herringbone weave bands */
-  for(let y=0;y<h;y+=24){
-    g.fillStyle=`rgba(${(y/24)%2?28:60},${(y/24)%2?34:68},${(y/24)%2?46:88},0.07)`;
-    g.fillRect(0,y,w,12);
+/* ---- the thick grey-blue carpet that mutes every footstep ----
+   It tiles at 4m, so the pile itself is sub-pixel and drawing 26 000 dots
+   only ever averaged back out to the flat field it started from. What
+   actually READS at this scale is what a real commercial broadloom is
+   recognisable by: BERBER FLECKS — a scatter of contrasting fibre in rust
+   and ochre and bone, dense enough to break the field at your feet and
+   fine enough to blur into tone across the room — plus the loop rows, a
+   tone-on-tone lattice, and the wear the building has walked into it.
+   It carries a matching bump map (below), which is what finally lets a
+   point light rake across the pile instead of sliding over a flat plane. */
+const CARPET_PX=(g,w,h)=>{
+  g.fillStyle="#333c4a";g.fillRect(0,0,w,h);
+  /* the loop pile: rows of tufts, every other row offset half a gauge */
+  for(let y=0;y<h;y+=4){
+    const off=(y/4)%2? 2:0;
+    for(let x=0;x<w;x+=4){
+      const v=Math.random();
+      g.fillStyle=`rgba(${v<.5?26:78},${v<.5?32:90},${v<.5?44:110},${0.16+Math.random()*0.22})`;
+      g.fillRect(x+off,y,2.6,2.6);
+    }
   }
-  for(let i=0;i<9;i++){                 // old pressure-stains, dust shadows
+  /* berber flecks — the thing that says "carpet" from any distance */
+  const FLECK=["190,150,92","150,86,52","206,198,176","74,96,120","112,74,60"];
+  for(let i=0;i<2600;i++){
+    g.fillStyle=`rgba(${FLECK[Math.floor(Math.random()*FLECK.length)]},${0.10+Math.random()*0.30})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*2.4,1+Math.random()*2);
+  }
+  /* a tone-on-tone lattice woven into it at 64px = half a metre. Kept
+     FAINT on purpose: at any real contrast this stops reading as a weave
+     and starts reading as grout, and the floor turns to ceramic tile. */
+  g.strokeStyle="rgba(24,29,38,0.09)";g.lineWidth=2;
+  for(let k=0;k<=w;k+=64){
+    g.beginPath();g.moveTo(k,0);g.lineTo(k,h);g.stroke();
+    g.beginPath();g.moveTo(0,k);g.lineTo(w,k);g.stroke();
+  }
+  /* the last vacuum anyone ran, and what has been dragged over it since */
+  for(let i=0;i<7;i++){
+    const x=Math.random()*w, ww=26+Math.random()*54;
+    g.fillStyle=`rgba(${Math.random()<0.5?"20,25,34":"92,104,126"},0.05)`;
+    g.fillRect(x,0,ww,h);
+  }
+  for(let i=0;i<11;i++){                // pressure stains, dust shadows
     const x=Math.random()*w,y=Math.random()*h,r=20+Math.random()*70;
     g.save();g.translate(x,y);g.rotate(Math.random()*Math.PI);g.scale(1,0.5+Math.random()*0.8);
     const gr=g.createRadialGradient(0,0,2,0,0,r);
     gr.addColorStop(0,`rgba(14,16,22,${0.10+Math.random()*0.16})`);gr.addColorStop(1,"rgba(14,16,22,0)");
     g.fillStyle=gr;g.fillRect(-r,-r,r*2,r*2);g.restore();
+  }
+};
+export const texLibCarpet = makeCanvas(512,512,CARPET_PX);
+/* the pile's relief: the same tuft grid in greyscale, with the worn lanes
+   pressed flat. Kept SHALLOW — carpet is soft, and a hard bump on a floor
+   plane this big reads as gravel. */
+export const texLibCarpetBump = makeCanvas(512,512,(g,w,h)=>{
+  g.fillStyle="#808080";g.fillRect(0,0,w,h);
+  for(let y=0;y<h;y+=4){
+    const off=(y/4)%2? 2:0;
+    for(let x=0;x<w;x+=4){
+      const v=140+Math.random()*90|0;
+      g.fillStyle=`rgb(${v},${v},${v})`;
+      g.fillRect(x+off,y,2.6,2.6);
+    }
+  }
+  g.fillStyle="rgba(48,48,48,0.20)";     // the lattice sits low in the weave
+  for(let k=0;k<=w;k+=64){ g.fillRect(k-1,0,2,h); g.fillRect(0,k-1,w,2); }
+  for(let i=0;i<9;i++){                  // walked flat
+    const x=Math.random()*w, ww=26+Math.random()*54;
+    g.fillStyle="rgba(96,96,96,0.30)";
+    g.fillRect(x,0,ww,h);
   }
 });
 /* high dark ceiling: old planks, swallowed by the murk anyway */
@@ -383,6 +514,115 @@ function woodTex(base,dark,light){
 }
 export const texShelfWood = woodTex("#43321f","26,17,9","96,74,46");
 export const texDeskWood  = woodTex("#5a452c","36,24,12","122,96,58");
+/* ---- the machines ----
+   Moulded beige ABS, thirty years yellowed. Flat colour was doing the whole
+   job before, which is why every computer in the building read as a stack
+   of untextured primitives: no mould grain, no dust in the corners, and —
+   worst — no sign that the plastic near the vents has cooked browner than
+   the plastic on the sides. */
+export const texBeige = makeCanvas(128,128,(g,w,h)=>{
+  g.fillStyle="#b6ad97";g.fillRect(0,0,w,h);
+  for(let i=0;i<2600;i++){              // moulding grain
+    const v=Math.random()<0.5? 150:196;
+    g.fillStyle=`rgba(${v},${v-6},${v-24},${0.05+Math.random()*0.10})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*2,1+Math.random()*2);
+  }
+  for(let i=0;i<14;i++){                // sun and cigarette smoke, unevenly
+    const x=Math.random()*w,y=Math.random()*h,r=14+Math.random()*40;
+    const gr=g.createRadialGradient(x,y,1,x,y,r);
+    gr.addColorStop(0,`rgba(154,126,66,${0.06+Math.random()*0.10})`);
+    gr.addColorStop(1,"rgba(154,126,66,0)");
+    g.fillStyle=gr;g.fillRect(x-r,y-r,r*2,r*2);
+  }
+  for(let i=0;i<20;i++){                // scuffs
+    g.fillStyle=`rgba(84,76,60,${0.06+Math.random()*0.12})`;
+    g.save();g.translate(Math.random()*w,Math.random()*h);g.rotate(Math.random()*Math.PI);
+    g.fillRect(0,0,3+Math.random()*16,1);g.restore();
+  }
+});
+/* a keyboard, drawn rather than built: ~90 keycaps of real geometry on a
+   prop you only ever see from standing height is ninety draws of nothing */
+export function makeKeyboardTexture(){
+  return makeCanvas(256,96,(g,w,h)=>{
+    g.fillStyle="#8e8672";g.fillRect(0,0,w,h);
+    const key=(x,y,kw,kh)=>{
+      g.fillStyle="#2b2822";g.fillRect(x,y,kw,kh);            // the well
+      g.fillStyle="#b9b099";g.fillRect(x+1,y+1,kw-2,kh-3);    // the cap
+      g.fillStyle="rgba(255,252,242,0.35)";g.fillRect(x+1,y+1,kw-2,1);
+      g.fillStyle="rgba(40,36,28,0.30)";g.fillRect(x+1,y+kh-3,kw-2,1);
+    };
+    /* function row, then the four main rows stepped like a real board */
+    for(let i=0;i<12;i++) key(8+i*14,7,11,9);
+    const rows=[[8,20,15,13],[8,34,14,14],[12,48,13,14],[8,62,13,13]];
+    rows.forEach(([x0,y,n,kw])=>{ for(let i=0;i<n;i++) key(x0+i*(kw+2),y,kw,12); });
+    key(70,77,86,12);                                          // spacebar
+    key(30,77,26,12); key(170,77,26,12);
+    for(let i=0;i<4;i++)for(let j=0;j<4;j++) key(196+j*14,20+i*14,12,12);  // the pad
+    for(let i=0;i<3;i++){                                      // status LEDs
+      g.fillStyle=["#2a3a24","#2a3a24","#3a3320"][i];
+      g.fillRect(200+i*10,8,6,4);
+    }
+  });
+}
+/* a 3.5" disk, top down: the shell, the label somebody wrote on, and the
+   write-protect window. The only object in this library worth taking, and
+   it was three untextured boxes. */
+export function makeFloppyTexture(){
+  const scrawl=["BACKUP 7","DO NOT COPY","ROOMS 0-9","INDEX ??","LAST ONE",
+                "FLOOR PLAN","MY NOTES","RETURN TO","AUDIT 4","DIAGNOSTIC"];
+  const tex=makeCanvas(128,128,(g,w,h)=>{
+    /* --- rows 0–95: the label face --- */
+    g.fillStyle="#1b1e25";g.fillRect(0,0,w,96);
+    for(let i=0;i<500;i++){                       // moulded plastic sheen
+      g.fillStyle=`rgba(${60+Math.random()*60|0},${64+Math.random()*60|0},${74+Math.random()*60|0},0.05)`;
+      g.fillRect(Math.random()*w,Math.random()*96,1+Math.random()*3,1);
+    }
+    g.fillStyle="rgba(150,160,178,0.22)";g.fillRect(0,0,w,2);   // top bevel highlight
+    g.fillStyle="rgba(0,0,0,0.35)";g.fillRect(0,93,w,3);
+    /* the shutter end sits at the top of this face */
+    g.fillStyle="#7d848c";g.fillRect(20,3,88,20);
+    g.fillStyle="#5e666e";g.fillRect(24,6,80,14);
+    g.fillStyle="#3a4046";g.fillRect(46,6,36,14);              // the window under it
+    /* the label. Its printed header sits at the end FURTHEST from the
+       shutter, the way a real one does — the shutter end is the end you
+       hold, and nobody prints under their own thumb. */
+    g.fillStyle="#cdc6ae";g.fillRect(9,29,110,58);
+    g.fillStyle="rgba(120,104,72,0.30)";g.fillRect(9,29,110,3);
+    g.fillStyle="#8f2b22";g.fillRect(9,78,110,9);
+    g.fillStyle="#e8e2ce";g.font="bold 7px Courier New";g.textBaseline="middle";
+    g.fillText("THE END  ·  ARCHIVE",13,83);
+    g.fillStyle="rgba(70,60,40,0.55)";                          // ruled lines
+    for(let i=0;i<3;i++) g.fillRect(13,50+i*11,102,1);
+    g.fillStyle="#2a2a34";g.font="9px Courier New";
+    g.fillText(scrawl[Math.floor(Math.random()*scrawl.length)],15,42);
+    /* a hand nobody can read. Kept THIN and broken: at 1.5px solid it
+       mipped down into one navy bar across the label and read as a sticker */
+    g.fillStyle="rgba(52,50,62,0.50)";
+    for(let i=0;i<2;i++){
+      let x=15+Math.random()*10;
+      while(x<104){ const ww=3+Math.random()*8; g.fillRect(x,57+i*11,ww,1); x+=ww+4+Math.random()*6; }
+    }
+    for(let i=0;i<7;i++){                                       // coffee, age, thumbs
+      const x=Math.random()*w,y=29+Math.random()*58,r=4+Math.random()*13;
+      const gr=g.createRadialGradient(x,y,0,x,y,r);
+      gr.addColorStop(0,`rgba(96,72,36,${0.05+Math.random()*0.12})`);
+      gr.addColorStop(1,"rgba(96,72,36,0)");
+      g.fillStyle=gr;g.fillRect(x-r,y-r,r*2,r*2);
+    }
+    /* --- rows 96–127: plain shell for every other face --- */
+    g.fillStyle="#171a20";g.fillRect(0,96,w,32);
+    for(let i=0;i<260;i++){
+      g.fillStyle=`rgba(${58+Math.random()*54|0},${62+Math.random()*54|0},${72+Math.random()*54|0},0.06)`;
+      g.fillRect(Math.random()*w,96+Math.random()*32,1+Math.random()*3,1);
+    }
+  });
+  /* The label lives in the upper v band (canvas y=0 is v=1 under flipY).
+     `top` hands setFaceUV its v range REVERSED, because a box's +y face
+     runs v toward +z: without the swap the disk comes out end-for-end —
+     printed shutter at the tail, header band under the ruled lines it is
+     supposed to head. */
+  return {tex, uv:{top:[0,1,1,0.25], plain:[0.05,0.02,0.95,0.22]}};
+}
 /* ---- proper 3D books ----
    Each book DESIGN gets its own cover canvas: a cloth/leather base shared
    across the whole canvas (so mipmap bleed between regions is invisible),

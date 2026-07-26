@@ -2,7 +2,8 @@
 import { rand, clamp } from "./utils.js";
 import { W, H, CELL, WALL_H, grid, genMap, cellToWorld, isWall } from "./map.js";
 import { makeCanvas, texWall, texCarpet, texStains, texCeil, texCeilStains,
-         makeMoldTextures, makeDripTextures, sliceTexture } from "./textures.js";
+         makeMoldTextures, makeDripTextures, sliceTexture,
+         makeTubeTexture, texGalv, scaleBoxUV } from "./textures.js";
 import { $ } from "./utils.js";
 import { readSettings } from "./settings.js";
 
@@ -251,23 +252,20 @@ const grateTex = makeCanvas(256,128,(g,w,h)=>{
   for(let i=0;i<=NX;i++) g.fillRect(i*(w-2)/NX,0,2,h);   // grille vanes
   for(let j=0;j<=NY;j++) g.fillRect(0,j*(h-2)/NY,w,2);   // cross ribs
 });
-/* end-of-life tubes: a gentle hue drift — yellower at the ends, a touch
-   more orange at the center where the phosphor has worn the most.
-   CylinderGeometry's v axis runs end-to-end, so a vertical gradient maps
-   along the tube. */
-const warmTubeTex = makeCanvas(4,64,(g,w,h)=>{
-  const gr=g.createLinearGradient(0,0,0,h);
-  gr.addColorStop(0,  "#ffdf94");
-  gr.addColorStop(0.5,"#ff9742");
-  gr.addColorStop(1,  "#ffdf94");
-  g.fillStyle=gr; g.fillRect(0,0,w,h);
-});
+/* the tubes themselves are the shared filament asset (textures.js): burnt
+   electrodes, worn phosphor, and — on the dying ones — the end-of-life hue
+   drift toward orange at the centre. The library's hanging strips import
+   the same two maps. */
+export const tubeTex = makeTubeTexture(false), warmTubeTex = makeTubeTexture(true);
 const HOUSE_D=0.096;                               // 20% shallower than before
-const housingGeo=new THREE.BoxGeometry(CELL*0.66,HOUSE_D,CELL*0.34);
+/* the shell tiles real galvanized sheet at 0.5m — every face but the bottom,
+   which carries the FITTED trim flange and has to keep its 0–1 mapping */
+const housingGeo=scaleBoxUV(new THREE.BoxGeometry(CELL*0.66,HOUSE_D,CELL*0.34),
+  CELL*0.66,HOUSE_D,CELL*0.34,0.5,[3]);
 /* galvanized-steel fixture frame — clearly a piece of metal hardware,
    not a patch of ceiling; faint emissive keeps it readable right next
    to its own glowing tubes */
-const housingSide=new THREE.MeshPhongMaterial({color:0xb4b2aa,emissive:0x0d0d0b,
+const housingSide=new THREE.MeshPhongMaterial({map:texGalv,color:0xb4b2aa,emissive:0x0d0d0b,
   specular:0x6a6960,shininess:55});
 /* bottom face: metallic trim flange with the centre punched out via
    alphaTest so the grate & glow show through — keeps the fixture visible
@@ -298,7 +296,7 @@ const glowGeo=new THREE.PlaneGeometry(CELL*0.66,CELL*0.34);
    exposes a glowing sliver of part-cell instead. */
 const grateGeo=new THREE.PlaneGeometry(CELL*0.625,CELL*0.305);
 const grateMat=new THREE.MeshBasicMaterial({map:grateTex,transparent:true});
-markShared(grateTex,warmTubeTex,rimTex,housingGeo,tubeGeo,glowGeo,grateGeo,
+markShared(grateTex,tubeTex,warmTubeTex,texGalv,rimTex,housingGeo,tubeGeo,glowGeo,grateGeo,
            housingSide,housingRim,grateMat);
 /* the TUBES are the light source — the housing interior only catches spill,
    so every backplate sits darker than its tubes: a faint glow on dying
@@ -308,8 +306,8 @@ markShared(grateTex,warmTubeTex,rimTex,housingGeo,tubeGeo,glowGeo,grateGeo,
    the level. */
 function makeTroffer(warm){
   const glowMat=new THREE.MeshBasicMaterial({color: warm?0x4d3419:0xb8b2a2});
-  const tubeMat=warm? new THREE.MeshBasicMaterial({map:warmTubeTex})
-                    : new THREE.MeshBasicMaterial({color:0xfff6cf});
+  const tubeMat=new THREE.MeshBasicMaterial({map: warm? warmTubeTex:tubeTex,
+                                             color: warm?0xffffff:0xfff6cf});
   const fix=new THREE.Group();
   const housing=new THREE.Mesh(housingGeo,housingMats);
   housing.position.y=WALL_H-HOUSE_D/2; fix.add(housing);
