@@ -566,62 +566,82 @@ export function makeKeyboardTexture(){
 }
 /* a 3.5" disk, top down: the shell, the label somebody wrote on, and the
    write-protect window. The only object in this library worth taking, and
-   it was three untextured boxes. */
+   it was three untextured boxes.
+
+   256², not 128²: the label band is 0.75 of the canvas mapped onto a 0.38m
+   face, so at 128 the print sat at ~250 px/m and its 7px header was three
+   texels of stroke — a grey smear at the range you read it from, which is
+   arm's length. Doubling puts the same physical lettering on twice the
+   texels in each axis. The other half of the blur was ANISOTROPY: a disk
+   lies FLAT and you look down its length at maybe 30°, the worst case for
+   an isotropic mip chain, so it was fetching from a level chosen for the
+   squashed axis and throwing away the sharp one. */
 export function makeFloppyTexture(){
   const scrawl=["BACKUP 7","DO NOT COPY","ROOMS 0-9","INDEX ??","LAST ONE",
                 "FLOOR PLAN","MY NOTES","RETURN TO","AUDIT 4","DIAGNOSTIC"];
-  const tex=makeCanvas(128,128,(g,w,h)=>{
-    /* --- rows 0–95: the label face --- */
-    g.fillStyle="#1b1e25";g.fillRect(0,0,w,96);
-    for(let i=0;i<500;i++){                       // moulded plastic sheen
+  const tex=makeCanvas(256,256,(g,w,h)=>{
+    const LB=192;                                 // label band: rows 0–191
+    /* --- the label face --- */
+    g.fillStyle="#1b1e25";g.fillRect(0,0,w,LB);
+    for(let i=0;i<1600;i++){                      // moulded plastic sheen
       g.fillStyle=`rgba(${60+Math.random()*60|0},${64+Math.random()*60|0},${74+Math.random()*60|0},0.05)`;
-      g.fillRect(Math.random()*w,Math.random()*96,1+Math.random()*3,1);
+      g.fillRect(Math.random()*w,Math.random()*LB,2+Math.random()*6,2);
     }
-    g.fillStyle="rgba(150,160,178,0.22)";g.fillRect(0,0,w,2);   // top bevel highlight
-    g.fillStyle="rgba(0,0,0,0.35)";g.fillRect(0,93,w,3);
+    g.fillStyle="rgba(150,160,178,0.22)";g.fillRect(0,0,w,4);   // top bevel highlight
+    g.fillStyle="rgba(0,0,0,0.35)";g.fillRect(0,LB-6,w,6);
     /* the shutter end sits at the top of this face */
-    g.fillStyle="#7d848c";g.fillRect(20,3,88,20);
-    g.fillStyle="#5e666e";g.fillRect(24,6,80,14);
-    g.fillStyle="#3a4046";g.fillRect(46,6,36,14);              // the window under it
+    g.fillStyle="#7d848c";g.fillRect(40,6,176,40);
+    g.fillStyle="#5e666e";g.fillRect(48,12,160,28);
+    g.fillStyle="#3a4046";g.fillRect(92,12,72,28);             // the window under it
+    for(let i=0;i<5;i++){                                      // the shutter's drawn ribs
+      g.fillStyle="rgba(28,32,36,0.45)";g.fillRect(52+i*7,14,2,24);
+    }
     /* the label. Its printed header sits at the end FURTHEST from the
        shutter, the way a real one does — the shutter end is the end you
        hold, and nobody prints under their own thumb. */
-    g.fillStyle="#cdc6ae";g.fillRect(9,29,110,58);
-    g.fillStyle="rgba(120,104,72,0.30)";g.fillRect(9,29,110,3);
-    g.fillStyle="#8f2b22";g.fillRect(9,78,110,9);
-    g.fillStyle="#e8e2ce";g.font="bold 7px Courier New";g.textBaseline="middle";
-    g.fillText("THE END  ·  ARCHIVE",13,83);
+    g.fillStyle="#cdc6ae";g.fillRect(18,58,220,116);
+    g.fillStyle="rgba(120,104,72,0.30)";g.fillRect(18,58,220,6);
+    g.fillStyle="#8f2b22";g.fillRect(18,156,220,18);
+    g.fillStyle="#e8e2ce";g.font="bold 14px Courier New";g.textBaseline="middle";
+    g.fillText("THE END  ·  ARCHIVE",26,166);
     g.fillStyle="rgba(70,60,40,0.55)";                          // ruled lines
-    for(let i=0;i<3;i++) g.fillRect(13,50+i*11,102,1);
-    g.fillStyle="#2a2a34";g.font="9px Courier New";
-    g.fillText(scrawl[Math.floor(Math.random()*scrawl.length)],15,42);
-    /* a hand nobody can read. Kept THIN and broken: at 1.5px solid it
+    for(let i=0;i<3;i++) g.fillRect(26,100+i*22,204,2);
+    g.fillStyle="#23232c";g.font="bold 19px Courier New";
+    g.fillText(scrawl[Math.floor(Math.random()*scrawl.length)],30,84);
+    /* a hand nobody can read. Kept THIN and broken: at full stroke it
        mipped down into one navy bar across the label and read as a sticker */
     g.fillStyle="rgba(52,50,62,0.50)";
     for(let i=0;i<2;i++){
-      let x=15+Math.random()*10;
-      while(x<104){ const ww=3+Math.random()*8; g.fillRect(x,57+i*11,ww,1); x+=ww+4+Math.random()*6; }
+      let x=30+Math.random()*20;
+      while(x<208){ const ww=6+Math.random()*16; g.fillRect(x,114+i*22,ww,2); x+=ww+8+Math.random()*12; }
     }
     for(let i=0;i<7;i++){                                       // coffee, age, thumbs
-      const x=Math.random()*w,y=29+Math.random()*58,r=4+Math.random()*13;
+      const x=Math.random()*w,y=58+Math.random()*116,r=8+Math.random()*26;
       const gr=g.createRadialGradient(x,y,0,x,y,r);
       gr.addColorStop(0,`rgba(96,72,36,${0.05+Math.random()*0.12})`);
       gr.addColorStop(1,"rgba(96,72,36,0)");
       g.fillStyle=gr;g.fillRect(x-r,y-r,r*2,r*2);
     }
-    /* --- rows 96–127: plain shell for every other face --- */
-    g.fillStyle="#171a20";g.fillRect(0,96,w,32);
-    for(let i=0;i<260;i++){
+    /* --- plain shell for every other face --- */
+    g.fillStyle="#171a20";g.fillRect(0,LB,w,h-LB);
+    for(let i=0;i<900;i++){
       g.fillStyle=`rgba(${58+Math.random()*54|0},${62+Math.random()*54|0},${72+Math.random()*54|0},0.06)`;
-      g.fillRect(Math.random()*w,96+Math.random()*32,1+Math.random()*3,1);
+      g.fillRect(Math.random()*w,LB+Math.random()*(h-LB),2+Math.random()*6,2);
     }
   });
-  /* The label lives in the upper v band (canvas y=0 is v=1 under flipY).
-     `top` hands setFaceUV its v range REVERSED, because a box's +y face
-     runs v toward +z: without the swap the disk comes out end-for-end —
-     printed shutter at the tail, header band under the ruled lines it is
-     supposed to head. */
-  return {tex, uv:{top:[0,1,1,0.25], plain:[0.05,0.02,0.95,0.22]}};
+  tex.anisotropy=8;              // read at a grazing angle; clamped to the GPU max at upload
+  /* The label lives in the upper v band (canvas y=0 is v=1 under flipY), and
+     `top` hands setFaceUV that band the RIGHT WAY UP: v0 < v1.
+     It used to be reversed, to drag the printed shutter down to the end the
+     steel shutter mesh actually sits on. That works on the block layout and
+     is fatal to the print: flipping v mirrors the canvas about its
+     horizontal axis, so every glyph came out upside-down while still
+     running left-to-right. Nobody caught it because at 128² the lettering
+     was an illegible smear either way — it only surfaced once the print got
+     sharp enough to read. The end-for-end problem is fixed where it belongs
+     instead, by putting the steel shutter on the end the print gives it
+     (makeDisc). */
+  return {tex, uv:{top:[0,0.25,1,1], plain:[0.05,0.02,0.95,0.22]}};
 }
 /* ---- proper 3D books ----
    Each book DESIGN gets its own cover canvas: a cloth/leather base shared

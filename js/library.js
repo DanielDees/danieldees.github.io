@@ -1156,21 +1156,29 @@ function makeDisc(){
   const g=new THREE.Group();
   g.add(new THREE.Mesh(F.geo,F.mats[Math.floor(Math.random()*F.mats.length)]));
   /* the sprung steel shutter, standing a hair proud of the shell, with the
-     window cut through it */
+     window cut through it.
+     −z, because that is the end the LABEL's printed shutter lands on with
+     the top face's v mapped upright (makeFloppyTexture) — steel on one end
+     and the printed slot on the other is the kind of mismatch nobody names
+     but everybody sees, and the old cure for it was flipping v, which
+     mirrored every letter on the label.
+     The placement is baked into the PARTS, not applied to the merged mesh:
+     mergeStatic ends in freezeStatic, so a .position.set afterwards writes a
+     matrix that is never recomposed and the steel silently renders at the
+     group's origin — which is where it has been sitting, dead centre on the
+     label, since the merge went in. */
+  const SX=-0.008, SY=0.001, SZ=-0.116;
   const sh=[];
-  sh.push(new THREE.Mesh(new THREE.BoxGeometry(0.185,0.026,0.045)));
-  for(const sx of[-0.072,0.072]){
-    const e=new THREE.Mesh(new THREE.BoxGeometry(0.042,0.027,0.052)); e.position.x=sx; sh.push(e);
+  for(const [w,hh,d,dx] of [[0.185,0.026,0.045,0],[0.042,0.027,0.052,-0.072],
+                            [0.042,0.027,0.052,0.072]]){
+    const m=new THREE.Mesh(new THREE.BoxGeometry(w,hh,d));
+    m.position.set(SX+dx,SY,SZ); sh.push(m);
   }
-  const shut=mergeStatic(sh,shutterMat);
-  /* +z, because that is the end the LABEL's printed shutter landed on once
-     the top face's v was flipped — steel on one end and the printed slot on
-     the other is the kind of mismatch nobody names but everybody sees */
-  shut.position.set(-0.008,0.001,0.116); g.add(shut);
+  g.add(mergeStatic(sh,shutterMat));
   for(const m of sh) m.geometry.dispose();
   /* the hub, underneath, at the other end */
   const hub=new THREE.Mesh(new THREE.CylinderGeometry(0.043,0.043,0.006,12),discHubMat);
-  hub.position.set(0,-0.012,-0.03); g.add(hub);
+  hub.position.set(0,-0.012,0.03); g.add(hub);
   g.scale.setScalar(1.35);                       // readable from a few metres out
   g.userData.animated=true;                      // idle-spins/hovers in updateProps
   return g;
@@ -1190,10 +1198,18 @@ export function makeVintagePC(scale=1){
   const pale=[], dark=[];
   const paleBox=(w,h,d,x,y,z)=>{ pale.push(woodBox(w,h,d,x,y,z,0.34)); };
   const darkBox=(w,h,d,x,y,z)=>{ dark.push(woodBox(w,h,d,x,y,z,0.34)); };
-  paleBox(0.62,0.16,0.5, 0,0.08,0);                       // the case
+  const CASE_W=0.62, CASE_H=0.16, CASE_D=0.5;
+  paleBox(CASE_W,CASE_H,CASE_D, 0,CASE_H/2,0);            // the case
   paleBox(0.66,0.022,0.54, 0,0.163,0);                    // its lid overhang
-  for(const sz of[-1,1])for(let i=0;i<7;i++)              // cooling slots down each flank
-    darkBox(0.026,0.006,0.24, -0.2+i*0.062,0.128,sz*0.251);
+  /* louvred cooling slots down each FLANK. They were spread along x (the
+     case's WIDTH) and extruded 0.24 along z at z=±0.251 — i.e. jammed
+     through the front and back faces, poking 0.12m out into the air over
+     the keyboard. Fourteen of them, and from the seat they read as a row
+     of brown tabs standing on a plate attached to nothing. A flank slot
+     runs front-to-back: long in z, thin in y, a hair proud of the x face
+     it is cut into (the drive bay's idiom, one axis over). */
+  for(const sx of[-1,1])for(let i=0;i<3;i++)
+    darkBox(0.012,0.009,0.30, sx*(CASE_W/2-0.002),0.052+i*0.032,0.02);
   /* the drive bay: a recessed face, the slot, the eject button */
   darkBox(0.30,0.075,0.014, -0.1,0.085,0.249);
   darkBox(0.245,0.012,0.02, -0.1,0.092,0.252);
@@ -1207,10 +1223,21 @@ export function makeVintagePC(scale=1){
       specular:0x000000, shininess:1}));
   badge.position.set(0.16,0.128,0.2515); g.add(badge);
   /* CRT: a real frustum, wide at the glass and pinched at the neck */
-  const crt=new THREE.Mesh(taperBox(0.56,0.46,0.52,0.72,"z"));
-  crt.position.set(0,0.16+0.25,-0.01); pale.push(crt);
+  const CRT_W=0.56, CRT_H=0.46, CRT_D=0.52, CRT_K=0.72, CRT_Y=CASE_H+0.25, CRT_Z=-0.01;
+  const crt=new THREE.Mesh(taperBox(CRT_W,CRT_H,CRT_D,CRT_K,"z"));
+  crt.position.set(0,CRT_Y,CRT_Z); pale.push(crt);
   paleBox(0.30,0.26,0.10, 0,0.40,-0.31);                  // the neck housing
-  for(let i=0;i<6;i++) darkBox(0.34,0.008,0.016, 0,0.615+i*0.014,-0.14);  // vents on the crown
+  /* Vents on the crown, and the crown SLOPES: taperBox pinches the −z end,
+     so the top face runs from (+D/2, +H/2) down to (−D/2, +H/2·k). Seat
+     each vent on that line at its own z. Stacking them in y instead — the
+     first pass climbed 0.615→0.685 at one fixed z — put all six of them in
+     the air ABOVE the monitor, up to 0.1m clear of the glass, and a 0.34m
+     plate floating over a CRT is the largest unattached thing in the room. */
+  const crownY=z=>CRT_Y+CRT_H/2*(CRT_K+(1-CRT_K)*((z-CRT_Z)/CRT_D+0.5));
+  for(let i=0;i<6;i++){
+    const vz=-0.21+i*0.04;
+    darkBox(0.34,0.008,0.016, 0,crownY(vz)+0.002,vz);
+  }
   /* The bezel and the glass stack in front of the CRT's own front face, at
      z 0.25. Getting this order wrong is not subtle: with the glass BEHIND
      that face, the only part of the screen that showed was the patch where
@@ -1517,10 +1544,29 @@ function buildHole(hc,carpetMat){
   texStone.wrapS=texStone.wrapT=THREE.RepeatWrapping;
   const g=new THREE.Group();
   g.visible=false;
-  /* shaft wall, seen from inside; slightly belled so the depths read wider */
-  const shaftTex=texStone.clone(); shaftTex.needsUpdate=true; shaftTex.repeat.set(6,4);
-  const shaftMat=new THREE.MeshPhongMaterial({map:shaftTex, specular:0x0a0c10, shininess:6,
-    emissive:0x04070a, side:THREE.BackSide});
+  /* shaft wall, seen from inside; slightly belled so the depths read wider.
+     THE NEST's rock, like the treads, and for the same reason: this is the
+     bore you walk down and step off the bottom of onto the cave's own
+     continuation of it. The local packed-earth canvas it used to wear was
+     128² at repeat(6,4) — 44 px/m around and 23 px/m down, the lowest
+     resolution of any surface in the game — and its "strata" were fourteen
+     full-width sine curves, which is precisely the pass texCaveRock's own
+     header was written to bury: at tiling scale they read as dark worms
+     crawling round the shaft. texCaveRock is 512², seam-safe (everything in
+     it is drawn wrapped), fractures instead of undulating, and carries the
+     grain that lets it double as its own bump map. repeat.x stays an
+     INTEGER — the cylinder's u wraps, and a fractional rate puts a hard
+     vertical cut down the full 22m of wall. */
+  const shaftTex=texCaveRock.clone(); shaftTex.needsUpdate=true; shaftTex.repeat.set(6,7.6);
+  /* No colour tint: texCaveRock is a dark, deliberately low-contrast map
+     (built to be read at arm's length under a fungus colony), and the only
+     things lighting 22m of shaft are four dim blue points. Multiplying it
+     down as well left a flat teal field with the detail buried. The bump is
+     carried hard (0.16) because raking blue light across the joints is the
+     only thing here that says how far away the far wall is. */
+  const shaftMat=new THREE.MeshPhongMaterial({map:shaftTex, bumpMap:shaftTex, bumpScale:0.16,
+    specular:0x14181e, shininess:10,
+    emissive:0x070c11, side:THREE.BackSide});
   const shaft=new THREE.Mesh(
     new THREE.CylinderGeometry(HOLE_R+0.05,HOLE_R+0.4,HOLE_DEPTH,40,1,true),shaftMat);
   shaft.position.set(hc.x,-HOLE_DEPTH/2,hc.z); g.add(shaft);
