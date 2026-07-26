@@ -57,7 +57,8 @@ export const CAVE={
   regionDim:[1,1,1,1],         // per-brood fungus dim targets (burns kill the local glow)
   corpse:null, entrance:null,
   approachC:null, bridgeC:[],  // the fissure doorstep + bridge cells (rockfall protects these)
-  streamCells:[], dripT:2.5, waterMat:null,
+  streamCells:[], dripT:2.5,
+  waterMat:null, causticMat:null,   // the stream's two drifting layers (surface / bed)
   shakeT:0,
 };
 
@@ -74,6 +75,16 @@ export const isBlockedSpider3=(cx,cy)=>{
 /* hatchlings: small enough for the squeezes, smart enough for the chasm */
 export const hatchBlocked=(cx,cy)=>{
   const t=codeAt(cx,cy); return t===1||t===5||t===7;
+};
+/* A BANK cell: standable ground with the water against it. Two passes have to
+   agree on exactly this set — genCave lifts the rock here clear of the water
+   line, and buildCave laps the water onto it — so both ask the same question
+   instead of each keeping its own list. */
+const isBankCell=(cx,cy)=>{
+  const t=codeAt(cx,cy);
+  if(t!==0&&t!==4) return false;
+  for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]) if(codeAt(cx+dx,cy+dy)===3) return true;
+  return false;
 };
 const playerBlocked=(cx,cy,crouched)=>{
   const t=codeAt(cx,cy);
@@ -492,16 +503,32 @@ function genCave(){
   for(let cy=0;cy<=CH;cy++){
     fH[cy]=[]; fW[cy]=[];
     for(let cx=0;cx<=CW;cx++){
-      let allRock=true, nearStream=false, nearFlat=false;
+      let allRock=true, nearStream=false, nearFlat=false, nearBank=false;
       for(const[ox,oy]of[[-1,-1],[0,-1],[-1,0],[0,0]]){
         const x=cx+ox, y=cy+oy;
         const t=(x<0||y<0||x>=CW||y>=CH)? 1 : grid3[y][x];
         if(t!==1) allRock=false;
         if(t===3) nearStream=true;
         if(t===5||t===6||t===2) nearFlat=true;
+        if(x>=0&&y>=0&&x<CW&&y<CH&&isBankCell(x,y)) nearBank=true;
       }
       if(allRock){ fH[cy][cx]=0; fW[cy][cx]=0; continue; }
       if(nearStream){ fH[cy][cx]=-0.25; fW[cy][cx]=0; continue; }
+      /* THE BANK RISES. Every corner around the water used to be locked at
+         the bed height, which meant there was no bank at all — the ground was
+         dead flat across the waterline and the surface had to begin somewhere
+         abrupt, so it read as a sheet with a hem cut on the 4m grid. One ring
+         out the rock lifts clear of the water line instead, and the shoreline
+         becomes what a shoreline is: the contour where the bank crosses the
+         water. Checked AFTER nearStream so the bed's own corners keep their
+         depth — and it KEEPS its detail weight, unlike every other damped
+         corner here. A bank with fW 0 is pure bilinear, so the contour across
+         it comes out smooth and very nearly axis-aligned: a shoreline with
+         90° jogs in it. The ripple is what makes it wander, and since fW
+         lerps to 0 at the bed corners the bed stays as flat as it needs to. */
+      if(nearBank){
+        fH[cy][cx]=0.30+(hash(cx*4.41+cy*8.13)-0.5)*0.16; fW[cy][cx]=0.55; continue;
+      }
       if(nearFlat){ fH[cy][cx]=0; fW[cy][cx]=0; continue; }
       let h=(hash(cx*9.13+cy*5.71)-0.5)*0.62+(hash(cx*2.11+cy*3.07)-0.5)*0.5;
       let w=1;
@@ -586,24 +613,125 @@ const HALO_TEX=makeCanvas(64,64,(g,w,h)=>{
   gr.addColorStop(1,"rgba(255,255,255,0)");
   g.fillStyle=gr; g.fillRect(0,0,w,h);
 });
-/* the stream's skin: caustic streaks that drift in updateCave */
-const texWater=makeCanvas(128,128,(g,w,h)=>{
-  g.fillStyle="#0a181e"; g.fillRect(0,0,w,h);
-  for(let i=0;i<10;i++){
-    g.strokeStyle=`rgba(${60+Math.random()*40|0},${130+Math.random()*50|0},${150+Math.random()*50|0},${0.10+Math.random()*0.14})`;
-    g.lineWidth=1+Math.random()*1.6;
-    g.beginPath();
-    const y0=Math.random()*h;
-    for(let x=0;x<=w;x+=6) g.lineTo(x, y0+Math.sin(x*0.08+i*3)*6+Math.sin(x*0.021+i)*9);
-    g.stroke();
+/* ================= the stream =================
+   The old water was one flat quad per cell at a fixed y, 0–1 UVs, and a 128²
+   skin of ten full-width sine curves. Three independent ways of reading as a
+   sheet of blue plastic laid down the tunnel:
+
+     · it HOVERED. The bed under a stream cell is locked flat at −0.25 and
+       the plane sat at −0.06, so the water ended against the rock in a hard
+       straight line 0.19m up in the air, on the 4m grid, with a visible
+       polygon edge. Water in a channel has a shoreline; this had a hem.
+     · every cell showed the same 0–1 tile, and the streaks don't wrap, so
+       there was a seam every 4m in both axes at 32 px/m.
+     · a dead-flat plane under a point light has exactly ONE broad highlight.
+       Water has a thousand small ones, and that is most of what tells you it
+       is a liquid rather than a painted floor.
+
+   What replaces it is a LENS whose surface comes down to meet the rock at
+   the channel edge, a separate caustic net lying on the bed beneath it, and
+   the two drifting at different rates and headings — the parallax between
+   them is where the depth comes from. */
+const WATER_Y=-0.06;
+/* draw fn wrapped, but only for shapes that actually straddle an edge */
+const wwrap=(x,y,r,w,h,fn)=>{
+  for(const ox of (x-r<0? [0,w] : x+r>w? [0,-w] : [0]))
+    for(const oy of (y-r<0? [0,h] : y+r>h? [0,-h] : [0])) fn(ox,oy);
+};
+/* the caustic net cast on the BED. A real caustic is a web of bright lines
+   enclosing darker cells, with the light piling up where the web crosses —
+   so that is what this is: wobbled loops at three scales whose crossings sum
+   into bright nodes. Nothing in it is a long smooth curve and everything is
+   drawn wrapped, which is the lesson texCaveRock's header spells out and the
+   sine-streak version never learned. Left DARK on average: this is water
+   over stone, and it should dim the bed everywhere the light isn't focused. */
+const texCaustic=makeCanvas(256,256,(g,w,h)=>{
+  g.fillStyle="#04141a"; g.fillRect(0,0,w,h);
+  for(const[n,rMin,rSpan,lw,a]of[[24,26,34,2.4,0.10],[44,12,20,1.7,0.13],[66,5,10,1.2,0.15]]){
+    for(let i=0;i<n;i++){
+      const x=Math.random()*w, y=Math.random()*h, r=rMin+Math.random()*rSpan;
+      const sq=0.55+Math.random()*0.8, rot=Math.random()*Math.PI;
+      const p1=Math.random()*7, p2=Math.random()*7;
+      const h1=0.20+Math.random()*0.30, h2=0.10+Math.random()*0.22;
+      wwrap(x,y,r*1.6,w,h,(ox,oy)=>{
+        g.strokeStyle=`rgba(150,224,236,${a})`; g.lineWidth=lw;
+        g.beginPath();
+        for(let k=0;k<=28;k++){
+          const th=k/28*Math.PI*2;
+          const rr=r*(1+h1*Math.sin(th*2+p1)+h2*Math.sin(th*3+p2));
+          const ex=Math.cos(th)*rr, ey=Math.sin(th)*rr*sq;
+          const px=x+ox+ex*Math.cos(rot)-ey*Math.sin(rot);
+          const py=y+oy+ex*Math.sin(rot)+ey*Math.cos(rot);
+          k?g.lineTo(px,py):g.moveTo(px,py);
+        }
+        g.stroke();
+      });
+    }
   }
-  for(let i=0;i<26;i++){
-    g.fillStyle=`rgba(150,220,235,${0.05+Math.random()*0.10})`;
-    g.fillRect(Math.random()*w,Math.random()*h,1.5+Math.random()*2.5,1);
+  for(let i=0;i<150;i++){            // the focused cusps themselves
+    const x=Math.random()*w, y=Math.random()*h, r=1.6+Math.random()*4.4;
+    const a=0.14+Math.random()*0.2;
+    wwrap(x,y,r,w,h,(ox,oy)=>{
+      const gr=g.createRadialGradient(x+ox,y+oy,0,x+ox,y+oy,r);
+      gr.addColorStop(0,`rgba(198,241,250,${a})`); gr.addColorStop(1,"rgba(198,241,250,0)");
+      g.fillStyle=gr; g.beginPath(); g.arc(x+ox,y+oy,r,0,7); g.fill();
+    });
+  }
+  for(let i=0;i<20;i++){             // silt shadow, so the bed is never one tone
+    const x=Math.random()*w, y=Math.random()*h, r=30+Math.random()*70;
+    const a=0.10+Math.random()*0.12;
+    wwrap(x,y,r,w,h,(ox,oy)=>{
+      const gr=g.createRadialGradient(x+ox,y+oy,r*0.1,x+ox,y+oy,r);
+      gr.addColorStop(0,`rgba(2,10,14,${a})`); gr.addColorStop(1,"rgba(2,10,14,0)");
+      g.fillStyle=gr; g.beginPath(); g.arc(x+ox,y+oy,r,0,7); g.fill();
+    });
   }
 });
-texWater.wrapS=texWater.wrapT=THREE.RepeatWrapping;
-markShared(HALO_TEX,texWater,wetMat,curtainMat,texDripstone);
+/* the surface skin: what the lantern glints off. Kept LIGHT and near-neutral
+   — the water's colour is carried by the per-vertex depth tint, not by this —
+   and every mark on it is SHORT and kinked. Long smooth streaks are exactly
+   what turned the old map into worms crawling downstream. */
+const texWaterSurf=makeCanvas(256,256,(g,w,h)=>{
+  g.fillStyle="#c2d2d5"; g.fillRect(0,0,w,h);
+  for(let i=0;i<24;i++){             // the slow shear of a current
+    const x=Math.random()*w, y=Math.random()*h, r=34+Math.random()*76;
+    const lite=Math.random()<0.5, a=0.06+Math.random()*0.09;
+    wwrap(x,y,r,w,h,(ox,oy)=>{
+      const gr=g.createRadialGradient(x+ox,y+oy,r*0.1,x+ox,y+oy,r);
+      gr.addColorStop(0,lite?`rgba(232,246,248,${a})`:`rgba(112,136,142,${a})`);
+      gr.addColorStop(1,"rgba(0,0,0,0)");
+      g.fillStyle=gr; g.beginPath(); g.arc(x+ox,y+oy,r,0,7); g.fill();
+    });
+  }
+  for(let fam=0;fam<3;fam++){        // ripple striations, a couple of headings
+    const base=Math.random()*Math.PI;
+    for(let i=0;i<130;i++){
+      const x=Math.random()*w, y=Math.random()*h;
+      const len=6+Math.random()*22, segs=2+Math.floor(Math.random()*2);
+      const lite=Math.random()<0.55, a=0.08+Math.random()*0.14;
+      let aa=base+(Math.random()-0.5)*0.6;
+      wwrap(x,y,len,w,h,(ox,oy)=>{
+        g.strokeStyle=lite?`rgba(240,251,252,${a})`:`rgba(96,120,128,${a})`;
+        g.lineWidth=0.8+Math.random()*1.5;
+        g.beginPath(); g.moveTo(x+ox,y+oy);
+        let cx=x+ox, cy=y+oy, an=aa;
+        for(let s=0;s<segs;s++){
+          an+=(Math.random()-0.5)*0.7;
+          cx+=Math.cos(an)*len/segs; cy+=Math.sin(an)*len/segs;
+          g.lineTo(cx,cy);
+        }
+        g.stroke();
+      });
+    }
+  }
+  for(let i=0;i<1100;i++){           // glitter: the specular chips
+    const v=Math.random()<0.6;
+    g.fillStyle=v?`rgba(255,255,255,${0.10+Math.random()*0.18})`
+                 :`rgba(84,106,114,${0.08+Math.random()*0.14})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*2,1+Math.random()*2);
+  }
+});
+markShared(HALO_TEX,texCaustic,texWaterSurf,wetMat,curtainMat,texDripstone);
 const silkFloorMat=new THREE.MeshPhongMaterial({color:0xb8bcc0, specular:0x222222, shininess:8,
   transparent:true, opacity:0.34, depthWrite:false});
 const cocoonMat=new THREE.MeshPhongMaterial({map:texCocoon, bumpMap:texCocoon, bumpScale:0.02,
@@ -947,7 +1075,7 @@ function strandMesh(ax,ay,az,bx,by,bz,wdt){
 
 /* one quad accumulator (positions/uv/normals) merged into a single mesh */
 class QuadAcc{
-  constructor(){this.pos=[];this.nor=[];this.uv=[];this.idx=[];this.vc=0;}
+  constructor(){this.pos=[];this.nor=[];this.uv=[];this.col=[];this.idx=[];this.vc=0;}
   quad(p1,p2,p3,p4,n,uvs){
     for(const p of[p1,p2,p3,p4]) this.pos.push(p[0],p[1],p[2]);
     for(let i=0;i<4;i++) this.nor.push(n[0],n[1],n[2]);
@@ -962,6 +1090,14 @@ class QuadAcc{
     for(const u of uvs) this.uv.push(u[0],u[1]);
     this.idx.push(this.vc,this.vc+1,this.vc+2);
     this.vc+=3;
+  }
+  /* triN plus a per-vertex colour — the stream's depth tint, the one thing
+     in the level that needs to vary smoothly across a surface without a
+     texture to carry it. The colour attribute is attached only if something
+     actually pushed one, so every other accumulator is untouched. */
+  triNC(p1,p2,p3,n1,n2,n3,uvs,cols){
+    this.triN(p1,p2,p3,n1,n2,n3,uvs);
+    for(const c of cols) this.col.push(c[0],c[1],c[2]);
   }
   /* one triangle with its own computed face normal — the vault's facets */
   tri(p1,p2,p3,uvs){
@@ -980,6 +1116,7 @@ class QuadAcc{
     g.setAttribute("position",new THREE.Float32BufferAttribute(this.pos,3));
     g.setAttribute("normal",new THREE.Float32BufferAttribute(this.nor,3));
     g.setAttribute("uv",new THREE.Float32BufferAttribute(this.uv,2));
+    if(this.col.length) g.setAttribute("color",new THREE.Float32BufferAttribute(this.col,3));
     g.setIndex(this.idx);
     return new THREE.Mesh(g,mat);
   }
@@ -1379,23 +1516,94 @@ export function buildCave(){
   const ceil=cAcc.mesh(rockMat); scene.add(ceil);
   const pit=pAcc.mesh(pitMat); scene.add(pit);
   const walls=wAcc.mesh(rockMat); scene.add(walls);
-  /* ---- the stream's water ---- */
+  /* ---- the stream's water: a lens, not a sheet (see texCaustic above) ---- */
   {
-    const wq=new QuadAcc();
+    const S=6;                                  // sub-quads per cell each way
+    /* The surface is simply the water LINE, rippling — there is no shore case
+       in it at all. Both layers are emitted across the whole footprint and
+       the DEPTH BUFFER cuts them, each by its own arrangement with the rock:
+       the surface passes under the rising bank, and the bed layer is clamped
+       to stay below the surface so past the shoreline it sinks beneath the
+       floor mesh. Either way the boundary is the exact contour where water
+       meets rock, to the pixel. Every version of this that tried to decide
+       per sub-quad which ones to emit put 0.67m stair-steps along the shore. */
+    const ripple=(xx,zz)=>0.016*Math.sin(xx*1.9+zz*0.7)
+                         +0.011*Math.sin(xx*0.8-zz*2.3+1.7)
+                         +0.006*Math.sin(xx*4.3+zz*3.1+0.6);
+    /* The surface is the water line and NOTHING else — it is not clamped up
+       onto the rock past the shoreline. Where the bank rises through it the
+       plane simply passes underneath, and the floor mesh (opaque, drawn
+       first, writing depth) clips it exactly along the intersection contour.
+       That is pixel-exact and free, where lifting the vertices onto the rock
+       instead left a thin glossy film lying on the bank — invisible in colour
+       but flaring a huge pale specular next to any fungus colony, in
+       hard-edged patches the shape of the sub-quad grid. */
+    const wy=(xx,zz)=>WATER_Y+ripple(xx,zz);
+    const depthAt=(xx,zz)=>wy(xx,zz)-floorYAt(xx,zz);
+    /* normals by finite difference of the surface — the ripple's own gradient,
+       which is what breaks the one broad highlight a flat plane gives into
+       the many small glints that read as water */
+    const wn=(xx,zz)=>{ const d=0.07;
+      const gx=(wy(xx+d,zz)-wy(xx-d,zz))/(2*d), gz=(wy(xx,zz+d)-wy(xx,zz-d))/(2*d);
+      const l=Math.hypot(gx,1,gz)||1; return [-gx/l,1/l,-gz/l]; };
+    /* the depth tint, carried on the vertices. There is no alpha to fade in
+       r128's Phong, so the fade is done in COLOUR: at zero depth the water
+       is the wet rock's own tone, and the shoreline disappears instead of
+       ending in a bright cold rim against warm stone. */
+    const DEEP=[0.21,0.35,0.42], SHORE=[0.46,0.40,0.34];
+    const wc=(xx,zz)=>{ const k=clamp(depthAt(xx,zz)/0.15,0,1);
+      return [lerp(SHORE[0],DEEP[0],k),lerp(SHORE[1],DEEP[1],k),lerp(SHORE[2],DEEP[2],k)]; };
+    const sAcc=new QuadAcc(), kAcc=new QuadAcc();
+    const UVs=3, UVc=4.5;                       // different scales: they must not beat
     for(let y=0;y<CH;y++)for(let x=0;x<CW;x++){
-      if(grid3[y][x]!==3) continue;
+      /* the water's footprint: the channel, plus the banks it laps onto */
+      if(grid3[y][x]!==3 && !isBankCell(x,y)) continue;
       const p=cellToWorld3(x,y);
-      wq.quad([p.x-E,-0.06,p.z+E],[p.x+E,-0.06,p.z+E],[p.x+E,-0.06,p.z-E],[p.x-E,-0.06,p.z-E],
-        [0,1,0],[[0,1],[1,1],[1,0],[0,0]]);
+      for(let j=0;j<S;j++)for(let i=0;i<S;i++){
+        const x0=p.x-E+i*CELL/S, x1=x0+CELL/S;
+        const z0=p.z-E+j*CELL/S, z1=z0+CELL/S;
+        const sq=(xx,zz)=>[xx,wy(xx,zz),zz];
+        const su=(xx,zz)=>[xx/UVs,zz/UVs];
+        sAcc.triNC(sq(x0,z1),sq(x1,z1),sq(x1,z0), wn(x0,z1),wn(x1,z1),wn(x1,z0),
+          [su(x0,z1),su(x1,z1),su(x1,z0)], [wc(x0,z1),wc(x1,z1),wc(x1,z0)]);
+        sAcc.triNC(sq(x0,z1),sq(x1,z0),sq(x0,z0), wn(x0,z1),wn(x1,z0),wn(x0,z0),
+          [su(x0,z1),su(x1,z0),su(x0,z0)], [wc(x0,z1),wc(x1,z0),wc(x0,z0)]);
+        /* the caustic net rides the BED, a hair above the floor mesh — but
+           never above the SURFACE, and that one clamp is what cuts it at the
+           shore: past the waterline `wy` is the lower of the two, so the layer
+           drops beneath the floor and the floor occludes it. Gating it on
+           whole submerged sub-quads instead is what put the steps in. */
+        const bq=(xx,zz)=>[xx,Math.min(floorYAt(xx,zz)+0.012,wy(xx,zz)-0.004),zz];
+        const bu=(xx,zz)=>[xx/UVc,zz/UVc];
+        kAcc.tri(bq(x0,z1),bq(x1,z1),bq(x1,z0),[bu(x0,z1),bu(x1,z1),bu(x1,z0)]);
+        kAcc.tri(bq(x0,z1),bq(x1,z0),bq(x0,z0),[bu(x0,z1),bu(x1,z0),bu(x0,z0)]);
+      }
     }
-    /* the skin drifts: caustic streaks on a map whose offset updateCave
-       slides every frame — the stream visibly moves */
-    const waterMat=new THREE.MeshPhongMaterial({map:texWater, color:0x4e666e,
-      specular:0x4a6a76, shininess:110, transparent:true, opacity:0.82,
-      emissive:0x040f14});
-    CAVE.waterMat=waterMat;
-    const water=wq.mesh(waterMat);
-    water.userData.animated=true;                        // its matrix never moves, but keep it out of habit
+    /* Lit, not additive: caustics are focused LIGHT, so they belong on a
+       material that goes dark when nothing is shining on the water. An
+       emissive net would have lit the stream up from across the cave. */
+    const causticMat=new THREE.MeshPhongMaterial({map:texCaustic, color:0x8aafb6,
+      specular:0x10202a, shininess:18, transparent:true, opacity:0.86,
+      depthWrite:false});
+    /* the body tint knocked back to 0x8a949a on top of the vertex depth
+       colour: at full brightness the two layers together read as a lit
+       swimming pool, and this is meant to be the flat black water. Dimming
+       the CAUSTICS instead just put the flat sheet back — the depth has to
+       come from light in dark water, not from a dim bed. */
+    const waterMat=new THREE.MeshPhongMaterial({map:texWaterSurf, vertexColors:true,
+      color:0x8a949a, specular:0x9fd0dc, shininess:150,
+      transparent:true, opacity:0.62, emissive:0x03090c,
+      /* biased toward the camera: along the shoreline the plane runs nearly
+         tangent to the bank, and without this the two z-fight into a band of
+         shimmer instead of the water simply winning up to its own edge */
+      polygonOffset:true, polygonOffsetFactor:-1, polygonOffsetUnits:-1});
+    CAVE.waterMat=waterMat; CAVE.causticMat=causticMat;
+    const bed=kAcc.mesh(causticMat);
+    bed.renderOrder=-1;                         // under the surface, which keeps depthWrite
+    bed.userData.animated=true;
+    scene.add(bed);
+    const water=sAcc.mesh(waterMat);
+    water.userData.animated=true;               // its matrix never moves; its maps do
     scene.add(water);
   }
   /* ---- the chasm breathes a cold haze with no bottom in it ---- */
@@ -2683,13 +2891,18 @@ export function updateCave(dt){
     for(const rec of fis.lights) rec.l.intensity=rec.I*k*(0.92+0.08*Math.sin(tN*0.6));
     for(const hz of fis.hazes) hz.mat.opacity=hz.baseOp*k*(1+0.08*Math.sin(tN*0.5));
   }
-  /* water: a slow living sheen, and the caustic skin drifts downstream */
+  /* water: the surface slides one way, the caustic net on the bed slides
+     slower and off-heading. Neither of them alone reads as depth — the
+     PARALLAX between the two is the whole effect. */
   if(CAVE.waterMat){
-    CAVE.waterMat.opacity=0.80+0.05*Math.sin(tN*0.7);
-    if(CAVE.waterMat.map){
-      CAVE.waterMat.map.offset.x=(tN*0.022)%1;
-      CAVE.waterMat.map.offset.y=(tN*0.013)%1;
-    }
+    CAVE.waterMat.opacity=0.60+0.045*Math.sin(tN*0.7);
+    const m=CAVE.waterMat.map;
+    if(m){ m.offset.x=(tN*0.030)%1; m.offset.y=(tN*0.019)%1; }
+  }
+  if(CAVE.causticMat){
+    CAVE.causticMat.opacity=0.83+0.05*Math.sin(tN*0.51+1.2);
+    const m=CAVE.causticMat.map;
+    if(m){ m.offset.x=(tN*0.013)%1; m.offset.y=(tN*0.0072)%1; }
   }
   /* the stream's voice, by distance */
   if(AU.cave&&AU.cave.streamGain&&AU.ctx){
