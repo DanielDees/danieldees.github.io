@@ -1058,7 +1058,12 @@ export function sfxIgnite(){
   const g2=C.createGain();env(g2,t,0.15,0.3,1.2);
   o.connect(g2);g2.connect(AU.sfx);o.start(t);o.stop(t+1.5);
 }
-/* a clutch fire: looping crackle; .set(0..1) follows the flames down */
+/* a clutch fire: looping crackle, PLACED IN THE WORLD. It used to connect
+   straight to the sfx bus with no panner and no falloff, so a clutch burning
+   on the far side of the cave was exactly as loud as one you were standing
+   in — and since the update loop halts while you're dead, that flat drone
+   sat under the death screen and followed you through the respawn.
+   .set(k, dist, pan) takes the flame's remaining fuel AND where it is. */
 export function startClutchFire(){
   if(!AU.ctx) return {set(){},stop(){}};
   const C=AU.ctx, t=C.currentTime;
@@ -1072,10 +1077,23 @@ export function startClutchFire(){
   const bp=C.createBiquadFilter();bp.type="bandpass";bp.frequency.value=1700;bp.Q.value=0.6;
   const g=C.createGain(); g.gain.setValueAtTime(0.0001,t);
   g.gain.linearRampToValueAtTime(0.11,t+0.8);
-  src.connect(bp);bp.connect(g);g.connect(AU.sfx);src.start(t);
+  const p=C.createStereoPanner? C.createStereoPanner():null;
+  src.connect(bp);bp.connect(g);
+  if(p){ g.connect(p); p.connect(AU.sfx); } else g.connect(AU.sfx);
+  src.start(t);
+  let dead=false;
   return {
-    set(k){ g.gain.setTargetAtTime(0.11*k, C.currentTime, 0.5); },
-    stop(){ const tt=C.currentTime; g.gain.setTargetAtTime(0.0001,tt,0.4); src.stop(tt+2); },
+    set(k,dist=0,pan=0){
+      if(dead) return;
+      const tt=C.currentTime;
+      /* audible across a chamber, gone by the next one */
+      const near=Math.pow(Math.max(0,1-dist/26),1.5);
+      g.gain.setTargetAtTime(0.11*k*near, tt, 0.5);
+      if(p) p.pan.setTargetAtTime(pan, tt, 0.3);
+    },
+    hush(){ if(!dead) g.gain.setTargetAtTime(0.0001, C.currentTime, 0.25); },
+    stop(){ if(dead) return; dead=true;
+      const tt=C.currentTime; g.gain.setTargetAtTime(0.0001,tt,0.4); src.stop(tt+2); },
   };
 }
 /* the cave answering a burn: boulders, then the long settling */

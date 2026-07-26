@@ -18,16 +18,46 @@ const paleMat=new THREE.MeshPhongMaterial({color:0xcfc4b0, specular:0x3a362c, sh
 const paleDark=new THREE.MeshPhongMaterial({color:0x9a9080, specular:0x2a261e, shininess:14});
 markShared(paleMat,paleDark);
 
+const BODY_Y=0.19;
+/* A spider leg is a KNEE, not a stick: the femur rises out of the hip, the
+   tibia comes back down and the foot ends ON THE GROUND. The old leg was a
+   single straight cylinder rotated +0.55 about z — positive z is UP, so
+   every leg pointed at the vault and the walk cycle only ever raised them
+   further. The whole brood was swimming on its back.
+   Built as ONE geometry (a cylinder bent along a two-segment polyline) so a
+   leg is still a single draw: 10 per hatchling, same as before. */
+const FEM_L=0.20, FEM_A=0.50;                 // femur: length, radians ABOVE horizontal
+const KNEE_H=Math.cos(FEM_A)*FEM_L, KNEE_V=Math.sin(FEM_A)*FEM_L;
+const TIB_L=0.32, TIB_A=-Math.asin(Math.min(1,(BODY_Y+KNEE_V-0.017)/TIB_L));
+function hatchLegGeo(){
+  const L=FEM_L+TIB_L;
+  const g=new THREE.CylinderGeometry(0.0125,0.005,L,5,9);
+  const pos=g.attributes.position;
+  const d1=[Math.cos(FEM_A),Math.sin(FEM_A)], d2=[Math.cos(TIB_A),Math.sin(TIB_A)];
+  for(let i=0;i<pos.count;i++){
+    const x=pos.getX(i), y=pos.getY(i)+L/2, z=pos.getZ(i);
+    const s=clamp(y,0,L);
+    /* walk the polyline: out along the femur, then down the tibia */
+    let h,v,d;
+    if(s<=FEM_L){ h=d1[0]*s; v=d1[1]*s; d=d1; }
+    else { const k=s-FEM_L; h=KNEE_H+d2[0]*k; v=KNEE_V+d2[1]*k; d=d2; }
+    /* the radial offset rides the segment's own normal, so the tube keeps
+       its section through the bend instead of pinching at the knee */
+    pos.setXYZ(i, h+x*d[1], v-x*d[0], z);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+/* module-level and reused by every hatchling of every visit — clearLevelScene
+   disposes anything it isn't told to keep */
+const LEG_GEO=markShared(hatchLegGeo());
 function makeHatchMesh(){
   const g=new THREE.Group();
-  const BODY_Y=0.19;
   const abd=new THREE.Mesh(new THREE.SphereGeometry(0.13,10,8),paleMat);
   abd.scale.set(1,0.9,1.3); abd.position.set(0,BODY_Y+0.02,-0.13); g.add(abd);
   const ceph=new THREE.Mesh(new THREE.SphereGeometry(0.09,9,7),paleMat);
   ceph.scale.set(1,0.8,1); ceph.position.set(0,BODY_Y,0.08); g.add(ceph);
   /* no eyes. Nothing where eyes should be. */
-  const legGeo=new THREE.CylinderGeometry(0.012,0.006,0.4,5);
-  legGeo.rotateZ(-Math.PI/2); legGeo.translate(0.2,0,0);
   const legs=[];
   const PHI=[0.9,0.35,-0.25,-0.8];
   for(let side=0;side<2;side++)for(let i=0;i<4;i++){
@@ -35,8 +65,9 @@ function makeHatchMesh(){
     const hip=new THREE.Group();
     hip.position.set((side===0?1:-1)*0.07, BODY_Y, 0.09-i*0.065);
     hip.rotation.y=-phi;
-    const fem=new THREE.Group(); fem.rotation.z=0.55; hip.add(fem);
-    fem.add(new THREE.Mesh(legGeo,paleDark));
+    /* the pose lives in the geometry now; fem only lifts the foot clear */
+    const fem=new THREE.Group(); hip.add(fem);
+    fem.add(new THREE.Mesh(LEG_GEO,paleDark));
     g.add(hip);
     legs.push({hip,fem,basePhi:phi,phase:(i%2===0)===(side===0)?0:Math.PI});
   }
@@ -67,16 +98,19 @@ export function makeHatchlings(){
       wanderT:0, tgt:null, anim:Math.random()*7,
       faceAng:Math.random()*7, latchCD:0, stunT:0,
       burnT:0, shake:0, prevYaw:STATE.yaw,
-      hissCD:0, stepAcc:0, screech:null,
+      hissCD:0, stepAcc:0, stepNext:rand(1.3,2.4), tapCD:0, screech:null,
     });
   }
 }
 export const anyLatched=()=>HATCH.some(h=>h.state==="latched");
 
-/* try to move; slide along blocked cells */
+/* try to move; slide along blocked cells. Returns the distance ACTUALLY
+   covered — a hatchling wedged against rock has not taken a step, and the
+   skitter scheduler must not think it has. */
 function hatchMove(h,dx,dz,dt,spd){
   const l=Math.hypot(dx,dz)||1;
-  const nx=h.pos.x+dx/l*spd*dt, nz=h.pos.z+dz/l*spd*dt;
+  const x0=h.pos.x, z0=h.pos.z;
+  const nx=x0+dx/l*spd*dt, nz=z0+dz/l*spd*dt;
   const c=worldToCell3(nx,nz);
   if(!hatchBlocked(c.cx,c.cy)){ h.pos.x=nx; h.pos.z=nz; }
   else {
@@ -85,12 +119,22 @@ function hatchMove(h,dx,dz,dt,spd){
     else if(!hatchBlocked(cz.cx,cz.cy)) h.pos.z=nz;
   }
   if(Math.abs(dx)>1e-4||Math.abs(dz)>1e-4) h.faceAng=Math.atan2(dx,dz);
+  return Math.hypot(h.pos.x-x0, h.pos.z-z0);
 }
+/* one shared gate across the whole brood: six of them tapping independently
+   is what turned the skitter bed into a bag of beads */
+let tapGate=0;
 
 export function updateHatchlings(dt){
   if(STATE.level!==2||STATE.dead||STATE.won) return;
   const frenzy=STATE.frenzyT>0;
   const px=STATE.pos.x, pz=STATE.pos.z;
+  tapGate-=dt;
+  /* A LIT LANTERN IS INVISIBILITY. They are eyeless and photophobic: the
+     glow isn't something they see you by, it's something they get away
+     from. So while it burns they cannot acquire you at all, and anything
+     already coming breaks off and takes itself somewhere else. */
+  const lampOn=STATE.lanternOn;
   /* the player's noise, as the small ones hear it */
   let hearR=0;
   if(STATE.cranking) hearR=20;
@@ -99,37 +143,69 @@ export function updateHatchlings(dt){
     hearR = STATE.crouch? 2.5 : (STATE.sprinting? 14:9)*gain;
   }
   if(frenzy) hearR*=2;
+  if(lampOn) hearR=0;
   for(const h of HATCH){
     h.latchCD=Math.max(0,h.latchCD-dt);
     h.hissCD-=dt;
     const dx=px-h.pos.x, dz=pz-h.pos.z, d=Math.hypot(dx,dz);
     /* the beam is the sun and they hate it */
     const beamed = h.state!=="latched" && inBeam(h.pos.x,floorYAt(h.pos.x,h.pos.z)+0.25,h.pos.z);
+    /* lit up while hunting: break off now, and don't re-latch immediately */
+    if(h.state==="approach"&&(beamed||lampOn)){
+      h.state="flee";
+      h.latchCD=Math.max(h.latchCD,1.5);
+    }
     /* fire is a wall */
     let fireDx=0, fireDz=0, inFire=false;
     for(const f of CAVE.fires){
       const fdx=h.pos.x-f.x, fdz=h.pos.z-f.z, fd=Math.hypot(fdx,fdz);
       if(fd<6.5){ inFire=true; fireDx+=fdx/(fd||1); fireDz+=fdz/(fd||1); }
     }
-    let movedSpd=0;
-    switch(h.state){
+    let movedSpd=0, moved=0;
+    /* THE GLOW IS A PLACE THEY WILL NOT BE. While it burns, anything inside
+       ~11.5m is walking out of it — recoiling hard inside the beam radius,
+       drifting out beyond it — and the state machine is skipped entirely for
+       that frame. That last part is the fix: the old code ran the pursuit
+       move AND the shove, which summed to a 0.9 m/s creep away and left them
+       orbiting the edge of the light with aggro still live. */
+    const shy = lampOn && h.state!=="latched" && h.state!=="stun" && d<11.5;
+    if(shy){
+      const spd = beamed? 4.6:2.6;
+      moved=hatchMove(h,-dx,-dz,dt,spd); movedSpd=spd;
+      h.state="flee";
+      if(beamed&&h.hissCD<=0){ h.hissCD=rand(0.8,1.6);
+        sfxHatchHiss(clamp(1-d/12,0.1,1), panTo(h.pos.x,h.pos.z)); }
+    }
+    else switch(h.state){
       case "lurk":{
         h.wanderT-=dt;
         if(h.wanderT<=0){
           h.wanderT=rand(1.5,4.5);
           const a=Math.random()*Math.PI*2, rr=rand(0,8.5);   // wider chambers, wider rounds
-          h.tgt={x:h.home.x+Math.cos(a)*rr, z:h.home.z+Math.sin(a)*rr};
+          /* rounds are anchored on the nest — except while the lamp burns,
+             when the nest itself may be sitting inside the glow. Anchoring
+             there anyway walks it straight back into the light and it ends
+             up pacing the keep-out radius, which is the standoff we just
+             took out of the pursuit. Wander from where it is instead, and
+             never pick a spot in the lit half. */
+          const ax=lampOn? h.pos.x:h.home.x, az=lampOn? h.pos.z:h.home.z;
+          let tx=ax+Math.cos(a)*rr, tz=az+Math.sin(a)*rr;
+          if(lampOn&&Math.hypot(tx-px,tz-pz)<12.5){
+            const b=Math.atan2(h.pos.z-pz,h.pos.x-px);
+            tx=px+Math.cos(b)*rand(13,17); tz=pz+Math.sin(b)*rand(13,17);
+          }
+          h.tgt={x:tx, z:tz};
         }
         if(h.tgt){
           const tdx=h.tgt.x-h.pos.x, tdz=h.tgt.z-h.pos.z;
-          if(Math.hypot(tdx,tdz)>0.4){ hatchMove(h,tdx,tdz,dt,1.4); movedSpd=1.4; }
+          if(Math.hypot(tdx,tdz)>0.4){ moved=hatchMove(h,tdx,tdz,dt,1.4); movedSpd=1.4; }
         }
         if(d<hearR&&h.latchCD<=0){ h.state="approach"; }
         break;
       }
       case "approach":{
         const spd=(frenzy?4.6:3.3);
-        hatchMove(h,dx,dz,dt,spd); movedSpd=spd;
+        moved=hatchMove(h,dx,dz,dt,spd); movedSpd=spd;
         /* lost you: too quiet, too far, or too far from home */
         const leash=frenzy? 999 : 30;
         if((d>hearR+6&&d>7) || Math.hypot(h.pos.x-h.home.x,h.pos.z-h.home.z)>leash){
@@ -171,20 +247,21 @@ export function updateHatchlings(dt){
         break;
       case "flee":{
         const hdx=h.home.x-h.pos.x, hdz=h.home.z-h.pos.z, hd=Math.hypot(hdx,hdz);
-        if(hd<2.5) h.state="lurk";
-        else { hatchMove(h,hdx,hdz,dt,3.6); movedSpd=3.6; }
-        if(frenzy&&d<hearR&&h.latchCD<=0&&hd<8) h.state="approach";
+        /* clear of the light but the lamp is still burning: DON'T run the
+           beeline home — half the nests sit inside the glow, and a
+           hatchling sprinting back into it just bounced off the radius
+           again. Go idle instead and wander; the shy rule keeps it out. */
+        if(lampOn){ h.state="lurk"; h.wanderT=rand(0.6,1.8); h.tgt=null; }
+        else if(hd<2.5) h.state="lurk";
+        else { moved=hatchMove(h,hdx,hdz,dt,3.6); movedSpd=3.6; }
+        if(!lampOn&&frenzy&&d<hearR&&h.latchCD<=0&&hd<8) h.state="approach";
         break;
       }
     }
-    /* repulsion overrides (never while latched) */
-    if(h.state!=="latched"){
-      if(beamed){
-        hatchMove(h,-dx,-dz,dt,4.2); movedSpd=Math.max(movedSpd,4.2);
-        if(h.hissCD<=0){ h.hissCD=rand(0.8,1.6);
-          sfxHatchHiss(clamp(1-d/12,0.1,1), panTo(h.pos.x,h.pos.z)); }
-      }
-      if(inFire){ hatchMove(h,fireDx,fireDz,dt,3.8); movedSpd=Math.max(movedSpd,3.8); }
+    /* fire is still a wall even in the dark (never while latched) */
+    if(h.state!=="latched"&&inFire){
+      moved=Math.max(moved,hatchMove(h,fireDx,fireDz,dt,3.8));
+      movedSpd=Math.max(movedSpd,3.8);
     }
     /* ---- render ---- */
     const u=h.mesh.userData;
@@ -192,7 +269,10 @@ export function updateHatchlings(dt){
     for(const leg of u.legs){
       const sw=Math.sin(h.anim+leg.phase);
       leg.hip.rotation.y=-leg.basePhi+sw*0.4*clamp(movedSpd/2,0,1);
-      leg.fem.rotation.z=0.55+Math.max(0,Math.sin(h.anim+leg.phase+1.2))*0.4*clamp(movedSpd/2,0.15,1);
+      /* the stance pose is baked into the leg; this only picks the foot up
+         off the rock on the swing half of the cycle (+z is UP, so it can
+         only ever lift — a resting leg stays planted) */
+      leg.fem.rotation.z=Math.max(0,Math.sin(h.anim+leg.phase+1.2))*0.30*clamp(movedSpd/2,0.06,1);
     }
     if(h.state==="latched"){
       /* clinging at the edge of your vision */
@@ -208,13 +288,30 @@ export function updateHatchlings(dt){
       h.mesh.position.set(h.pos.x, floorYAt(h.pos.x,h.pos.z)+bob, h.pos.z);
       h.mesh.rotation.set(h.state==="stun"? 2.8:0, h.faceAng, 0);
     }
-    /* skitters: at distance, indistinguishable from dripwater */
-    h.stepAcc+=movedSpd*dt;
-    if(h.stepAcc>0.5&&d<24){
-      h.stepAcc=0;
-      sfxHatchTap(clamp(1-d/22,0,1)*0.5, panTo(h.pos.x,h.pos.z));
+    /* Skitters: at distance, indistinguishable from dripwater — as long as
+       they stay SPARSE. This used to accumulate intended speed, so a
+       hatchling grinding against rock still "stepped", and it fired every
+       0.15s while approaching; six of them at once was a bag of beads
+       being shaken. Now it accumulates ground actually covered, over a
+       randomized stride, behind a per-hatchling cooldown and one shared
+       gate for the whole brood. */
+    h.stepAcc+=moved;
+    h.tapCD-=dt;
+    if(h.stepAcc>=h.stepNext&&h.tapCD<=0&&tapGate<=0&&d<15){
+      h.stepAcc=0; h.stepNext=rand(1.3,2.4); tapGate=0.22;
+      /* the cooldown scales with range, so a hatchling three metres off in
+         the dark still ticks often enough to be a warning while the ones
+         across the chamber stay occasional. Flat and frequent is what made
+         six of them sound like one bag of beads. */
+      h.tapCD=rand(0.35,0.8)*(1+d*0.28);
+      sfxHatchTap(Math.pow(clamp(1-d/15,0,1),1.6)*0.5, panTo(h.pos.x,h.pos.z));
     }
   }
+}
+/* death freezes the update loop, so any loop a hatchling is holding open
+   would drone on under the death screen with nothing left to close it */
+export function silenceHatchlings(){
+  for(const h of HATCH) if(h.screech){ h.screech.stop(); h.screech=null; }
 }
 export function resetHatchlings(){
   for(const h of HATCH){

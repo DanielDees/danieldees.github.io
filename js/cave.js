@@ -25,7 +25,7 @@ import { makeCanvas, texCaveRock, texCaveFloor, texDripstone,
 import { addInteractable } from "./props.js";
 import { die } from "./lifecycle.js";
 import { renderObjectives, toast } from "./ui.js";
-import { AU, sfxRockfall, sfxIgnite, startClutchFire } from "./audio.js";
+import { AU, sfxRockfall, sfxIgnite, startClutchFire, panTo } from "./audio.js";
 
 export const CW=47, CH=47, CAVE_H_MAX=20;
 export const CAVE_SPAN=CW*CELL;
@@ -858,6 +858,21 @@ function webHammockGeo(wdt,dep,sag){
   g.computeVertexNormals();
   return g;
 }
+/* THE SLINGING RULE, and every slung sheet in the level obeys it.
+   A hammock is pinned only at its four corners, so what the eye reads as
+   "the ceiling" is the plane of those corners MINUS the belly's sag — and
+   the belly is the part you actually see from underneath. Sizing the sag
+   off the sheet's own footprint (up to 0.9m) and the hang off the local
+   vault height (the brood canopy hung at up to 0.4×a 13m dome — FIVE
+   METRES down) put big flat sheets floating in open air with four hair-thin
+   guys nobody reads as load-bearing. The stalactites were never involved.
+   Given the vault height, return the corner height and a sag such that the
+   LOWEST point of the sheet is never more than ~1.05m under the rock. */
+function slung(cv,wdt,dep){
+  const gap=rand(0.12,0.45);
+  const sag=Math.min(Math.min(wdt,dep)*rand(0.18,0.32), 1.05-gap);
+  return {hy:cv-gap, sag:Math.max(0.08,sag)};
+}
 /* a funnel-weaver's retreat: ragged sheet rim sloping into a throat that
    dives toward the wall/floor junction. Rim up; throat at y=0. */
 function funnelWebGeo(r,dep){
@@ -1140,7 +1155,7 @@ function makeClutch(){
 
   /* the eggs: piled toward the middle rather than scattered flat, sizes
      graded so the pile has a crown, and each one now carries the sac map */
-  const mats=[];
+  const mats=[], eggs=[];
   const n=15+Math.floor(Math.random()*7);
   for(let i=0;i<n;i++){
     const a=Math.random()*Math.PI*2;
@@ -1151,7 +1166,8 @@ function makeClutch(){
     egg.scale.set(1,1.28,1);
     egg.rotation.set(rand(-0.5,0.5),Math.random()*6,rand(-0.5,0.5));
     egg.position.set(Math.cos(a)*rr, 0.40+r*0.9+(1-rr)*0.20, Math.sin(a)*rr);
-    g.add(egg);
+    egg.userData.y0=egg.position.y;
+    g.add(egg); eggs.push(egg);
   }
   /* silk: guys staking it down, plus strands lashed OVER the pile */
   for(let i=0;i<5;i++){
@@ -1198,6 +1214,7 @@ function makeClutch(){
   }
   g.userData.haloMat=haloMat;
   g.userData.eggMats=mats;
+  g.userData.eggs=eggs;
   g.userData.flames=flames;
   return g;
 }
@@ -1230,6 +1247,12 @@ export function buildCave(){
       CAVE.corpseP={x:px, z:pz};
       CAVE.obstacles.push({x:px, z:pz, r:1.0});
     }
+    /* the clutches, for the same reason. Their keep-out used to be pushed
+       with the clutch itself — the last build step — so the dripstone pass
+       had already run and a full floor-to-vault column could be, and was,
+       growing straight up through the middle of an egg pile. The brood
+       centres are known from genCave, so reserve them now. */
+    for(const b of CAVE.broods) CAVE.obstacles.push({x:b.center.x, z:b.center.z, r:1.5});
   }
   /* ---- floor, vault, walls & the pit: every surface is the shared field
      sampled per vertex — floorYAt underfoot, ceilYAt overhead, wallField
@@ -1678,9 +1701,10 @@ export function buildCave(){
          to the actual ceiling above its own corner */
       if(!sq&&density>0.3&&Math.random()<(density-0.18)*0.9
          &&!inMouth(p.x,p.z,1.2)){
-        const wdt=rand(1.1,2.4), dep=rand(1.0,2.2), sag=Math.min(wdt,dep)*rand(0.16,0.3);
+        const wdt=rand(1.1,2.4), dep=rand(1.0,2.2);
         const hx=p.x+rand(-0.9,0.9), hz=p.z+rand(-0.9,0.9);
-        const yaw=Math.random()*Math.PI, hy=ceilYAt(hx,hz)-rand(0.35,1.1);
+        const yaw=Math.random()*Math.PI;
+        const {hy,sag}=slung(ceilYAt(hx,hz),wdt,dep);
         const w=new THREE.Mesh(webHammockGeo(wdt,dep,sag));
         w.rotation.order="YXZ"; w.rotation.y=yaw; w.rotation.x=-Math.PI/2;
         w.position.set(hx,hy,hz);
@@ -1729,18 +1753,19 @@ export function buildCave(){
       }
     }
     /* the canopy: directly over every brood, generations of layered
-       hammocks and long streamer tails. The brood vaults are 12m domes
-       now, so the layers hang DEEP — sheets down to two-thirds height on
-       long guys, tails reaching for the clutch — a hanging city of silk. */
+       hammocks and long streamer tails. The DEPTH here comes from the
+       streamer tails reaching for the clutch, not from dropping the sheets
+       — under a 13m dome "two-thirds height on long guys" put flat silk
+       five metres out in open air. The sheets ride the rock (see slung). */
     for(const b of broods){
       const bp=cellToWorld3(b.cx,b.cy);
       for(let i=0;i<8;i++){
         const hx=bp.x+rand(-6,6), hz=bp.z+rand(-6,6);
         const c=worldToCell3(hx,hz), cc=codeAt(c.cx,c.cy);
         if(cc===1||cc===5||cc===7) continue;
-        const lv=ceilYAt(hx,hz);
-        const wdt=rand(1.6,3.4), dep=rand(1.4,3.0), sag=Math.min(wdt,dep)*rand(0.2,0.34);
-        const yaw=Math.random()*Math.PI, hy=lv-rand(0.3,lv*0.4);
+        const wdt=rand(1.6,3.4), dep=rand(1.4,3.0);
+        const yaw=Math.random()*Math.PI;
+        const {hy,sag}=slung(ceilYAt(hx,hz),wdt,dep);
         const w=new THREE.Mesh(webHammockGeo(wdt,dep,sag));
         w.rotation.order="YXZ"; w.rotation.y=yaw; w.rotation.x=-Math.PI/2;
         w.position.set(hx,hy,hz);
@@ -1790,14 +1815,12 @@ export function buildCave(){
         const cv=ceilYAt(hx,hz);
         const roll=Math.random();
         if(roll<0.47){                     // a slung sheet under the vault
-          /* slung CLOSE to the vault and trussed to it on four corner
-             guys. Hung at cv−0.25..0.9 with a sag of up to 0.9 on top and
-             nothing visibly holding it, these read as sheets floating a
-             couple of feet under a ceiling that wasn't there. */
+          /* slung CLOSE to the vault (see slung) and trussed to it on four
+             corner guys — nothing visibly holding it and it reads as a
+             sheet floating under a ceiling that isn't there */
           const wdt=rand(1.4,3.2), dep=rand(1.2,2.8);
-          const sag=Math.min(wdt,dep)*rand(0.18,0.32);
           const yaw=Math.random()*Math.PI;
-          const hy=cv-rand(0.12,0.45);
+          const {hy,sag}=slung(cv,wdt,dep);
           const w=new THREE.Mesh(webHammockGeo(wdt,dep,sag));
           w.rotation.order="YXZ"; w.rotation.y=yaw;
           w.rotation.x=-Math.PI/2+rand(-0.18,0.18);
@@ -1865,34 +1888,57 @@ export function buildCave(){
           rand(0.03,0.06)));
       }
     }
+    /* cocoon bundles near the nests — almost all of them perfectly still.
+       A hung one gets REAL SILK: two lines running the whole way up to the
+       vault. Half of them used to be parked at floor+0.4..1.8 with nothing
+       attached, which is just a wrapped body hovering at waist height.
+       (Built here, before the flush, so the lines merge with the strands.) */
+    {
+      const cocoons=[];
+      for(const b of broods){
+        const n=2+Math.floor(srand()*2);
+        for(let i=0;i<n;i++){
+          const p=cellToWorld3(b.cx,b.cy);
+          const px=p.x+rand(-5,5), pz=p.z+rand(-5,5);
+          if(cellAt3(px,pz)===1||!clearOf(px,pz,0.4)) continue;
+          const co=makeCocoon();
+          const r=co.geometry.parameters.radius;
+          const fy=floorYAt(px,pz), cv=ceilYAt(px,pz);
+          if(cv-fy>3.2&&Math.random()<0.5){
+            /* dangling: the long axis stays roughly vertical, as a bundle
+               on a thread would hang */
+            const hy=fy+r*co.scale.y+rand(0.5,1.4);
+            co.position.set(px,hy,pz);
+            co.rotation.set(rand(-0.25,0.25),Math.random()*7,rand(-0.25,0.25));
+            for(let k=0;k<2;k++){
+              const ox=rand(-0.16,0.16), oz=rand(-0.16,0.16);
+              strands.push(strandMesh(px+ox, hy+r*co.scale.y*0.85, pz+oz,
+                px+ox*3+rand(-0.4,0.4), cv-0.05, pz+oz*3+rand(-0.4,0.4), rand(0.03,0.055)));
+            }
+          }
+          else {
+            /* on the ground: it LIES DOWN. These are 1.5–2m bundles stood
+               on end at floor+0.45, so half of each one was underneath the
+               rock — seat them on their side, settled into the silt. */
+            co.rotation.set(rand(-0.13,0.13), Math.random()*7,
+              Math.PI/2+rand(-0.28,0.28));
+            co.position.set(px, fy+r*0.86, pz);
+            CAVE.obstacles.push({x:px,z:pz,r:0.5});
+          }
+          cocoons.push(co);
+        }
+      }
+      if(cocoons.length){
+        scene.add(mergeStatic(cocoons,cocoonMat));
+        for(const m of cocoons) m.geometry.dispose();
+      }
+    }
     const flush=(arr,mat)=>{ if(arr.length){ scene.add(mergeStatic(arr,mat));
       for(const m of arr) m.geometry.dispose(); } };
     flush(sheets[0],webSheetMats[0]); flush(sheets[1],webSheetMats[1]);
     flush(fans[0],webFanMats[0]);     flush(fans[1],webFanMats[1]);
     flush(tornV,webTornMat);          flush(strands,webStrandMat);
     flush(funnels,webFunnelMat);
-  }
-  /* cocoon bundles near the nests — almost all of them perfectly still.
-     One merged mesh: they share a material and never move. */
-  {
-    const cocoons=[];
-    for(const b of broods){
-      const n=2+Math.floor(srand()*2);
-      for(let i=0;i<n;i++){
-        const p=cellToWorld3(b.cx,b.cy);
-        const px=p.x+rand(-5,5), pz=p.z+rand(-5,5);
-        if(cellAt3(px,pz)===1||!clearOf(px,pz,0.4)) continue;
-        const co=makeCocoon();
-        const fy=floorYAt(px,pz);
-        if(Math.random()<0.5){ co.position.set(px,fy+rand(0.4,1.8),pz); }
-        else { co.position.set(px,fy+0.45,pz); CAVE.obstacles.push({x:px,z:pz,r:0.38}); }
-        cocoons.push(co);
-      }
-    }
-    if(cocoons.length){
-      scene.add(mergeStatic(cocoons,cocoonMat));
-      for(const m of cocoons) m.geometry.dispose();
-    }
   }
   /* ---- fungus: the level's light grid (cold records; silent; no buzz) ----
      Real mushrooms now, in location-driven varieties: shelf CONKS climb the
@@ -2395,7 +2441,8 @@ export function buildCave(){
     cl.userData.animated=true;                     // the eggs breathe
     scene.add(cl);
     b.clutch=cl; b.burned=false;
-    CAVE.obstacles.push({x:b.center.x, z:b.center.z, r:1.5});
+    /* (the keep-out circle for this spot was reserved before the dripstone
+       and web passes, up with the stair mouth and the corpse) */
     addInteractable({kind:"clutch", mesh:cl, idx:i, taken:false,
       label:()=> STATE.hasLantern? "IGNITE THE CLUTCH — HOLD [E]" : "EGGS. YOU NEED FIRE."});
   });
@@ -2510,6 +2557,16 @@ function openFissure(){
   toast("Cold air. From above.",4200);
 }
 
+/* The main loop stops calling updateCave the instant you die, so every loop
+   the cave is holding open freezes exactly where it was — a clutch fire at
+   full crackle, the stream at whatever bank you drowned on. Nothing runs
+   again until the respawn, so they have to be closed by hand here. */
+export function hushCave(){
+  for(const f of CAVE.fires) if(f.handle&&f.handle.hush) f.handle.hush();
+  if(AU.ctx&&AU.cave&&AU.cave.streamGain)
+    AU.cave.streamGain.gain.setTargetAtTime(0.0001,AU.ctx.currentTime,0.25);
+}
+
 /* ---------------- per-frame ---------------- */
 export function updateCave(dt){
   const tN=performance.now()/1000;
@@ -2574,13 +2631,30 @@ export function updateCave(dt){
         if(b.burnT>6){
           const e=clamp(1-(b.burnT-6)/14,0.06,1);
           m.emissive.setRGB(0.35*e,0.10*e,0.02*e);
-          m.color.setRGB(0.18,0.14,0.11);
+          m.color.setRGB(0.10*e+0.055, 0.075*e+0.048, 0.055*e+0.042);
+        }
+      }
+      /* THE EGGS COLLAPSE, and stay collapsed. Once the embers went out
+         the old burned clutch was a full pile of plump eggs in a slightly
+         darker brown — from two metres away, under an orange lantern, it
+         was indistinguishable from a live one, and since it's already
+         `taken` there's no prompt to tell you otherwise. Now the pile
+         visibly shrivels and settles into the mound: a burned brood reads
+         as burned from across the chamber, permanently, and a respawn
+         doesn't have to explain itself. */
+      const eg=b.clutch.userData.eggs;
+      if(eg){
+        const sh=clamp((b.burnT-3)/9,0,1);           // shrivel 0→1 over ~9s
+        const sx=1-0.42*sh, sy=1-0.58*sh;
+        for(const e of eg){
+          e.scale.set(sx,1.28*sy,sx);
+          e.position.y=e.userData.y0-(e.userData.y0-0.42)*0.55*sh;
         }
       }
       /* the pool of light under it turns fire-orange, then embers down */
       if(hm){
         hm.color.setRGB(1,0.45+0.2*k,0.18+0.4*k);
-        const life=clamp(1-b.burnT/80,0.05,1);
+        const life=clamp(1-b.burnT/80,0.04,1);
         hm.opacity=(0.22+0.10*hash(Math.floor(tN*13)+i*7))*life;
       }
     }
@@ -2592,7 +2666,9 @@ export function updateCave(dt){
     const life=clamp(f.T/75,0,1);
     const flick=0.75+0.25*hash(Math.floor(tN*17)+i*31);
     f.light.intensity=1.5*Math.pow(life,0.6)*flick;
-    if(f.handle) f.handle.set(Math.pow(life,0.7));
+    /* the crackle belongs to the fire's position, not to the whole level */
+    if(f.handle) f.handle.set(Math.pow(life,0.7),
+      Math.hypot(f.x-STATE.pos.x, f.z-STATE.pos.z), panTo(f.x,f.z));
     if(f.T<=0){
       f.light.intensity=0;
       if(f.handle) f.handle.stop();

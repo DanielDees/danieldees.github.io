@@ -8,11 +8,11 @@ import { makeMonster, wakeMonster, escalateMonster, clearMonsterFx } from "./mon
 import { buildLibrary, LIB } from "./library.js";
 import { buildCave, CAVE } from "./cave.js";
 import { makeSpider, resetSpider, spiderHearDisc, resetSpiderCave } from "./spider.js";
-import { makeHatchlings, resetHatchlings } from "./hatchling.js";
+import { makeHatchlings, resetHatchlings, silenceHatchlings } from "./hatchling.js";
 import { CINE, startTheEndIntro, startNestIntro } from "./cutscene.js";
 import { AU, sfxDeath, startLibraryAmbience, startCaveAmbience } from "./audio.js";
 import { ui, toast, renderObjectives, setPaused, lockPointer } from "./ui.js";
-import { igniteClutch } from "./cave.js";
+import { igniteClutch, hushCave } from "./cave.js";
 
 export function startGame(){
   buildLevel(); placeProps();
@@ -282,6 +282,9 @@ export function die(){
     AU.breathGain.gain.setTargetAtTime(0,t,0.2);
     if(AU.spiderBedGain) AU.spiderBedGain.gain.setTargetAtTime(0,t,0.2);
   }
+  /* THE NEST holds live loops that only the (now-halted) update path can
+     close: the clutch fires, the stream, a latched hatchling's screech */
+  if(STATE.level===2){ hushCave(); silenceHatchlings(); }
   ui.flash.style.transition="none"; ui.flash.style.background="#1a0000"; ui.flash.style.opacity=0.95;
   setTimeout(()=>{ui.flash.style.transition="opacity 1.2s";ui.flash.style.opacity=0;},120);
   const quotes = STATE.level===2
@@ -312,6 +315,7 @@ export function win(){
     AU.breathGain.gain.setTargetAtTime(0,t,0.3);
     if(AU.spiderBedGain) AU.spiderBedGain.gain.setTargetAtTime(0,t,0.3);
   }
+  if(STATE.level===2){ hushCave(); silenceHatchlings(); }
   setPaused(true,true);
   if(document.pointerLockElement) document.exitPointerLock();
   const fmt=s=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(Math.floor(s)%60).padStart(2,"0")}`;
