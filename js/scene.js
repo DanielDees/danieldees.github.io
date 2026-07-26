@@ -1,10 +1,10 @@
 /* ---------------- three.js scene & level geometry ---------------- */
 import { rand, clamp } from "./utils.js";
 import { W, H, CELL, WALL_H, grid, genMap, cellToWorld, isWall } from "./map.js";
-import { makeCanvas, texWall, texWallBump, texCarpet, texCarpetBump, texStains,
+import { texWall, texWallBump, texCarpet, texCarpetBump, texStains,
          texCeil, texCeilBump, texCeilStains,
          makeMoldTextures, makeDripTextures, sliceTexture, paperBoxUV,
-         makeTubeTexture, texGalv, scaleBoxUV } from "./textures.js";
+         makeTubeTexture, texGalv, texReflector, texLouvre, scaleBoxUV } from "./textures.js";
 import { $ } from "./utils.js";
 import { readSettings } from "./settings.js";
 
@@ -204,6 +204,7 @@ export function makeLightRecord(glowMat,tubeMat,cx,cy,world,opts={}){
   const bright = opts.bright!==undefined? opts.bright : (warm?1:rand(0.85,1));
   const dimDen = opts.dimDen||0.15;
   return {glowMat, tubeMat, cx, cy, world,
+    louvMat:opts.louvMat,                    // level-0 troffers only; lights.js dims the blades
     fixY:opts.fixY, wakeAt:opts.wakeAt||0,
     flickery: opts.flickery!==undefined? opts.flickery : Math.random()<0.22,
     warm, warmth:warm?1:0, bright, dimY:warm?0:(1-bright)/dimDen,
@@ -235,94 +236,130 @@ export function removeDecalsOnWall(key){
   }
 }
 /* ---------------- the level-0 troffer fixture ----------------
-   A shallow housing with an OPEN bottom face — tubes and diffuse backplate
-   sit recessed inside it, and the grille is inset flush with the bottom rim,
-   exactly like a real troffer. The record driving it (makeLightRecord) is the
+   A recessed housing with an OPEN bottom, the lamps hung inside it and a real
+   egg-crate louvre below them. The record driving it (makeLightRecord) is the
    shared one; only the shell differs from the library's hanging strip.
    Assets live at module level and are markShared'd: buildLevel runs on every
    respawn, and regenerating identical canvases/geometry each time was pure
-   churn (the library's makeFixture already worked this way). */
-/* single full-cover grate texture (no tiling) so it can close with a rail on
-   ALL four edges — a repeating tile always ends on a gap at the far side,
-   leaving the grate visually open on two sides */
-const grateTex = makeCanvas(256,128,(g,w,h)=>{
-  g.clearRect(0,0,w,h);
-  g.fillStyle="rgba(22,19,11,0.96)";
-  /* exact division: rails on both edges with N uniform cells between,
-     so the pattern closes flush on every side — fixed-step spacing left
-     a partial sliver cell against the far rails */
-  const NX=32, NY=8;
-  for(let i=0;i<=NX;i++) g.fillRect(i*(w-2)/NX,0,2,h);   // grille vanes
-  for(let j=0;j<=NY;j++) g.fillRect(0,j*(h-2)/NY,w,2);   // cross ribs
-});
+   churn (the library's makeFixture already worked this way).
+
+   THE LOUVRE IS GEOMETRY NOW, and that is the whole fixture. It used to be a
+   flat plane wearing a printed grid of dark lines — which from directly
+   underneath is exactly right and from anywhere else is graph paper stuck to
+   a light. What a louvre actually does is CUT OFF: walk past one and the
+   cells close as the angle steepens until the lamp disappears behind its own
+   blades. Twenty quads get that for one draw call, and they carry the
+   fixture's whole reading of depth. The housing was also six draws (a box
+   with a six-material array); merged, the shell is one.
+   Depths are laid out so nothing intersects: pan → lamps → blade band, with
+   the blade tops 3mm clear of the tube bottoms. */
+const FW=CELL*0.66, FD=CELL*0.34;    // the fixture's footprint
+const HOUSE_D=0.165;                 // deep enough to actually recess the lamps
+const TUBE_Y=-0.068, TUBE_Z=0.32, TUBE_L=CELL*0.55, TUBE_R=0.042;
+const LOUV_D=0.048, LOUV_Y=-HOUSE_D+0.005;
+const SHEET=0.014;                   // the steel's thickness
 /* the tubes themselves are the shared filament asset (textures.js): burnt
    electrodes, worn phosphor, and — on the dying ones — the end-of-life hue
    drift toward orange at the centre. The library's hanging strips import
    the same two maps. */
 export const tubeTex = makeTubeTexture(false), warmTubeTex = makeTubeTexture(true);
-const HOUSE_D=0.096;                               // 20% shallower than before
-/* the shell tiles real galvanized sheet at 0.5m — every face but the bottom,
-   which carries the FITTED trim flange and has to keep its 0–1 mapping */
-const housingGeo=scaleBoxUV(new THREE.BoxGeometry(CELL*0.66,HOUSE_D,CELL*0.34),
-  CELL*0.66,HOUSE_D,CELL*0.34,0.5,[3]);
 /* galvanized-steel fixture frame — clearly a piece of metal hardware,
    not a patch of ceiling; faint emissive keeps it readable right next
    to its own glowing tubes */
 const housingSide=new THREE.MeshPhongMaterial({map:texGalv,color:0xb4b2aa,emissive:0x0d0d0b,
   specular:0x6a6960,shininess:55});
-/* bottom face: metallic trim flange with the centre punched out via
-   alphaTest so the grate & glow show through — keeps the fixture visible
-   from directly underneath without transparency-sorting issues */
-const rimTex=makeCanvas(256,128,(g,w,h)=>{
-  g.clearRect(0,0,w,h);
-  g.fillStyle="#a8a69d";
-  g.fillRect(0,0,w,8);g.fillRect(0,h-8,w,8);g.fillRect(0,0,8,h);g.fillRect(w-8,0,8,h);
-  g.fillStyle="rgba(30,28,22,0.85)";                 // shadowed inner lip
-  g.fillRect(8,8,w-16,2);g.fillRect(8,h-10,w-16,2);g.fillRect(8,8,2,h-16);g.fillRect(w-10,8,2,h-16);
-});
-const housingRim=new THREE.MeshPhongMaterial({map:rimTex,alphaTest:0.5,
-  specular:0x55534a,shininess:45});
-// box face order: +x,-x,+y,-y,+z,-z — bottom (-y) carries the trim flange
-const housingMats=[housingSide,housingSide,housingSide,housingRim,housingSide,housingSide];
-const tubeGeo=new THREE.CylinderGeometry(0.042,0.042,CELL*0.55,8);
-tubeGeo.rotateZ(Math.PI/2);                        // lie along x
-/* backplate fills the housing opening edge-to-edge: the box's top face is
-   back-face culled from below, so any gap around the backplate would show
-   straight through to the ceiling plane — ceiling texture inside the
-   fixture. Full coverage seals the interior. */
-const glowGeo=new THREE.PlaneGeometry(CELL*0.66,CELL*0.34);
-/* the grate must line up with the rim flange's inner opening
-   (0.61875 × 0.2975 of CELL — the rim border is 8px of its 256×128
-   texture). Sized a hair larger so the grate's outer rails tuck just
-   under the rim: the first visible cell inside the rim is then always
-   a full one. A larger grate hides its rails deeper under the rim and
-   exposes a glowing sliver of part-cell instead. */
-const grateGeo=new THREE.PlaneGeometry(CELL*0.625,CELL*0.305);
-const grateMat=new THREE.MeshBasicMaterial({map:grateTex,transparent:true});
-markShared(grateTex,tubeTex,warmTubeTex,texGalv,rimTex,housingGeo,tubeGeo,glowGeo,grateGeo,
-           housingSide,housingRim,grateMat);
+/* build a set of positioned boxes and hand back ONE geometry. mergeStatic
+   returns a Mesh (and freezes it) — the geometry is what's wanted here, so
+   every fixture can hang its own Mesh on the same buffers. */
+function bakeParts(parts,mat){
+  const mg=mergeStatic(parts,mat);
+  for(const p of parts) p.geometry.dispose();
+  return mg.geometry;
+}
+const shellGeo=(()=>{
+  const parts=[], P=(w,hh,d,x,y,z)=>{
+    const m=new THREE.Mesh(scaleBoxUV(new THREE.BoxGeometry(w,hh,d),w,hh,d,0.5));
+    m.position.set(x,y,z); parts.push(m);
+  };
+  P(FW+0.10,0.016,FD+0.10, 0,-0.009,0);                    // the collar against the ceiling
+  P(FW,0.012,FD, 0,-0.019,0);                              // the pan
+  const H2=HOUSE_D-0.013, CY=-0.013-H2/2;
+  for(const s of[-1,1]) P(SHEET,H2,FD, s*(FW/2-SHEET/2),CY,0);
+  for(const s of[-1,1]) P(FW-2*SHEET,H2,SHEET, 0,CY,s*(FD/2-SHEET/2));
+  for(const s of[-1,1]) P(0.028,0.018,FD, s*(FW/2-0.014),-HOUSE_D+0.009,0);   // the rim the
+  for(const s of[-1,1]) P(FW-0.056,0.018,0.028, 0,-HOUSE_D+0.009,s*(FD/2-0.014)); // louvre drops into
+  P(FW*0.9,0.05,0.185, 0,-0.05,0);                         // the ballast wireway down the spine
+  return bakeParts(parts,housingSide);
+})();
+/* lampholders. Ivory plastic, not steel — and they are the detail that says
+   the tube is SEATED in something rather than floating in a box. */
+const holderMat=new THREE.MeshPhongMaterial({color:0xcfc8b2,emissive:0x131208,
+  specular:0x3a382c,shininess:24});
+const holderGeo=(()=>{
+  const parts=[];
+  for(const sx of[-1,1])for(const sz of[-1,1]){
+    const m=new THREE.Mesh(new THREE.BoxGeometry(0.042,0.088,0.058));
+    m.position.set(sx*(TUBE_L/2+0.024),TUBE_Y+0.004,sz*TUBE_Z); parts.push(m);
+  }
+  return bakeParts(parts,holderMat);
+})();
+const tubeGeo=(()=>{
+  const parts=[];
+  for(const sz of[-1,1]){
+    const g=new THREE.CylinderGeometry(TUBE_R,TUBE_R,TUBE_L,8);
+    g.rotateZ(Math.PI/2);                              // lie along x
+    const m=new THREE.Mesh(g); m.position.set(0,TUBE_Y,sz*TUBE_Z); parts.push(m);
+  }
+  return bakeParts(parts,null);
+})();
+/* the egg-crate. 12 × 6 cells at a ~0.22m pitch, blades 48mm deep: the
+   blades are single quads (DoubleSide) because they are 1.4mm of steel, and
+   all twenty merge into one buffer. texLouvre's gradient runs bright at the
+   blade top (near the lamp) to near-black at the bottom arris, which is what
+   reads as depth on a surface with no thickness. */
+const louvreGeo=(()=>{
+  const NX=12, NY=6, parts=[], CY=LOUV_Y+LOUV_D/2;
+  for(let i=0;i<=NX;i++){
+    const g=new THREE.PlaneGeometry(FD,LOUV_D); g.rotateY(Math.PI/2);
+    const m=new THREE.Mesh(g); m.position.set(-FW/2+i*(FW/NX),CY,0); parts.push(m);
+  }
+  for(let j=0;j<=NY;j++){
+    const m=new THREE.Mesh(new THREE.PlaneGeometry(FW,LOUV_D));
+    m.position.set(0,CY,-FD/2+j*(FD/NY)); parts.push(m);
+  }
+  return bakeParts(parts,null);
+})();
+/* the backplate stops short of the side walls so its edge can't poke through
+   them; the walls close the gap from below */
+const glowGeo=new THREE.PlaneGeometry(FW-2*SHEET,FD-2*SHEET);
+markShared(tubeTex,warmTubeTex,texGalv,texReflector,texLouvre,
+           shellGeo,holderGeo,tubeGeo,louvreGeo,glowGeo,housingSide,holderMat);
 /* the TUBES are the light source — the housing interior only catches spill,
    so every backplate sits darker than its tubes: a faint glow on dying
    fixtures, a brighter (but still secondary) wash on healthy ones.
-   glowMat = backplate, tubeMat = tubes; both stay per-fixture (lights.js
-   drives their colors every frame), created fresh here and disposed with
-   the level. */
+   glowMat = backplate, tubeMat = tubes, louvMat = the blades; all three stay
+   per-fixture (lights.js drives their colors every frame), created fresh
+   here and disposed with the level. */
 function makeTroffer(warm){
-  const glowMat=new THREE.MeshBasicMaterial({color: warm?0x4d3419:0xb8b2a2});
+  const glowMat=new THREE.MeshBasicMaterial({map:texReflector,
+    color: warm?0x4d3419:0xb8b2a2});
   const tubeMat=new THREE.MeshBasicMaterial({map: warm? warmTubeTex:tubeTex,
                                              color: warm?0xffffff:0xfff6cf});
+  /* painted steel a few centimetres under a burning lamp: lights.js drives
+     the emissive so the blades go dark WITH the fixture instead of hanging
+     there lit under a dead one */
+  const louvMat=new THREE.MeshPhongMaterial({map:texLouvre,emissiveMap:texLouvre,
+    color:0x33322d,emissive:0x000000,specular:0x8e8b80,shininess:70,
+    side:THREE.DoubleSide});
   const fix=new THREE.Group();
-  const housing=new THREE.Mesh(housingGeo,housingMats);
-  housing.position.y=WALL_H-HOUSE_D/2; fix.add(housing);
-  const backplate=new THREE.Mesh(glowGeo,glowMat);
-  backplate.rotation.x=Math.PI/2; backplate.position.y=WALL_H-0.014; fix.add(backplate);
-  for(const tz of[-0.32,0.32]){
-    const tube=new THREE.Mesh(tubeGeo,tubeMat);
-    tube.position.set(0,WALL_H-0.05,tz); fix.add(tube);   // recessed inside the housing
-  }
-  const grate=new THREE.Mesh(grateGeo,grateMat);
-  grate.rotation.x=Math.PI/2; grate.position.y=WALL_H-HOUSE_D+0.004; fix.add(grate); // flush with the rim
-  return {fix, glowMat, tubeMat};
+  const add=(geo,mat,y)=>{ const m=new THREE.Mesh(geo,mat); m.position.y=WALL_H+(y||0); fix.add(m); return m; };
+  add(shellGeo,housingSide);
+  add(holderGeo,holderMat);
+  const backplate=add(glowGeo,glowMat,-0.028);
+  backplate.rotation.x=Math.PI/2;
+  add(tubeGeo,tubeMat);
+  add(louvreGeo,louvMat);
+  return {fix, glowMat, tubeMat, louvMat};
 }
 
 export function buildLevel(){
@@ -561,6 +598,6 @@ export function buildLevel(){
     /* healthy panels idle at 85–100% of max; dimY (0 at full, 1 at the
        floor) faintly yellows the dimmer ones — same idea as the dying
        tubes' orange gradient, far subtler */
-    lights.push(makeLightRecord(f.glowMat,f.tubeMat,x,y,p,{warm}));
+    lights.push(makeLightRecord(f.glowMat,f.tubeMat,x,y,p,{warm,louvMat:f.louvMat}));
   }
 }
