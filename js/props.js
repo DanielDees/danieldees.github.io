@@ -1,7 +1,7 @@
 /* ---------------- props ---------------- */
 import { rand } from "./utils.js";
 import { W, H, CELL, WALL_H as WALL_H0, cellToWorld, randomOpenCell, isWall, losCells } from "./map.js";
-import { makeCanvas, texWall, texWallBump, scaleBoxUV, paperBoxUV } from "./textures.js";
+import { makeCanvas, texWall, scaleBoxUV } from "./textures.js";
 import { scene, wallMeshes, removeDecalsOnWall, mergeWallMeshes, freezeStaticScene,
          markShared } from "./scene.js";
 
@@ -325,29 +325,23 @@ export function makeElevator(p,facing,opts={}){
   const {OPEN_W,OPEN_H,DEPTH}=ELEV;
   const WALL_H=opts.wallH||WALL_H0;
   const g=new THREE.Group();
-  const wallM=opts.wallMat||new THREE.MeshPhongMaterial({map:texWall, bumpMap:texWallBump,
-    bumpScale:0.006, specular:0x0d0c07, shininess:6});
+  const wallM=opts.wallMat||new THREE.MeshPhongMaterial({map:texWall, specular:0x0d0c07, shininess:6});
   const metal=new THREE.MeshPhongMaterial({color:0x9aa0a4, specular:0x222426, shininess:22});
   const darkMetal=new THREE.MeshPhongMaterial({color:0x53585c, specular:0x303336, shininess:40});
   const add=(geo,mat,x,y,z)=>{const m=new THREE.Mesh(geo,mat);m.position.set(x,y,z);g.add(m);return m;};
-  /* rebuilt wall around the opening. With opts.uvTile (THE END) the odd-sized
-     flank/header boxes map their wall texture at a fixed world scale, so they
-     sit seamlessly beside the regular full-size cells. Level 0 instead takes
-     the WALLPAPER contract: u at the drop pitch, v the wall height once — and
-     `y0` matters, because the header does not start at the floor and without
-     it the whole vertical composition (skirting grime, hand-height rub) gets
-     squashed into a 1.4m strip up under the ceiling. The flanks come out at
-     1.0m = two whole drops, so the seams still land where they should. */
-  const wallGeo=(w,h,d,y0=0)=>{
+  /* rebuilt wall around the opening. With opts.uvTile the odd-sized flank/
+     header boxes map their wall texture at a fixed world scale, so they sit
+     seamlessly beside the regular full-size cells (THE END); level 0 takes
+     raw box UVs, like every other wall on that floor. */
+  const wallGeo=(w,h,d)=>{
     const geo=new THREE.BoxGeometry(w,h,d);
     if(opts.uvTile) scaleBoxUV(geo,w,h,d,opts.uvTile);
-    else paperBoxUV(geo,w,h,d,WALL_H,y0);
     return geo;
   };
   const flankW=(CELL-OPEN_W)/2;
   add(wallGeo(flankW,WALL_H,CELL),wallM,-(OPEN_W/2+flankW/2),WALL_H/2,-CELL/2);
   add(wallGeo(flankW,WALL_H,CELL),wallM, (OPEN_W/2+flankW/2),WALL_H/2,-CELL/2);
-  add(wallGeo(OPEN_W,WALL_H-OPEN_H,CELL,OPEN_H),wallM,0,(WALL_H+OPEN_H)/2,-CELL/2);
+  add(wallGeo(OPEN_W,WALL_H-OPEN_H,CELL),wallM,0,(WALL_H+OPEN_H)/2,-CELL/2);
   add(wallGeo(OPEN_W,OPEN_H,CELL-DEPTH),wallM,0,OPEN_H/2,-(DEPTH+(CELL-DEPTH)/2));
   /* ---- cab shell: brushed panelled walls, speckled vinyl floor ---- */
   const cabWallTex=makeCanvas(256,256,(gx,w,h)=>{

@@ -186,10 +186,12 @@ export function updateLights(dt,t){
       else L.tubeMat.color.setRGB(vb,
         lerp(lerp(0.965,0.89,L.dimY),0.60,warmth)*vb,
         lerp(lerp(0.81,0.56,L.dimY),0.26,warmth)*vb);
-      /* the louvre blades sit 50mm under a burning tube, so they are lit by
-         it — emissive rather than shading, because the tubes are unlit
-         MeshBasic and cast nothing. Drive it or a flickered-off fixture
-         keeps a bright grid hanging under a dead lamp. */
+      /* the guard rods hang 90mm under a burning tube, so they are lit by it —
+         emissive rather than shading, because the tubes are unlit MeshBasic
+         and cast nothing (and the pool light that stands in for the fixture
+         sits BELOW the rods, so real shading lights their undersides, which
+         is backwards). Drive it, or a flickered-off fixture keeps a bright
+         grid hanging under a dead lamp. */
       if(L.louvMat){
         const lv=v*(L.warm? 0.26:0.40)*L.bright;
         L.louvMat.emissive.setRGB(lv,
