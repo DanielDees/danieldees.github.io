@@ -946,19 +946,26 @@ export function startCaveAmbience(){
     src.connect(lp); lp.connect(g); g.connect(AU.music); src.start(t);
     cave.rumbleGain=g;
   }
-  /* the stream: looped babble, silent until you near it */
+  /* the stream: looped babble, silent until you near it.
+     It used to be white noise through a bandpass at 1500Hz — which is not
+     a stream, it is a HISS: no low body, no transients, dead flat. Audible
+     out to 26m it washed whole chambers it wasn't even in (two of the four
+     brood rooms sit 12–14m off the water), and since it's tied to a place
+     rather than an event it never stopped. Lowpassed with a slow swell it
+     reads as water moving over stone, and cave.js keeps it local. */
   {
     const len=C.sampleRate*2.5, buf=C.createBuffer(1,len,C.sampleRate);
     const d=buf.getChannelData(0);
     for(let i=0;i<len;i++) d[i]=Math.random()*2-1;
     const src=C.createBufferSource(); src.buffer=buf; src.loop=true;
-    const bp=C.createBiquadFilter(); bp.type="bandpass"; bp.frequency.value=1500; bp.Q.value=0.7;
-    const trem=C.createOscillator(); trem.frequency.value=2.3;
-    const tg=C.createGain(); tg.gain.value=0.35;
-    const mid=C.createGain(); mid.gain.value=0.65;
+    const lp=C.createBiquadFilter(); lp.type="lowpass"; lp.frequency.value=760; lp.Q.value=0.8;
+    const shelf=C.createBiquadFilter(); shelf.type="highpass"; shelf.frequency.value=140;
+    const trem=C.createOscillator(); trem.frequency.value=0.55;   // a swell, not a shake
+    const tg=C.createGain(); tg.gain.value=0.18;
+    const mid=C.createGain(); mid.gain.value=0.82;
     trem.connect(tg); tg.connect(mid.gain); trem.start();
     const g=C.createGain(); g.gain.value=0;
-    src.connect(bp); bp.connect(mid); mid.connect(g); g.connect(AU.sfx);
+    src.connect(lp); lp.connect(shelf); shelf.connect(mid); mid.connect(g); g.connect(AU.sfx);
     src.start();
     cave.streamGain=g;
   }

@@ -1668,14 +1668,19 @@ export function updateSpiderCave(dt){
   s.mesh.position.set(s.pos.x,floorYAt(s.pos.x,s.pos.z)+bob,s.pos.z);
   s.mesh.quaternion.setFromEuler(new THREE.Euler(0,s.faceAng,0));
 
-  /* ---- dread & the skitter bed ---- */
+  /* ---- dread ----
+     NO SKITTER BED DOWN HERE. THE END's librarian gets one — bandpassed
+     noise under an 11Hz tremolo — and in a library it works. In the cave it
+     was the sustained hiss/rattle that never ended: the matriarch's tending
+     round is a patrol BETWEEN THE CLUTCHES, so it parks near a brood for
+     minutes at a time and the bed just sits there at a constant level while
+     you work. Its proximity is carried by the dread vignette, the
+     heartbeat, and its own footfalls/scratches/sniffs — all of which are
+     either silent or discrete. */
   const prox=clamp(1-d/20,0,1);
   ui.dread.style.opacity = aggressive? (0.09+prox*0.18):prox*0.135;
-  if(AU.ctx&&AU.spiderBedGain){
-    const t=AU.ctx.currentTime;
-    AU.spiderBedGain.gain.setTargetAtTime(clamp(1-d/16,0,1)*0.16*(0.4+sp01*0.6), t, 0.2);
-    if(AU.spiderBedPan) AU.spiderBedPan.pan.setTargetAtTime(panTo(s.pos.x,s.pos.z), t, 0.15);
-  }
+  if(AU.ctx&&AU.spiderBedGain)
+    AU.spiderBedGain.gain.setTargetAtTime(0, AU.ctx.currentTime, 0.4);
   AU.heartTimer-=dt;
   if(prox>0.3&&AU.heartTimer<=0){ sfxHeartbeat(); AU.heartTimer=lerp(1.4,0.5,prox); }
 }

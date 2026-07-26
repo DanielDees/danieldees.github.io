@@ -2699,7 +2699,12 @@ export function updateCave(dt){
       if(d<best) best=d;
     }
     const d=Math.sqrt(best);
-    AU.cave.streamGain.gain.setTargetAtTime(clamp(1-d/26,0,1)*0.16, AU.ctx.currentTime, 0.3);
+    /* LOCAL. At the old 26m you heard the water from two chambers away as a
+       featureless wash that never let up — and brood rooms 3 and 4 sit 12
+       and 14m off it, so it played through every ignite. Squared falloff
+       inside 11m: you hear it when you're at the water, and nowhere else. */
+    const k=clamp(1-d/11,0,1);
+    AU.cave.streamGain.gain.setTargetAtTime(k*k*0.15, AU.ctx.currentTime, 0.35);
   }
   /* dripwater percussion — and skitters that sound just like it */
   CAVE.dripT-=dt;
