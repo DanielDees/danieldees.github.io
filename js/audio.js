@@ -1127,14 +1127,11 @@ export function sfxHatchTap(vol,pan=0){
   if(p){p.pan.value=pan;g.connect(p);p.connect(AU.sfx);}else g.connect(AU.sfx);
   o.start(t);o.stop(t+0.08);
 }
-/* recoiling from the light: a thin pressurized hiss */
-export function sfxHatchHiss(vol=1,pan=0){
-  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
-  const f=pannedNoise(t,rand(0.25,0.4),"bandpass",rand(3400,4400),2.2,vol*0.14,pan,0.03);
-  f.frequency.exponentialRampToValueAtTime(2200,t+0.3);
-  for(let i=0;i<5;i++)
-    pannedNoise(t+0.04+i*0.05,0.018,"highpass",5200,1,vol*0.05*(1-i/5),pan,0.001);
-}
+/* (there was an sfxHatchHiss here — the brood's recoil-from-the-light cue.
+   Deleted, not silenced: five 5.2kHz ticks inside 200ms is a rattle, and
+   repeating it for as long as a hatchling stood in the lantern made the
+   level sound like a bag of beads. The brood has two voices now, the taps
+   and the latch screech, and its reaction to light is purely visual.) */
 /* latched and screaming for its parent — a loop; stop() when it's off */
 export function startLatchScreech(){
   if(!AU.ctx) return {stop(){}};

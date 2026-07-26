@@ -11,7 +11,7 @@ import { scene, markShared } from "./scene.js";
 import { CAVE, cellAt3, hatchBlocked, worldToCell3, cellToWorld3, surfaceNoiseGain,
          floorYAt } from "./cave.js";
 import { inBeam } from "./lantern.js";
-import { AU, panTo, sfxHatchTap, sfxHatchHiss, startLatchScreech } from "./audio.js";
+import { AU, panTo, sfxHatchTap, startLatchScreech } from "./audio.js";
 
 export const HATCH=[];
 const paleMat=new THREE.MeshPhongMaterial({color:0xcfc4b0, specular:0x3a362c, shininess:20});
@@ -98,7 +98,7 @@ export function makeHatchlings(){
       wanderT:0, tgt:null, anim:Math.random()*7,
       faceAng:Math.random()*7, latchCD:0, stunT:0,
       burnT:0, shake:0, prevYaw:STATE.yaw,
-      hissCD:0, stepAcc:0, stepNext:rand(1.3,2.4), tapCD:0, screech:null,
+      stepAcc:0, stepNext:rand(1.3,2.4), tapCD:0, screech:null,
     });
   }
 }
@@ -146,7 +146,6 @@ export function updateHatchlings(dt){
   if(lampOn) hearR=0;
   for(const h of HATCH){
     h.latchCD=Math.max(0,h.latchCD-dt);
-    h.hissCD-=dt;
     const dx=px-h.pos.x, dz=pz-h.pos.z, d=Math.hypot(dx,dz);
     /* the beam is the sun and they hate it */
     const beamed = h.state!=="latched" && inBeam(h.pos.x,floorYAt(h.pos.x,h.pos.z)+0.25,h.pos.z);
@@ -173,8 +172,13 @@ export function updateHatchlings(dt){
       const spd = beamed? 4.6:2.6;
       moved=hatchMove(h,-dx,-dz,dt,spd); movedSpd=spd;
       h.state="flee";
-      if(beamed&&h.hissCD<=0){ h.hissCD=rand(0.8,1.6);
-        sfxHatchHiss(clamp(1-d/12,0.1,1), panTo(h.pos.x,h.pos.z)); }
+      /* NO RECOIL HISS. This used to fire sfxHatchHiss every 0.8–1.6s for
+         as long as a hatchling stood in the glow — and that cue is five
+         bright 5.2kHz ticks inside 200ms, so a couple of them backing out
+         of the lantern was a bag of beads being shaken, at close to full
+         volume, continuously. The brood gets two voices and no more: their
+         footfalls, and the screech of one that's on you. Their reaction to
+         the light is something you SEE. */
     }
     else switch(h.state){
       case "lurk":{
@@ -232,8 +236,10 @@ export function updateHatchlings(dt){
         if(STATE.lanternOn) h.burnT+=dt; else h.burnT=Math.max(0,h.burnT-dt*0.5);
         if(h.shake>5.5||h.burnT>1.1){
           h.state="stun"; h.stunT=2.2; h.latchCD=16;
+          /* the screech cutting out IS the confirmation you got it off —
+             the old one-shot here was the same five-tick rattle at 0.9 and
+             dead-centre pan, i.e. the worst instance of it in the game */
           if(h.screech){ h.screech.stop(); h.screech=null; }
-          sfxHatchHiss(0.9,0);
           const a=Math.random()*Math.PI*2;
           h.pos.set(px+Math.cos(a)*1.6, 0, pz+Math.sin(a)*1.6);
           const c=worldToCell3(h.pos.x,h.pos.z);
