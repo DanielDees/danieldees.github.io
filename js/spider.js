@@ -1378,6 +1378,58 @@ function nextBrood(){
   s.nestIdx=next.i;
   return next.b;
 }
+
+/* ---- the room ledger ----------------------------------------------
+   `hunt` quarters the cave around the cell YOU are standing in, so every
+   target it picks for itself lands in your room — and with a crouched,
+   stationary player it cannot see or hear, that is a camp, not a hunt: it
+   circles the same chamber indefinitely, shrieking, never closing. Worse,
+   it never released `lastKnown` after working it, so even the quartering
+   was tethered — drift 3m off the old spot and it walked straight back.
+
+   So the player-anchored rolls are COUNTED: three in a row and the next
+   target must be another room entirely, and it is COMMITTED to — it has to
+   arrive before it may quarter again. That spreads its routes across the
+   warren and guarantees a stationary player a window.
+
+   Count the ROLLS, not the room the target lands in. Booking targets
+   against a room key was the first attempt and it silently did nothing:
+   the quartering throws targets ±6 cells, most of which fall in tunnel
+   cells outside the chamber, so consecutive picks kept landing in
+   different buckets and reset the counter. A player-anchored roll is the
+   camp by construction — that is the thing to cap. */
+function roomOf3(x,z){
+  const c=worldToCell3(x,z);
+  let best=-1, bd=1e9;
+  for(let i=0;i<CAVE.chambers.length;i++){
+    const ch=CAVE.chambers[i];
+    const dd=Math.hypot(c.cx-ch.cx,c.cy-ch.cy);
+    if(dd<=ch.r+1.5&&dd<bd){ bd=dd; best=i; }
+  }
+  return best>=0? "c"+best : "t"+(c.cx>>2)+","+(c.cy>>2);
+}
+const ROOM_CAP=3;
+/* somewhere it is NOT: a chamber (those are this level's rooms), never the
+   one it is standing in and never the one you are in */
+function otherRoomCell3(){
+  const s=spider;
+  const mine=roomOf3(s.pos.x,s.pos.z), yours=roomOf3(STATE.pos.x,STATE.pos.z);
+  const opts=[];
+  for(let i=0;i<CAVE.chambers.length;i++){
+    const key="c"+i;
+    if(key===mine||key===yours) continue;
+    const ch=CAVE.chambers[i];
+    if(isBlockedSpider3(ch.cx,ch.cy)) continue;
+    opts.push(cellToWorld3(ch.cx,ch.cy));
+  }
+  if(opts.length) return opts[Math.floor(Math.random()*opts.length)];
+  for(let t=0;t<24;t++){                     // no chamber free: anywhere far
+    const c=randomReachCell3(), q=cellToWorld3(c.cx,c.cy);
+    if(Math.hypot(q.x-STATE.pos.x,q.z-STATE.pos.z)>25) return q;
+  }
+  return null;
+}
+
 export function updateSpiderCave(dt){
   if(!spider.active||STATE.dead||STATE.won) return;
   const s=spider, u=s.mesh.userData;
@@ -1548,19 +1600,43 @@ export function updateSpiderCave(dt){
       /* nothing left to tend. There is only you. */
       if(sees){ s.state="chase"; s.repath=0; break; }
       s.huntT=(s.huntT||0)-dt;
-      if(s.repath<=0){
-        if(s.lastKnown&&s.pos.distanceTo(s.lastKnown)>3){
-          setPath3(s.lastKnown.x,s.lastKnown.z); s.repath=0.5;
-        } else {
-          /* a hunch: it quarters the cave toward where you breathe */
-          const pc=worldToCell3(STATE.pos.x,STATE.pos.z);
-          let q=null;
-          for(let t=0;t<12;t++){
-            const ox=Math.floor(rand(-6,7)), oy=Math.floor(rand(-6,7));
-            if(!isBlockedSpider3(pc.cx+ox,pc.cy+oy)){ q=cellToWorld3(pc.cx+ox,pc.cy+oy); break; }
+      if(s.lastKnown&&s.pos.distanceTo(s.lastKnown)>3){
+        /* a real cue outranks anything it invented for itself */
+        s.roamTgt=null;
+        if(s.repath<=0){ setPath3(s.lastKnown.x,s.lastKnown.z); s.repath=0.5; }
+      } else {
+        /* it has worked that spot — release it, or the quartering below is
+           just a tether that keeps snapping back to one corner */
+        s.lastKnown=null;
+        if(s.roamTgt){
+          /* a roam is COMMITTED: it walks the target down instead of
+             re-rolling one every couple of seconds. Re-rolling is what let
+             the old hunt orbit you forever — and, once the cap existed, it
+             also burned the room's three picks in five seconds of travel,
+             so it turned around before it ever arrived anywhere. */
+          s.roamT-=dt;
+          if(Math.hypot(s.roamTgt.x-s.pos.x,s.roamTgt.z-s.pos.z)<3.5||s.roamT<=0) s.roamTgt=null;
+          else if(s.repath<=0){
+            setPath3(s.roamTgt.x,s.roamTgt.z); s.repath=rand(1.2,2.2);
+            if(!s.path.length) s.roamTgt=null;      // unreachable: don't stall on it
           }
-          if(!q){ const c=randomReachCell3(); q=cellToWorld3(c.cx,c.cy); }
+        }
+        if(!s.roamTgt&&s.repath<=0){
+          let q=null;
+          if((s.roomN||0)>=ROOM_CAP&&(q=otherRoomCell3())) s.roomN=0;   // go somewhere else
+          if(!q){
+            /* a hunch: it quarters the cave toward where you breathe */
+            const pc=worldToCell3(STATE.pos.x,STATE.pos.z);
+            for(let t=0;t<12;t++){
+              const ox=Math.floor(rand(-6,7)), oy=Math.floor(rand(-6,7));
+              if(!isBlockedSpider3(pc.cx+ox,pc.cy+oy)){ q=cellToWorld3(pc.cx+ox,pc.cy+oy); break; }
+            }
+            if(!q){ const c=randomReachCell3(); q=cellToWorld3(c.cx,c.cy); }
+            s.roomN=(s.roomN||0)+1;
+          }
+          s.roamTgt={x:q.x,z:q.z}; s.roamT=18;
           setPath3(q.x,q.z); s.repath=rand(1.2,2.2);
+          if(!s.path.length) s.roamTgt=null;
         }
       }
       if(s.huntT===undefined||s.huntT<=0){
@@ -1576,13 +1652,18 @@ export function updateSpiderCave(dt){
   /* ---- speed ---- */
   let tgt=0;
   /* the warren is half again as wide now: the unhurried gaits cover more
-     ground so the tending rounds and hunts keep their old pacing */
-  if(s.state==="tend") tgt=5.6;
-  else if(s.state==="seek") tgt=s.seekRun? RUN_BASE*(frenzy?1.15:allBurned?1.05:1) : SPD.mildSeek;
+     ground so the tending rounds and hunts keep their old pacing — but the
+     first pass overshot by ~20%. At 7.2 the hunt was within a whisker of
+     the 7.28 run and read as a chase that never resolved; every UNHURRIED
+     gait (tend/mild seek/rampage/hunt) is 20% off those numbers now. The
+     run speeds — chase, frenzy, seekRun — are untouched: those ARE the
+     chase, and they are what the escape is measured against. */
+  if(s.state==="tend") tgt=4.5;
+  else if(s.state==="seek") tgt=s.seekRun? RUN_BASE*(frenzy?1.15:allBurned?1.05:1) : 4.58;
   else if(s.state==="chase") tgt=RUN_BASE*(frenzy?1.15:1.05);
   else if(s.state==="frenzy") tgt=RUN_BASE*1.15;
-  else if(s.state==="rampage") tgt=6.8;
-  else if(s.state==="hunt") tgt=7.2;
+  else if(s.state==="rampage") tgt=5.4;
+  else if(s.state==="hunt") tgt=5.8;
   const rate = tgt>s.curSpeed? 6:11;
   s.curSpeed += clamp(tgt-s.curSpeed, -rate*dt, rate*dt);
 
@@ -1608,6 +1689,7 @@ export function updateSpiderCave(dt){
     s.stuckT+=dt;
     if(s.stuckT>1.2){
       s.stuckT=0; s.path=[]; s.repath=0;
+      s.roamTgt=null;                       // a crossing it cannot physically close
       if(s.state==="seek"&&s.lastKnown&&s.pos.distanceTo(s.lastKnown)<CELL*1.5){
         s.faceAng=Math.atan2(s.lastKnown.x-s.pos.x,s.lastKnown.z-s.pos.z);
         s.state="investigate"; s.searchT=rand(1.8,3.2);
@@ -1698,6 +1780,7 @@ export function resetSpiderCave(farFromX,farFromZ,minDist=30){
   s.pendingT=0; s.speedMult=1; s.stacking=false; s.seekRun=false;
   s.lastKnown=null; s.target=null; s.mildCD=0; s.screechCD=0; s.stepAcc=0;
   s.sniffsLeft=0; s.scratchCD=0; s.sniffCD=0; s.stuckT=0;
+  s.roomLast=null; s.roomN=0; s.roamTgt=null; s.roamT=0;
   s.glowT=0; s.glowCD=0; s.burnSeen=CAVE.lastBurn? CAVE.lastBurn.at : null;
   s.huntT=rand(8,14);
   if(s.mesh){
