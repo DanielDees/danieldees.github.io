@@ -21,6 +21,7 @@ import { updateProps, interactables, exitDoor } from "./props.js";
 import { updateFocus, updateInteractHold } from "./interact.js";
 import { CINE, updateCinematic, startBreakerCine, startElevatorCine,
          startTheEndIntro, startTerminalCine, startDescentEnd, startAscentEnd } from "./cutscene.js";
+import { W, H, CELL, grid, cellToWorld } from "./map.js";
 import { updateLibrary, LIB, grid2, revealHole } from "./library.js";
 import { updateCave, CAVE, grid3 } from "./cave.js";
 import { updateHatchlings, HATCH } from "./hatchling.js";
@@ -74,8 +75,10 @@ window.NOCLIP_DEBUG={STATE, monster, spider, CINE, scene, camera, renderer,
   startDescentEnd, startAscentEnd, revealHole,
   enterTheEnd, enterTheNest, debugSkipToTheEnd, debugWarpToTerminal, debugWarpToNest, respawn,
   debugSpiderToWall, debugSpiderToCeiling, spiderHearDisc, debugSpiderDiscTransit,
+  W, H, CELL, cellToWorld,
   get interactables(){ return interactables; },
   get exitDoor(){ return exitDoor; },
+  get grid(){ return grid; },                   // level 0's, for parity with grid2/grid3
   get LIB(){ return LIB; },
   get grid2(){ return grid2; },
   get CAVE(){ return CAVE; },

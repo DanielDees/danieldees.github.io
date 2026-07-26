@@ -1,8 +1,9 @@
 /* ---------------- three.js scene & level geometry ---------------- */
 import { rand, clamp } from "./utils.js";
 import { W, H, CELL, WALL_H, grid, genMap, cellToWorld, isWall } from "./map.js";
-import { makeCanvas, texWall, texCarpet, texStains, texCeil, texCeilStains,
-         makeMoldTextures, makeDripTextures, sliceTexture,
+import { makeCanvas, texWall, texWallBump, texCarpet, texCarpetBump, texStains,
+         texCeil, texCeilBump, texCeilStains,
+         makeMoldTextures, makeDripTextures, sliceTexture, paperBoxUV,
          makeTubeTexture, texGalv, scaleBoxUV } from "./textures.js";
 import { $ } from "./utils.js";
 import { readSettings } from "./settings.js";
@@ -76,7 +77,9 @@ for(const o of scene.children) o.userData.persist=true;
    own shared assets via markShared. */
 export const SHARED=new Set();
 export function markShared(...res){ for(const r of res) if(r) SHARED.add(r); return res[0]; }
-markShared(texWall,texCarpet,texStains,texCeil,texCeilStains);   // level-0 tileable textures (mutated, reused)
+// level-0 tileable textures (repeat is mutated per build, and they're reused)
+markShared(texWall,texWallBump,texCarpet,texCarpetBump,texStains,
+           texCeil,texCeilBump,texCeilStains);
 const _MAT_MAPS=["map","alphaMap","aoMap","bumpMap","displacementMap","emissiveMap",
   "envMap","lightMap","metalnessMap","normalMap","roughnessMap","specularMap","gradientMap"];
 function disposeMaterial(m,done){
@@ -329,8 +332,13 @@ export function buildLevel(){
   /* Phong = per-fragment lighting. Lambert is per-vertex in three r128,
      which is why huge planes/boxes lit "all or nothing" — the floor's only
      vertices are its corners. Near-black specular keeps it matte. */
-  const wallMat = new THREE.MeshPhongMaterial({map:texWall, specular:0x0d0c07, shininess:6});
-  const wallGeo = new THREE.BoxGeometry(CELL,WALL_H,CELL);
+  const wallMat = new THREE.MeshPhongMaterial({map:texWall, bumpMap:texWallBump,
+    bumpScale:0.006, specular:0x0d0c07, shininess:6});
+  /* the paper's own mapping: two half-metre drops per metre across, the wall
+     height exactly once up. Raw box UVs stretched one 256² tile over the whole
+     4 × 3.97m face at 64 px/m — the lowest-resolution surface on the floor,
+     and the reason a wall read as a gradient. */
+  const wallGeo = paperBoxUV(new THREE.BoxGeometry(CELL,WALL_H,CELL),CELL,WALL_H,CELL,WALL_H);
   for(let y=0;y<H;y++)for(let x=0;x<W;x++){
     if(grid[y][x]===1){
       if(isWall(x-1,y)&&isWall(x+1,y)&&isWall(x,y-1)&&isWall(x,y+1)) continue;
@@ -342,11 +350,18 @@ export function buildLevel(){
     }
   }
   const SZ=W*CELL;
-  /* ceiling tiles at W,H (not W*2,H*2): doubles the grid squares to 1m —
-     exactly two wall-paper stripes wide, the classic drop-tile size */
-  texCarpet.repeat.set(W/2,H/2); texCeil.repeat.set(W,H);
+  /* The ceiling repeats once per CELL, which puts its four tiles at 1m — the
+     classic drop-tile size, and exactly two wallpaper drops wide.
+     The carpet retiles from 8m to 4m: at the old rate it ran at 64 px/m, the
+     same starved resolution as everything else on this floor. */
+  texCarpet.repeat.set(W,H); texCarpetBump.repeat.set(W,H);
+  texCeil.repeat.set(W,H);   texCeilBump.repeat.set(W,H);
   const floor=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),
-    new THREE.MeshPhongMaterial({map:texCarpet, specular:0x000000, shininess:1}));
+    new THREE.MeshPhongMaterial({map:texCarpet, bumpMap:texCarpetBump, bumpScale:0.006,
+      /* a whisper of specular, like the library's: matte-black specular gives
+         the pile's bump nothing to catch and the floor stays the flat plane it
+         has always been */
+      specular:0x0a0906, shininess:3}));
   floor.rotation.x=-Math.PI/2; scene.add(floor);
   /* stain overlay tiles at a non-integer rate so it never aligns with the carpet */
   texStains.repeat.set(5.13,4.71);
@@ -355,7 +370,8 @@ export function buildLevel(){
       specular:0x000000, shininess:1}));
   stains.rotation.x=-Math.PI/2; stains.position.y=0.015; scene.add(stains);
   const ceil=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),
-    new THREE.MeshPhongMaterial({map:texCeil, specular:0x050503, shininess:2}));
+    new THREE.MeshPhongMaterial({map:texCeil, bumpMap:texCeilBump, bumpScale:0.012,
+      specular:0x050503, shininess:2}));
   ceil.rotation.x=Math.PI/2; ceil.position.y=WALL_H; scene.add(ceil);
   /* rare water stains: overlay tiled at a non-integer rate (same trick as
      the carpet stains) so they never line up with the tile grid */
