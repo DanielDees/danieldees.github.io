@@ -326,6 +326,24 @@ export function sfxDeath(){
   o.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+2);
   noiseBurst(1.0,500,0.5);
 }
+/* the body hitting the floor: a soft low thud with the carpet/grit scrape
+   that follows it. The death camera cues this on the landing, so it has to
+   read as YOU going down, not as a door or a footstep — hence the very low
+   fundamental and the long, dull noise tail over it. */
+export function sfxBodyFall(){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(96,t);
+  o.frequency.exponentialRampToValueAtTime(34,t+0.34);
+  const g=C.createGain();env(g,t,0.006,0.55,0.5);
+  o.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+0.7);
+  const len=Math.floor(C.sampleRate*0.5), buf=C.createBuffer(1,len,C.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/len,2.2);
+  const src=C.createBufferSource();src.buffer=buf;
+  const f=C.createBiquadFilter();f.type="lowpass";f.frequency.value=430;f.Q.value=0.7;
+  const g2=C.createGain();env(g2,t,0.01,0.22,0.46);
+  src.connect(f);f.connect(g2);g2.connect(AU.sfx);src.start(t);
+}
 export function sfxHeartbeat(){
   if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
   [[0,0.4],[0.18,0.28]].forEach(([dt,v])=>{

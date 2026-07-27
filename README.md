@@ -1,12 +1,31 @@
 # NOCLIP — Escape the Backrooms
 
-**Version: v3.0.0**
+**Version: v3.1.0**
 
-A browser-based survival horror game, playable at
-[danieldees.github.io](https://danieldees.github.io). Vanilla JS ES modules built
-on three.js — no build step, no dependencies to install.
-Vibe-coded with Claude Fable 5 / Claude Mythos 5.
+A first-person browser survival horror game, playable right now at
+**[danieldees.github.io](https://danieldees.github.io)** — no install, no login,
+no plugin. Three procedurally generated floors, three things that hunt you, and
+one way down from each.
+
+Vanilla JS ES modules on three.js r128 from a CDN: **no build step, no package
+manager, no dependencies to install, and not a single image or audio file** —
+every texture is drawn at runtime into a 2D canvas and every sound is synthesized
+in the Web Audio API. Vibe-coded with Claude Fable 5 / Claude Mythos 5.
 Per-level lore lives in [lore/](lore/).
+
+## Run it locally
+
+The game uses ES modules, so it has to be served over HTTP — opening
+`index.html` from the filesystem will not work.
+
+```bash
+npx serve .
+# or
+python -m http.server
+```
+
+Then open the printed URL. GitHub Pages serves the repo root as the live site,
+so what you run locally is exactly what ships.
 
 ## The game
 
@@ -62,12 +81,60 @@ The chimney is real: climb it yourself, tread by tread, into the pale.
 | `C` | crouch / hide (silent in THE END; the only way past the spider). Hold by default, or switch to a toggle in the sound/options sheet |
 | `E` | interact (hold it to channel THE NEST's clutch burns) |
 | `F` / `R` | THE NEST only: lantern on/off / hold to crank the charge back up (loudly) |
-| `O` / `ESC` | sound mixer / pause (how to play lives on the pause sheet) |
+| `O` / `ESC` | options / pause — the **field notes** (how to play) live on the pause sheet |
 
 Headphones recommended — audio is positional, and both monsters are far easier to
 track by ear.
 
+The in-game **field notes** are a tabbed guide: CONTROLS, SURVIVAL (the five rules
+every floor obeys), and one page per floor. The pages for floors you have not
+reached yet stay sealed, so the guide can never spoil a level transition.
+
 ## Changelog
+
+### v3.1.0 (2026-07-27)
+An interface and presentation pass. No level geometry, AI or generation changed;
+everything here is about the game explaining itself and landing its endings.
+- **The field notes are a real guide.** How-to-play was five paragraphs of prose
+  in one scroll. It is now **tabbed** — CONTROLS (a proper key table plus a legend
+  for every HUD element, including the fact that flickering lights *are* the
+  hunter's position), SURVIVAL (the five rules that carry across all three floors),
+  and a page each for LEVEL 0, THE END and THE NEST with that floor's objectives,
+  its keeper's actual rules, and **what its cover is**. Floors you have not reached
+  keep their pages **sealed**, so the guide cannot spoil a transition.
+- **The interface takes the colour of the floor.** Backrooms yellow, the library's
+  dead blue-grey, the cave's fungus teal — one accent variable drives the HUD,
+  every menu, and the key hints, and it swaps on the level change.
+- **A readable objectives log.** It now says *where you are* ("THE NEST · THE CAVE
+  BELOW"), draws progress as **pips** when the count is small and a **meter** when
+  it isn't (twenty-two pips is a barcode, not a count), marks the live objective
+  with a lit row instead of strikethrough, and takes one visible breath when a new
+  objective goes live. The status strip carries the clock, the death count, and
+  state chips (FRENZY, CARRYING, POWER ON).
+- **The endings point somewhere.** Once a level has *shown* you its way out in a
+  cutscene — the library's hole, the cave's fissure — the log carries a live
+  **bearing** to it (`COLD AIR ↗ 46 m`). It is the draught you can feel, and it is
+  the only thing the HUD ever points at: collectibles you still find yourself.
+- **THE NEST has a real ending.** Climbing out of the cave used to hand you the
+  same generic level card with "TO BE CONTINUED" on it. Beating the third floor is
+  beating the game as it currently exists, and it now says so: a cold, pale
+  **RUN COMPLETE** sheet with a per-floor time breakdown, total time, clutches
+  burned, disks returned, times caught — and a plain note that you have reached the
+  end of the content.
+- **Death is something that happens to a body.** It used to be a red screen and a
+  menu in the same frame. There is now a **death sequence**: the hit knocks you
+  back, your legs go, you land (with the sound of it), and the camera — on the
+  floor, rolled over — **turns to look up at whatever is standing over you** while
+  the colour drains out of the world and the dark closes in as an iris. Falling
+  into the chasm gets its own shot: no impact, just the spin and the drop. The card
+  fades in after, and it is specific now — who killed you, **what you keep**, time
+  on that floor, and a rotating, floor-appropriate *"try this"* that names the
+  actual mistake.
+- **Fixed:** dying inside a cinematic (the breaker scene keeps the entity live)
+  left the cutscene latched and resumed it after the respawn.
+- Options is grouped into AUDIO / INPUT / DISPLAY with a real explanation under
+  every row; the pause sheet shows the run so far; the title screen links straight
+  to the field notes.
 
 ### v3.0.0 (2026-07-18)
 - **A third level: THE NEST.** The spiral stair below the library now lands somewhere —

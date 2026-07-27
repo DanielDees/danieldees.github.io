@@ -20,13 +20,15 @@ import { updateLights } from "./lights.js";
 import { updateProps, interactables, exitDoor } from "./props.js";
 import { updateFocus, updateInteractHold } from "./interact.js";
 import { CINE, updateCinematic, startBreakerCine, startElevatorCine,
-         startTheEndIntro, startTerminalCine, startDescentEnd, startAscentEnd } from "./cutscene.js";
+         startTheEndIntro, startTerminalCine, startDescentEnd, startAscentEnd,
+         DEATH, updateDeathCam } from "./cutscene.js";
 import { W, H, CELL, grid, cellToWorld } from "./map.js";
 import { updateLibrary, LIB, grid2, revealHole } from "./library.js";
 import { updateCave, CAVE, grid3 } from "./cave.js";
 import { updateHatchlings, HATCH } from "./hatchling.js";
 import { updateLantern, LANT } from "./lantern.js";
-import { enterTheEnd, enterTheNest, debugSkipToTheEnd, debugWarpToTerminal, debugWarpToNest, respawn } from "./lifecycle.js";
+import { enterTheEnd, enterTheNest, debugSkipToTheEnd, debugWarpToTerminal, debugWarpToNest,
+         respawn, die, win } from "./lifecycle.js";
 import { ui, renderObjectives } from "./ui.js";
 import "./input.js";
 
@@ -35,10 +37,14 @@ let last=performance.now(), uiTick=0;
 function loop(now){
   requestAnimationFrame(loop);
   const dt=Math.min((now-last)/1000,0.05); last=now;
+  /* the HUD fades out (CSS, ~1s) whenever a cinematic owns the camera — and
+     dying is one: nothing should be floating over your own corpse */
+  ui.hud.classList.toggle("cine",CINE.active||STATE.dead||STATE.won);
+  /* the death camera runs outside the play gate on purpose: the world is
+     frozen exactly as it was when it caught you, and only the view moves */
+  if(STATE.dead&&DEATH.active) updateDeathCam(dt);
   if(STATE.playing&&!STATE.paused&&!STATE.dead&&!STATE.won){
     STATE.time+=dt;
-    /* the HUD fades out (CSS, ~1s) whenever a cinematic owns the camera */
-    ui.hud.classList.toggle("cine",CINE.active);
     if(CINE.active){
       /* a cinematic owns the camera; the breaker scene keeps the entity AI
          alive (it's sprinting for the panel), the others script their cast */
@@ -74,6 +80,7 @@ window.NOCLIP_DEBUG={STATE, monster, spider, CINE, scene, camera, renderer,
   startBreakerCine, startElevatorCine, startTheEndIntro, startTerminalCine,
   startDescentEnd, startAscentEnd, revealHole,
   enterTheEnd, enterTheNest, debugSkipToTheEnd, debugWarpToTerminal, debugWarpToNest, respawn,
+  die, win, DEATH,                              // the death/win cards, for smoke tests
   debugSpiderToWall, debugSpiderToCeiling, spiderHearDisc, debugSpiderDiscTransit,
   W, H, CELL, cellToWorld,
   get interactables(){ return interactables; },

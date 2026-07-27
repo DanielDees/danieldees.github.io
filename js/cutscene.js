@@ -22,7 +22,7 @@ import { win, enterTheEnd, enterTheNest } from "./lifecycle.js";
 import { LIB, losCells2, revealHole } from "./library.js";
 import { CAVE } from "./cave.js";
 import { spiderPose, spiderDigPose } from "./spider.js";
-import { startUpdraftWind, sfxHatchTap } from "./audio.js";
+import { startUpdraftWind, sfxHatchTap, sfxBodyFall } from "./audio.js";
 
 export const CINE={active:false, kind:null, t:0};
 let D=null;                                   // per-cutscene working data
@@ -1128,4 +1128,108 @@ function updateAscend(dt){
     setTimeout(()=>{ ui.flash.style.transition="opacity 3s";
       ui.flash.style.opacity=0; },800);
   }
+}
+
+/* ================= death: you go down, and the dark comes in =================
+   Death used to be a red screen and a menu in the same frame, which read as a
+   UI event rather than as something that happened to a body. This is the same
+   camera language as every other cutscene, only it runs OUTSIDE CINE: the main
+   loop stops updating the world the instant STATE.dead is set, so the death
+   camera is driven from its own branch and nothing else in the scene moves —
+   which is exactly right. Whatever killed you is standing where it killed you,
+   and the camera falls to the floor and looks up at it while the iris closes.
+
+   Two causes, two shots:
+     "caught" — the hit, the collapse, the landing, the thing standing over you.
+     "fall"   — nothing to look at: the drop continues, spinning, into the dark. */
+export const DEATH={active:false, t:0};
+let DX=null;
+const DTH_HIT=0.22, DTH_LAND=1.28, DTH_CARD=2.8;
+
+export function startDeathCam(cause,onCard){
+  DEATH.active=true; DEATH.t=0;
+  const fall=cause==="fall";
+  /* who did it — the position is read LIVE each frame, so if a mesh is still
+     where it caught you the camera finds it however it was posed */
+  let killer=null;
+  if(!fall){
+    if(STATE.level===0&&monster.mesh) killer=monster.pos;
+    else if(spider.mesh) killer=spider.mesh.position;
+  }
+  DX={fall, killer, onCard, carded:false, landed:false,
+      x:camera.position.x, y:camera.position.y, z:camera.position.z,
+      yaw0:STATE.yaw, pitch0:STATE.pitch,
+      roll:(Math.random()<0.5?-1:1)*(fall?1:0.62),
+      spin:(Math.random()<0.5?-1:1)*rand(0.9,1.6)};
+  /* the hit itself: a dark red slap, not a white flash */
+  ui.flash.style.transition="none";
+  ui.flash.style.background=fall? "#05070a":"#4d0a06";
+  ui.flash.style.opacity=fall? 0.35:0.72;
+  setTimeout(()=>{ ui.flash.style.transition="opacity .85s"; ui.flash.style.opacity=0; },110);
+  /* the world drains and the iris opens wide, ready to close */
+  document.body.classList.add("dying");
+  ui.dread.style.opacity=fall? 0.3:0.7;
+  if(ui.deathfx){
+    ui.deathfx.style.setProperty("--r","170%");
+    ui.deathfx.style.opacity=1;
+  }
+}
+/* respawn (or any restart) hands the screen back */
+export function endDeathCam(){
+  DEATH.active=false; DX=null;
+  document.body.classList.remove("dying");
+  if(ui.deathfx){ ui.deathfx.style.opacity=0; ui.deathfx.style.setProperty("--r","170%"); }
+  ui.dread.style.opacity=0;
+}
+export function updateDeathCam(dt){
+  if(!DEATH.active||!DX) return;
+  DEATH.t+=dt;
+  const t=DEATH.t;
+  let x=DX.x, y=DX.y, z=DX.z, yaw=DX.yaw0, pitch=DX.pitch0, roll=0;
+  /* forward, in the basis the rest of the game uses */
+  const fx=-Math.sin(DX.yaw0), fz=-Math.cos(DX.yaw0);
+  if(DX.fall){
+    /* nothing caught you — the floor did not either. Keep going. */
+    const f=t*6+t*t*5;
+    y=DX.y-f;
+    x=DX.x+fx*Math.min(t,1.2)*0.7;
+    z=DX.z+fz*Math.min(t,1.2)*0.7;
+    yaw=DX.yaw0+DX.spin*t*0.55;
+    pitch=lerp(DX.pitch0,-1.05,seg(t,0,1.5));
+    roll=DX.roll*0.5*seg(t,0.2,2.2);
+    if(ui.deathfx) ui.deathfx.style.setProperty("--r",(170*(1-seg(t,0.3,2.3)))+"%");
+  } else {
+    /* the hit shoves you back off your feet… */
+    const kick=seg(t,0,DTH_HIT);
+    const back=0.42*kick+0.30*seg(t,DTH_HIT,DTH_LAND);
+    x=DX.x-fx*back; z=DX.z-fz*back;
+    /* …and then the legs go. A short bounce off the floor, then the sink. */
+    const down=seg(t,DTH_HIT,DTH_LAND);
+    y=lerp(DX.y,0.36,down)+0.10*kick*(1-kick)*4;
+    if(t>DTH_LAND){
+      const b=Math.max(0,1-(t-DTH_LAND)*3.4);
+      y=0.36+0.085*b*Math.abs(Math.sin((t-DTH_LAND)*11))-0.07*seg(t,DTH_LAND,DTH_CARD+1.2);
+    }
+    roll=DX.roll*ease(down)+DX.roll*0.16*seg(t,DTH_LAND,DTH_CARD+1.4);
+    /* the head turns to whatever is standing over you */
+    const turn=seg(t,0.12,DTH_LAND+0.35);
+    let kyaw=DX.yaw0, kpitch=0.42;
+    if(DX.killer){
+      const dx=DX.killer.x-x, dz=DX.killer.z-z;
+      const hd=Math.max(0.6,Math.hypot(dx,dz));
+      const ky=(DX.killer.y!==undefined? DX.killer.y:0)+1.35;
+      kyaw=Math.atan2(-dx,-dz);
+      kpitch=clamp(Math.atan2(ky-y,hd),0.05,1.32);
+    }
+    yaw=angLerp(DX.yaw0,kyaw,turn);
+    pitch=lerp(DX.pitch0,kpitch,turn);
+    if(ui.deathfx) ui.deathfx.style.setProperty("--r",(170*(1-seg(t,0.9,2.75)))+"%");
+    if(!DX.landed&&t>=DTH_LAND){ DX.landed=true; sfxBodyFall(); }
+  }
+  /* a dying body does not hold its head level */
+  const jit=hash(Math.floor(t*9)*0.37)*0.012*(1-seg(t,0,2.4));
+  camera.position.set(x,y,z);
+  camera.rotation.order="YXZ";
+  camera.rotation.y=yaw+jit; camera.rotation.x=pitch; camera.rotation.z=roll;
+  if(!DX.carded&&t>=DTH_CARD){ DX.carded=true; if(DX.onCard) DX.onCard(); }
 }

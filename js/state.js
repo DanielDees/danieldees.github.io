@@ -14,6 +14,11 @@ export const STATE={
   deaths:0, time:0,
   bob:0, moving:false,
   ambDim:1,                      // ambient-floor multiplier (the elevator crash drains it)
+  /* the one place the HUD is allowed to point at: {x,z} of a way OUT that
+     the level has already revealed to you in a cutscene (the library's hole,
+     the cave's fissure). Never a collectible — those you find yourself. */
+  guide:null,
+  deathCause:"caught",           // "caught" | "fall" — picks the death camera and the card
   /* ---- THE END progression ---- */
   discsCarried:0, discsDelivered:0, discsFound:0, discTotal:0,
   libT0:0,                       // STATE.time at the moment the library was entered

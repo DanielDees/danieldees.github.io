@@ -2212,6 +2212,7 @@ export function revealHole(){
   const h=LIB.hole;
   if(!h||STATE.holeOpen) return;
   STATE.holeOpen=true;
+  STATE.guide={x:h.x, z:h.z};       // the HUD's one legitimate pointer (see ui.js)
   h.group.visible=true;
   if(h.plug){ scene.remove(h.plug); h.plug.geometry.dispose(); h.plug=null; }
 }

@@ -2887,7 +2887,11 @@ function openFissure(){
   f.choke.visible=false;
   f.group.visible=true;
   f.revealT=0;
-  toast("Cold air. From above.",4200);
+  /* the last thing this level has to tell you is WHERE, and 188m of cave is
+     too much to sweep on a hunch: the draught it opened is the objectives
+     log's one legitimate pointer (see STATE.guide / the bearing row in ui.js) */
+  STATE.guide={x:f.x, z:f.z};
+  toast("The rubble lets go somewhere to the north. Cold air — from above.",5200);
 }
 
 /* The main loop stops calling updateCave the instant you die, so every loop
@@ -2904,7 +2908,7 @@ export function hushCave(){
 export function updateCave(dt){
   const tN=performance.now()/1000;
   /* falling into the dark under the bridge is its own ending */
-  if(STATE.y<-9&&!STATE.dead) die();
+  if(STATE.y<-9&&!STATE.dead) die("fall");
   /* rockfall shake, wearing off */
   if(CAVE.shakeT>0){
     CAVE.shakeT-=dt;
