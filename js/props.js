@@ -247,9 +247,14 @@ const engrave=(g,txt,x,y,font,al)=>{
 /* the car operating panel. Its layout is a shared table — the canvas and
    the button meshes both read COP, so a numeral can never drift off the
    button it belongs to. u runs along +z (toward the doors), v is height. */
-export const COP={y0:0.90, h:0.92, z0:-0.70, w:0.26,
-                  btnU:0.31, lblU:0.63, btnY:[1.62,1.49,1.36,1.23],
-                  dcY:1.10, alarmY:1.02};
+/* y0 was 0.90, which put the plate's bottom band — the alarm button and the
+   IN CASE OF FIRE legend — behind the handrail: the rail runs the side wall
+   at 0.95 and its brackets reach 0.99, and the plate started 0.14m under
+   that. The whole table (plate, buttons, print, and the indicator above it,
+   which reads y0+h) is lifted clear in one number. */
+export const COP={y0:1.06, h:0.92, z0:-0.70, w:0.26,
+                  btnU:0.31, lblU:0.63, btnY:[1.78,1.65,1.52,1.39],
+                  dcY:1.26, alarmY:1.18};
 const texCOP=makeCanvas(128,448,(g,w,h)=>{
   g.clearRect(0,0,w,h);
   /* u runs along +z (toward the doors), v is height. Anything that has to
@@ -289,12 +294,29 @@ const texCapPlate=makeCanvas(192,88,(g,w,h)=>{
   engrave(g,"LAST INSPECTED",w/2,58,"8px Courier New");
   engrave(g,"— / — / —",w/2,72,"bold 11px Courier New");
 });
-/* the hall station: two engraved arrows, and the sentence somebody added */
+/* ---- the cab's dimensions, shared with the cutscenes and THE END ----
+   The opening is 2.2 × 2.73: every other number in the elevator derives from
+   these three, which is the only reason a resize can be a three-line change
+   rather than a hunt through eighty literals.
+   The leaves are half the opening plus a 30mm overlap at the meeting stile.
+   TRAVEL is CAPPED: a full retraction wants a pocket as wide as a leaf, and
+   at a 2.2m opening in a 4m cell the flank is only 0.9m — an uncapped slide
+   drives 0.23m of door out of the far side of the wall, into whatever is
+   standing there. The leaf stops at the cell edge instead. */
+export const ELEV={OPEN_W:2.2, OPEN_H:2.73, DEPTH:2.6};
+ELEV.LEAF_W=ELEV.OPEN_W/2+0.03;
+ELEV.LEAF_X=ELEV.LEAF_W/2;                          // closed centre, ±
+ELEV.TRAVEL=Math.min(ELEV.OPEN_W/2, CELL/2-ELEV.LEAF_W);
 /* the hall station. HALL is the shared table again: the plate, the print and
    the two buttons all come off it, so the engraved arrow beside a button
    cannot end up behind it. Canvas y is measured DOWN from the plate's top,
-   which is what hallY() converts. */
-export const HALL={x:1.222, y:1.16, w:0.19, h:0.33, cw:96, ch:168, upC:50, dnC:104};
+   which is what hallY() converts.
+   Its x is measured off the OPENING, not written down flat: the jamb runs out
+   to OPEN_W/2+0.15 and a fixed 1.222 left the plate's edge sitting exactly on
+   that line — so the first time the cab grew, a third of the station slid
+   under the jamb's steel. 0.28 keeps ~60mm of wall visible between them. */
+export const HALL={x:ELEV.OPEN_W/2+0.28, y:1.16, w:0.19, h:0.33,
+                   cw:96, ch:168, upC:50, dnC:104};
 const hallY=cy=>HALL.y+HALL.h/2-(cy/HALL.ch)*HALL.h;
 const texHallFace=makeCanvas(HALL.cw,HALL.ch,(g,w,h)=>{
   g.clearRect(0,0,w,h);
@@ -497,7 +519,6 @@ const jambNumMat   =new THREE.MeshPhongMaterial({map:texJambNum, transparent:tru
   specular:0x000000, shininess:1});
 markShared(elevBrightMat,elevLineMat,elevPanelMat,elevSmokeMat,elevDarkMat,elevRubberMat,
            elevAlarmMat,elevVoidMat,elevFloorMat,copFaceMat,capPlateMat,hallFaceMat,jambNumMat);
-export const ELEV={OPEN_W:2.0, OPEN_H:2.6, DEPTH:2.6};   // cab dimensions, shared with the cutscene
 export function makeElevator(p,facing,opts={}){
   /* the exit elevator, carved INTO its wall cell: placeProps removes that
      cell's wall box and this rebuilds it as flanks + header around a
@@ -508,7 +529,11 @@ export function makeElevator(p,facing,opts={}){
      cab, passing its own (taller) wall height and wall material. */
   const {OPEN_W,OPEN_H,DEPTH}=ELEV;
   const WALL_H=opts.wallH||WALL_H0;
-  const HW=OPEN_W/2, IN=HW-0.03;            // inner face of the cab lining: x=±0.94
+  /* IN is the CENTRE of the 60mm cab lining; the surface you can touch is
+     IN−0.03. Everything mounted inside the car is set off IN rather than
+     written down as a number, so a wider opening carries the panelling, the
+     handrail, the egg-crate and the car panel out with it. */
+  const HW=OPEN_W/2, IN=HW-0.03;
   const g=new THREE.Group();
   const wallM=opts.wallMat||new THREE.MeshPhongMaterial({map:texWall, specular:0x0d0c07, shininess:6});
   /* Everything static goes into a per-material bucket and comes out as one
@@ -572,8 +597,13 @@ export function makeElevator(p,facing,opts={}){
   const PY0=0.24, PY1=OPEN_H-0.22, PH=PY1-PY0, PCY=(PY0+PY1)/2;
   for(const s of[-1,1])
     for(const pz of[-1.94,-0.72]) sbox(elevPanelMat, 0.016,PH,1.06, s*(IN-0.038),PCY,pz);
-  for(const px of[-0.645,0,0.645])
-    sbox(px===0? elevSmokeMat:elevPanelMat, 0.52,PH,0.016, px,PCY,-DEPTH+0.068);
+  /* three boards across the back wall — the middle one stands in for the
+     mirror. Their width is solved from the lining rather than written down,
+     so the 65mm margin at the corners and the 125mm gap between boards hold
+     at any cab width instead of leaving a bare strip beside the kick posts. */
+  const BPW=(2*(IN-0.065)-0.25)/3, BPX=BPW+0.125;
+  for(const px of[-BPX,0,BPX])
+    sbox(px===0? elevSmokeMat:elevPanelMat, BPW,PH,0.016, px,PCY,-DEPTH+0.068);
   /* the crashed car took the impact through the back panel */
   if(opts.wrecked)
     put(new THREE.MeshPhongMaterial({map:makeCrackTexture(), transparent:true, opacity:0.85,
@@ -597,7 +627,11 @@ export function makeElevator(p,facing,opts={}){
      troffer's guard had to learn: 1.5mm of blade seen edge-on is nothing,
      and straight up is the one angle anybody ever looks at a cab ceiling
      from — which in THE END is the first thing you do. */
-  const LZ=-DEPTH/2, LW2=1.44, LD=0.98, LY=OPEN_H-0.10;
+  const LZ=-DEPTH/2, LW2=2*IN-0.50, LD=0.98, LY=OPEN_H-0.10;
+  /* the crate's z-running bars are spaced ACROSS the frame, so their pitch
+     has to be solved from its width — a fixed 0.295 leaves the whole family
+     shunted to one side the moment the frame is not 1.44 wide */
+  const CRX=(LW2-0.26)/4;
   pbox(elevDarkMat,LW2+0.14,0.08,0.07, 0,LY,LZ-LD/2-0.035);
   pbox(elevDarkMat,LW2+0.14,0.08,0.07, 0,LY,LZ+LD/2+0.035);
   pbox(elevDarkMat,0.07,0.08,LD, -LW2/2-0.035,LY,LZ);
@@ -609,7 +643,7 @@ export function makeElevator(p,facing,opts={}){
       rod(elevDarkMat,0.008,LW2-0.03, 0,LY-0.055,LZ-LD/2+0.10+i*0.195, 0,0,
           opts.wrecked&&i===1? Math.PI/2+0.16 : Math.PI/2);
     if(!(opts.wrecked&&i===1))
-      rod(elevDarkMat,0.008,LD-0.03, -LW2/2+0.13+i*0.295,LY-0.071,LZ, Math.PI/2,0,0);
+      rod(elevDarkMat,0.008,LD-0.03, -LW2/2+0.13+i*CRX,LY-0.071,LZ, Math.PI/2,0,0);
   }
   /* the inspection hatch. Its trim is BRIGHT, not dark: 18mm of dark trim
      on a dark ceiling is invisible, and this hatch is the single most
@@ -650,31 +684,34 @@ export function makeElevator(p,facing,opts={}){
   }
   for(const s of[-1,1]) rod(elevDarkMat,0.016,0.10, s*0.18,OPEN_H-0.070,HZ-HS/2, 0,0,Math.PI/2);
   /* ---------- handrail, on real brackets ---------- */
-  const RY=0.95;
+  const RY=0.95, RBX=(OPEN_W-0.44)/2-0.16;   // back-rail bracket spread
   rod(elevBrightMat,0.022,OPEN_W-0.44, 0,RY,-DEPTH+0.135, 0,0,Math.PI/2);
-  for(const bx of[-0.62,0,0.62]){
+  for(const bx of[-RBX,0,RBX]){
     pbox(elevBrightMat,0.075,0.075,0.022, bx,RY,-DEPTH+0.078);
     rod(elevBrightMat,0.014,0.06, bx,RY,-DEPTH+0.105, Math.PI/2,0,0);
   }
   for(const s of[-1,1]){
-    rod(elevBrightMat,0.022,DEPTH-0.62, s*0.865,RY,-DEPTH/2-0.05, Math.PI/2,0,0);
+    rod(elevBrightMat,0.022,DEPTH-0.62, s*(IN-0.105),RY,-DEPTH/2-0.05, Math.PI/2,0,0);
     for(const bz of[-2.10,-1.30,-0.52]){
       pbox(elevBrightMat,0.022,0.075,0.075, s*(IN-0.041),RY,bz);
-      rod(elevBrightMat,0.014,0.06, s*0.905,RY,bz, 0,0,Math.PI/2);
+      rod(elevBrightMat,0.014,0.06, s*(IN-0.065),RY,bz, 0,0,Math.PI/2);
     }
   }
   /* ---------- return-air grilles ----------
      In the KICK and the COVE, which are the only two bands of the back wall
      that are not panelled: anywhere between them and the grille's box and a
      raised panel's box fight over the same 16mm of z. */
+  const GX=BPX-0.125;                        // rides with the board above it
   for(const[vy,vh]of[[0.105,0.13],[OPEN_H-0.12,0.075]]){
-    pbox(elevDarkMat,0.50,vh+0.024,0.010, 0.52,vy,-DEPTH+0.083);
+    pbox(elevDarkMat,0.50,vh+0.024,0.010, GX,vy,-DEPTH+0.083);
     const n=Math.max(3,Math.round(vh/0.028));
     for(let i=0;i<n;i++)
-      pbox(elevBrightMat,0.46,0.012,0.024, 0.52,vy-vh/2+vh/(2*n)+i*(vh/n),-DEPTH+0.090, -0.55);
+      pbox(elevBrightMat,0.46,0.012,0.024, GX,vy-vh/2+vh/(2*n)+i*(vh/n),-DEPTH+0.090, -0.55);
   }
-  /* the capacity plate, proud of the panel it is screwed to */
-  sbox(elevBrightMat,0.36,0.17,0.012, -0.58,1.62,-DEPTH+0.082);
+  /* the capacity plate, proud of the panel it is screwed to — and CENTRED on
+     that board, or a wider cab walks the board out from under it */
+  const CAPX=-BPX;
+  sbox(elevBrightMat,0.36,0.17,0.012, CAPX,1.62,-DEPTH+0.082);
   /* ---------- the portal, from the hall ---------- */
   const zg1=-0.062, zg2=-0.140;             // the two sill grooves; zg1 takes the leaves
   pbox(elevDarkMat,OPEN_W+0.14,0.018,0.26, 0,0.009,-0.098);            // the sill's pan
@@ -704,7 +741,7 @@ export function makeElevator(p,facing,opts={}){
   };
   printed(jambNumMat,0.10,0.15, -(HW+0.075),1.95,0.143);
   printed(hallFaceMat,HALL.w,HALL.h, HALL.x+0.038,HALL.y,0.0235);
-  printed(capPlateMat,0.34,0.155, -0.58,1.62,-DEPTH+0.089);
+  printed(capPlateMat,0.34,0.155, CAPX,1.62,-DEPTH+0.089);
   /* the ceiling diffuser. cabLightMat is the cutscene's handle on it: the
      panel it drives is the only thing in the cab that reads as "the light
      is on", quite apart from the point source. */
@@ -787,7 +824,7 @@ export function makeElevator(p,facing,opts={}){
      shoe on it, a kick plate, and a gib underneath riding the sill groove.
      The groove and the gib share zg1 — one number, so the shoe can never
      hover over the slot it is supposed to run in. */
-  const LWD=OPEN_W/2+0.03, LHD=OPEN_H-0.06, LCY=OPEN_H/2;
+  const LWD=ELEV.LEAF_W, LHD=OPEN_H-0.06, LCY=OPEN_H/2;
   const makeLeaf=(side)=>{
     const d=new THREE.Group();
     const st=[], dk=[], rb=[];
@@ -811,7 +848,7 @@ export function makeElevator(p,facing,opts={}){
       d.add(mergeStatic(arr,mat));
       for(const m of arr) m.geometry.dispose();
     }
-    d.position.set(side*0.515,0,0);
+    d.position.set(side*ELEV.LEAF_X,0,0);
     /* one leaf came out of its track. This is a ROLL about z, not a
        translation: the cutscene owns .position.x on both leaves, so any
        damage that lives in x is wiped the first time the doors move. */

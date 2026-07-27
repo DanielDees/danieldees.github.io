@@ -17,7 +17,7 @@ import { AU, panTo, sfxAlert, sfxStinger, sfxClunk, sfxPowerOn,
          sfxSpiderScratch, sfxSpiderDig, sfxHoleRumble, sfxStoneStep } from "./audio.js";
 import { ui, renderObjectives } from "./ui.js";
 import { monsterRushTo } from "./monster.js";
-import { exitDoor } from "./props.js";
+import { exitDoor, ELEV } from "./props.js";
 import { win, enterTheEnd, enterTheNest } from "./lifecycle.js";
 import { LIB, losCells2, revealHole } from "./library.js";
 import { CAVE } from "./cave.js";
@@ -285,11 +285,12 @@ function runMonster(dt){
 }
 function updateElevator(dt){
   const t=CINE.t, u=D.u;
-  /* ---- doors: open ramp minus close ramp; ±0.515 closed, 1.0m of travel
-     pockets each leaf fully behind the flank walls ---- */
+  /* ---- doors: open ramp minus close ramp. Closed centre and travel both
+     come off ELEV — they are the leaf's own geometry, and a copy of them
+     here silently detached the doors from the cab the first time it grew. */
   const slide=seg(t,T_DOORS_O,T_DOORS_O+1.4)-seg(t,T_DOORS_C,T_DOORS_C+1.3);
-  u.doorL.position.x=-(0.515+1.0*slide);
-  u.doorR.position.x= (0.515+1.0*slide);
+  u.doorL.position.x=-(ELEV.LEAF_X+ELEV.TRAVEL*slide);
+  u.doorR.position.x= (ELEV.LEAF_X+ELEV.TRAVEL*slide);
   /* ---- cab light: the main panel stays WHITE — its level sags and
      stutters as the power fails, and it dies outright at the lurch. The
      red lives where it belongs: the emergency lamp at the back of the cab,
@@ -482,9 +483,9 @@ export function startTheEndIntro(){
   /* the wreck: doors shut, lit only by the emergency lamp — a REAL point
      source parked at the lamp itself, with distance falloff like every
      other light in the game, not a screen wash */
-  u.doorL.position.x=-0.515; u.doorR.position.x=0.515;
+  u.doorL.position.x=-ELEV.LEAF_X; u.doorR.position.x=ELEV.LEAF_X;
   u.emergMat.color.set(0xff2515);
-  u.cabLight.position.set(0,2.3,-2.35);
+  u.cabLight.position.set(0,ELEV.OPEN_H-0.30,-2.35);
   u.cabLight.distance=5; u.cabLight.decay=2;
   u.cabLight.intensity=0.42; u.cabLight.color.setRGB(1,0.15,0.09);
   u.cabLightMat.color.setRGB(0.02,0.004,0.003);   // the main panel is dead
@@ -504,8 +505,8 @@ function updateLibIntro(dt){
   cue("stuck",LI_STUCK,()=>sfxClunk());
   cue("doors2",LI_DOOR2,()=>{ sfxElevDoors(1.2); sfxElevRattle(0.8); });
   const slide = 0.34*seg(t,LI_DOOR1,LI_STUCK) + 0.66*seg(t,LI_DOOR2,LI_OPEN);
-  u.doorL.position.x=-(0.515+1.0*slide);
-  u.doorR.position.x= (0.515+1.0*slide);
+  u.doorL.position.x=-(ELEV.LEAF_X+ELEV.TRAVEL*slide);
+  u.doorR.position.x= (ELEV.LEAF_X+ELEV.TRAVEL*slide);
   /* the emergency lamp breathes, slow and red, from its corner of the cab;
      the dead main panel gives exactly TWO brief dying-white blinks as the
      doors fight their track — discrete events, never a strobe */

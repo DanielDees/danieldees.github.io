@@ -564,14 +564,22 @@ function mergeGroups(a,b){
   g.addGroup(a.idx.length,b.idx.length,1);
   return g;
 }
+/* every dimension of every volume — closed, open, and the ones riding a
+   returns trolley — runs through this one factor. The base numbers describe a
+   book that photographs correctly and reads a size too small in the room, and
+   the tightest clearance in the building is the 0.375m between shelf boards:
+   at 1.21 the tallest design stands 0.363, which is the ceiling on this.
+   The trolley (CART_S) is scaled with it — a book truck whose decks are
+   0.34 apart cannot carry a 0.363 volume. */
+const BOOK_S=1.21;
 let BOOKS=null;                 // [{geo, mats, h, tx, d}] — the design pool
 let OPEN_BOOK=null;             // prototype group, cloned per placement
 let pageMats=null;
 function buildBookDesign(title,author,vol){
   const base=BOOK_BASES[Math.floor(Math.random()*BOOK_BASES.length)];
-  const h=(0.20+Math.random()*0.10)*1.1;  // page length (standing height)
-  const tx=(0.025+Math.random()*0.04)*1.1;// thickness
-  const d=(0.14+Math.random()*0.05)*1.1;  // cover width (depth on the shelf)
+  const h=(0.20+Math.random()*0.10)*BOOK_S;  // page length (standing height)
+  const tx=(0.025+Math.random()*0.04)*BOOK_S;// thickness
+  const d=(0.14+Math.random()*0.05)*BOOK_S;  // cover width (depth on the shelf)
   const {tex,uv:UV}=makeBookCoverTexture(title,author,base,
     Math.floor(Math.random()*6),vol,h,tx,d);
   const cover=new GeoAcc(), pages=new GeoAcc();
@@ -619,7 +627,10 @@ function ensureBooks(){
     BOOKS.push(buildBookDesign(title,author,vol));
   }
   /* the open book: covers splayed flat, two page slabs meeting at a gutter */
-  const od=0.18, oh=0.26;
+  /* the open book is sized off the SAME base numbers the closed designs use
+     (mid of the cover-width and page-length ranges) times BOOK_S, so it can
+     never drift away from the volumes lying open beside it */
+  const od=0.165*BOOK_S, oh=0.238*BOOK_S;
   const leather=new THREE.MeshPhongMaterial({color:0x3a2c20, specular:0x161208, shininess:12});
   OPEN_BOOK=new THREE.Group();
   const cov=new THREE.Mesh(new THREE.BoxGeometry(od*2+0.012,0.006,oh+0.006),leather);
@@ -889,8 +900,9 @@ function makeShelfRun(run){
       }
       budget-=n;
     } else {
-      /* abandoned open, mid-read */
-      if(!claim(occ,x-0.20,x+0.20)) continue;
+      /* abandoned open, mid-read — the spread is 2·od wide, so the claim has
+         to carry BOOK_S with it or the next arrangement lands on top of it */
+      if(!claim(occ,x-0.23,x+0.23)) continue;
       const ob=OPEN_BOOK.clone();
       ob.position.set(x,yTop,z);
       ob.rotation.y=(s>0?Math.PI:0)+(Math.random()-0.5)*0.5;
@@ -1211,6 +1223,15 @@ const cartRubberMat=new THREE.MeshPhongMaterial({color:0x1b1c1e, specular:0x2a2c
 const cartSteelMat=new THREE.MeshPhongMaterial({map:texBrushed, color:0xa8aeb4,
   specular:0x8a9096, shininess:70});
 const DECKS=[0.175,0.535,0.895];
+/* the truck grows with the books. Its decks are 0.36 apart, which leaves
+   0.34 of clear height between them — a volume standing on one at the new
+   BOOK_S is 0.363 and would push its head straight through the deck above.
+   Rather than re-typing thirty literals, the whole structure is scaled at
+   the merge (positions AND geometry), and the load is placed in the scaled
+   frame; the books themselves are already at BOOK_S and must NOT be scaled
+   a second time, which is why they go on after the merge, unscaled. */
+const CART_S=1.10;
+const CART_R=0.52*CART_S;                     // its floor-population keep-out
 function makeBookCart(){
   const g=new THREE.Group(); g.userData.prop="cart";
   const paint=[], rubber=[], steel=[];
@@ -1295,6 +1316,13 @@ function makeBookCart(){
       hub.rotation.z=Math.PI/2; hub.position.set(hs*0.017,0.050,-off); cg.add(hub); steel.push(hub);
     }
   }
+  /* blow the structure up to CART_S before anything is baked. The castor
+     groups are real parents, so they take the factor on their own transform
+     and their children ride it; every other part is still unparented, so it
+     takes both its offset and its size directly. */
+  for(const c of g.children){ c.position.multiplyScalar(CART_S); c.scale.setScalar(CART_S); }
+  for(const arr of[paint,rubber,steel])
+    for(const m of arr) if(!m.parent){ m.position.multiplyScalar(CART_S); m.scale.setScalar(CART_S); }
   g.updateMatrixWorld(true);                      // the castor groups carry a pose
   const tint=cartPaintMats[Math.floor(Math.random()*cartPaintMats.length)];
   const built=[];
@@ -1310,26 +1338,28 @@ function makeBookCart(){
   let guard=40;
   const used=[];                       // [deckY, x0, x1] claims
   while(load>0&&guard-->0){
-    const sy=DECKS[Math.floor(Math.random()*DECKS.length)]+0.010;
+    const sy=(DECKS[Math.floor(Math.random()*DECKS.length)]+0.010)*CART_S;
     const s=Math.random()<0.5?1:-1;
     const des=pickBook();
     const flat=Math.random()<0.35;
     const hw=flat? des.h/2+0.02 : des.tx/2+0.02;
-    const bx=rand(-0.36+hw,0.36-hw);
+    const half=0.36*CART_S;
+    if(hw>=half) continue;                        // nothing this long lies across a deck
+    const bx=rand(-half+hw,half-hw);
     if(used.some(([uy,a,b])=>uy===sy&&a<bx+hw&&b>bx-hw)) continue;
     used.push([sy,bx-hw,bx+hw]);
-    spawnBook(g,des,bx,sy,rand(-0.08,0.08),s,
+    spawnBook(g,des,bx,sy,rand(-0.08,0.08)*CART_S,s,
       flat? {flat:true,yaw:(Math.random()-0.5)*0.5}
           : {lean:Math.random()<0.5?(Math.random()-0.5)*0.5:0});
     load--;
   }
   /* the RETURNS card, in a real holder screwed to the end panel */
-  const hold=new THREE.Mesh(new THREE.BoxGeometry(0.010,0.13,0.44),cartSteelMat);
-  hold.position.set(0.474,0.72,0); g.add(hold);
-  const plq=new THREE.Mesh(new THREE.PlaneGeometry(0.40,0.10),
+  const hold=new THREE.Mesh(new THREE.BoxGeometry(0.010,0.13*CART_S,0.44*CART_S),cartSteelMat);
+  hold.position.set(0.474*CART_S,0.72*CART_S,0); g.add(hold);
+  const plq=new THREE.Mesh(new THREE.PlaneGeometry(0.40*CART_S,0.10*CART_S),
     new THREE.MeshPhongMaterial({map:makeEndTextTexture("RETURNS"), transparent:true,
       specular:0x000000, shininess:1}));
-  plq.position.set(0.480,0.72,0); plq.rotation.y=Math.PI/2;
+  plq.position.set(0.480*CART_S,0.72*CART_S,0); plq.rotation.y=Math.PI/2;
   g.add(plq);
   g.rotation.z=(Math.random()-0.5)*0.02;
   return g;
@@ -2380,7 +2410,7 @@ export function buildLibrary(){
   };
   dropFloor(makeLectern,12,0.36);
   dropFloor(makeMannequin,9,0.3);
-  dropFloor(makeBookCart,8,0.52);
+  dropFloor(makeBookCart,8,CART_R);
   dropFloor(makeGlobe,5,0.34);
   /* wall dressing: posters, cracks, and the level's name — meaninglessly.
      The stretch of south wall holding the crashed cab stays bare: nothing
@@ -2406,27 +2436,75 @@ export function buildLibrary(){
   for(let i=wallFaces.length-1;i>0;i--){
     const j=Math.floor(srand()*(i+1)); [wallFaces[i],wallFaces[j]]=[wallFaces[j],wallFaces[i]];
   }
+  /* ---- the occupancy ledger ----
+     Every pass that puts something on a wall books its rectangle here, and
+     every pass checks it first. It used to be that only the picture hang
+     tracked its own placements: the texts, the posters and the cracks each
+     took a face off a cycling cursor and stamped themselves on it blind, so
+     two passes landing on one face never knew about each other — and once
+     the four of them between them wanted more faces than the room had, the
+     cursor WRAPPED and the cracks, which run last, came down on top of
+     pictures that were already hanging.
+     The elevator books a rectangle too. The south wall already skips the
+     cells either side of the doorway, but a keep-out written in world space
+     is the one a pass added later cannot fail to see. */
+  const dressed=[];
+  {
+    const ep=cellToWorld2(exC,eyC);
+    dressed.push({x:ep.x, z:ep.z-CELL/2, y:(ELEV.OPEN_H+1.6)/2,
+                  w:ELEV.OPEN_W+1.6, h:ELEV.OPEN_H+1.6});
+  }
+  /* 0.045, not 0.22: the hang's cursor deliberately leaves a 0.10–0.19m gap
+     between neighbours, so a separation margin wider than the gap it is
+     checking rejects every second piece in every cluster — which is how a
+     34-picture hang quietly became a 10-picture one */
+  const spotFree=(x,z,y,w,h)=>!dressed.some(q=>
+    Math.hypot(q.x-x,q.z-z)<(q.w+w)/2+0.045 && Math.abs(q.y-y)<(q.h+h)/2+0.045);
   let fi=0;
   const take=()=>wallFaces[fi++%wallFaces.length];
+  /* walk the shuffled list from the cursor looking for a face — and a spot
+     along it — with room for a w×h piece, rather than taking the next face
+     blind. A full face now costs a retry instead of an overlap. */
+  const place=(w,h,yFn)=>{
+    for(let n=0;n<wallFaces.length;n++){
+      const f=take();
+      for(const t of[0,-1.05,1.05,-1.7,1.7]){
+        if(Math.abs(t)+w/2>1.86) continue;
+        const x=f.x+Math.cos(f.ry)*t, z=f.z-Math.sin(f.ry)*t;
+        for(let a=0;a<5;a++){
+          const y=yFn();
+          if(!spotFree(x,z,y,w,h)) continue;
+          dressed.push({x,z,y,w,h});
+          return {f,x,z,y};
+        }
+      }
+    }
+    return null;
+  };
   for(let i=0;i<7;i++){
-    const f=take();
+    const r=srand();
+    /* sideways stands the 3.4m banner on end, so it books its footprint the
+       other way round — a rect booked at the wrong orientation is no keep-out */
+    const side=r>=0.14&&r<0.24;
+    const p=place(side?0.85:3.4, side?3.4:0.85, ()=>rand(1.4,5.2));
+    if(!p) continue;
     const txt=new THREE.Mesh(new THREE.PlaneGeometry(3.4,0.85),
       new THREE.MeshPhongMaterial({map:makeEndTextTexture(), transparent:true,
         specular:0x000000, shininess:1}));
-    txt.position.set(f.x,rand(1.4,5.2),f.z);
-    txt.rotation.y=f.ry;
-    const r=srand();
+    txt.position.set(p.x,p.y,p.z);
+    txt.rotation.y=p.f.ry;
     if(r<0.14) txt.rotation.z=Math.PI;            // upside-down
-    else if(r<0.24) txt.rotation.z=Math.PI/2;     // sideways
+    else if(side) txt.rotation.z=Math.PI/2;
     else txt.rotation.z=(srand()-0.5)*0.06;
     scene.add(txt);
   }
   for(let i=0;i<12;i++){
-    const f=take();
+    const p=place(0.92,1.24,()=>rand(1.3,2.6));
+    if(!p) continue;
     const po=new THREE.Mesh(new THREE.PlaneGeometry(0.92,1.24),
       new THREE.MeshPhongMaterial({map:makePosterTexture(), specular:0x000000, shininess:2}));
-    po.position.set(f.x,rand(1.3,2.6),f.z);
-    po.rotation.y=f.ry; po.rotation.z=(srand()-0.5)*0.12;
+    po.position.set(p.x,p.y,p.z);
+    po.rotation.y=p.f.ry; po.rotation.z=(srand()-0.5)*0.12;
     scene.add(po);
   }
   /* ---- the hang ----
@@ -2443,17 +2521,11 @@ export function buildLibrary(){
      the room is 24m to the ceiling and the old band stopped at 3.2m, which
      dressed the bottom eighth of it and left the rest bare plaster. */
   {
-    const hung=[];                              // {x,z,y,w,h} — placed sight rects
     const bulk=new Map();                       // material → parts, merged room-wide
-    /* 0.045, not 0.22: the cursor deliberately leaves a 0.10–0.19m gap
-       between neighbours, so a separation margin wider than the gap it is
-       checking rejects every second piece in every cluster — which is how
-       a 34-picture hang quietly became a 10-picture one */
-    const free=(f,t,y,w,h)=>{
-      const x=f.dx*t+f.x, z=f.dz*t+f.z;
-      return !hung.some(q=>Math.hypot(q.x-x,q.z-z)<(q.w+w)/2+0.045&&
-                            Math.abs(q.y-y)<(q.h+h)/2+0.045);
-    };
+    /* the cluster layout keeps its own cursor, but the free test is now the
+       ROOM's ledger: a cluster laid over a poster or a banner was every bit
+       as wrong as a crack laid over a picture, it just never got reported */
+    const free=(f,t,y,w,h)=>spotFree(f.dx*t+f.x, f.dz*t+f.z, y, w, h);
     let hangs=0;
     for(let c=0;c<18&&hangs<34;c++){
       const f=take();
@@ -2493,7 +2565,7 @@ export function buildLibrary(){
           if(!bulk.has(mat)) bulk.set(mat,[]);
           bulk.get(mat).push(m);
         }
-        hung.push({x:p.g.position.x, z:p.g.position.z, y, w:p.w, h:p.h});
+        dressed.push({x:p.g.position.x, z:p.g.position.z, y, w:p.w, h:p.h});
         if(tx<=0) lft=Math.max(lft,-tx+p.w/2);   // the centre piece sets BOTH
         if(tx>=0) rgt=Math.max(rgt, tx+p.w/2);
         hangs++;
@@ -2506,13 +2578,18 @@ export function buildLibrary(){
       for(const m of arr){ if(m.parent) m.parent.remove(m); m.geometry.dispose(); }
     }
   }
+  /* the cracks run LAST, which is exactly why they were the pass that showed
+     the bug: by the time they pick a face the room is already dressed, so
+     they are the ones that have to give way */
   for(let i=0;i<11;i++){
-    const f=take();
-    const cr=new THREE.Mesh(new THREE.PlaneGeometry(rand(0.7,1.2),rand(2.2,3.6)),
+    const cw=rand(0.7,1.2), ch=rand(2.2,3.6);
+    const p=place(cw,ch,()=>rand(2.2,6.2));
+    if(!p) continue;
+    const cr=new THREE.Mesh(new THREE.PlaneGeometry(cw,ch),
       new THREE.MeshPhongMaterial({map:makeCrackTexture(), transparent:true,
         depthWrite:false, specular:0x000000, shininess:1}));
-    cr.position.set(f.x,rand(2.2,6.2),f.z);
-    cr.rotation.y=f.ry;
+    cr.position.set(p.x,p.y,p.z);
+    cr.rotation.y=p.f.ry;
     scene.add(cr);
   }
   /* hanging lights: faulty and uneven, but no longer rare — and every one
