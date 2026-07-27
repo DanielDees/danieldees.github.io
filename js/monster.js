@@ -549,9 +549,16 @@ export function updateMonster(dt){
     }
   } else m.knockT=Math.max(m.knockT,1.4);   // brief settle time after it stops
 
-  /* ---- continuous audio: breathing, groans, proximity bed, heartbeat ---- */
+  /* ---- continuous audio: breathing, groans, proximity bed, heartbeat ----
+     NOT while dead. The kill above calls die(), which ramps the bed and the
+     breathing to zero — and then this frame carried on and wrote them both
+     straight back at point-blank range. main.js stops calling this function
+     the instant STATE.dead is set, so that value was the LAST one either
+     gain ever received: the entity's drone sat under the death card, under
+     the menu and straight through the respawn, forever. A sustained gain
+     may only be written by a frame the world is still running in. */
   const prox = clamp(1 - d/22, 0, 1);
-  if(AU.ctx){
+  if(AU.ctx && !STATE.dead){
     const t=AU.ctx.currentTime;
     /* all entity noise +20% in v1.5 (bed 0.30→0.36 / 0.17→0.204) */
     const bedGain = (m.state==="chase"||m.state==="alert")? prox*0.36 : prox*0.204;
