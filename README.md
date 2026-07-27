@@ -130,6 +130,19 @@ everything here is about the game explaining itself and landing its endings.
   fades in after, and it is specific now — who killed you, **what you keep**, time
   on that floor, and a rotating, floor-appropriate *"try this"* that names the
   actual mistake.
+- **Fixed — THE NEST softlock.** The matriarch could freeze permanently. Hearing
+  you crank a lantern while you were crouched down a squeeze gave her a mark
+  inside ground she cannot enter; her pathfinder quietly routed her to the
+  nearest cell she *could* stand on, her route ran dry there two or three cells
+  short, and every arrival test — which measured against the mark itself — kept
+  failing. She re-pathed the same impossible cell three times a second, forever,
+  standing still. (The library had the same bug at its reading tables and was
+  fixed differently: there the body stays *pinned along a live path*, which the
+  movement watchdog catches. Here the path is simply empty, which that watchdog
+  structurally cannot see.) An unreachable mark is now snapped to the doorstep,
+  so the crawl you are hiding in *is* the destination: she comes as close as the
+  cave allows, sniffs around the mouth, and goes back to her rounds. A second
+  guard ends any pursuit that is commanded, pathless and motionless for 1.5s.
 - **Fixed:** dying inside a cinematic (the breaker scene keeps the entity live)
   left the cutscene latched and resumed it after the respawn.
 - Options is grouped into AUDIO / INPUT / DISPLAY with a real explanation under

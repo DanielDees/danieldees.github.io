@@ -64,7 +64,8 @@ export const spider={
   seekRun:false,        // seek at run speed (disc/strong alert) vs walk (mild)
   browseT:0, pauseT:0, scratchT:6, sniffT:0, sniffsLeft:0, searchT:0, stalkT:0,
   mildCD:0, stepAcc:0, screechCD:0, scratchCD:0, sniffCD:0,
-  stuckT:0,             // anti-deadlock: seconds spent commanded-but-stationary
+  stuckT:0,             // anti-deadlock: seconds spent commanded-but-stationary WITH a path
+  idleT:0,              // …and the cave's opposite: commanded-but-stationary with NO path left
   /* ---- v2.3: it climbs ----
      a surface-locomotion layer above the floor AI: the spider can crawl the
      perimeter walls and web up to the ceiling to reposition, then drop. */

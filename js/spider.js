@@ -1332,6 +1332,24 @@ function corridorClear3(ax,az,bx,bz){
   }
   return true;
 }
+/* `setPath3` REPORTS WHETHER IT COULD ACTUALLY GET THERE, and every caller
+   that measures arrival against its own mark has to read that.
+
+   `bfsPath3` is best-effort: handed a cell it cannot stand in — a squeeze,
+   the far side of a rubble choke, anything the flood never reached — it
+   returns the route to the nearest cell it CAN stand in and says nothing.
+   Left unchecked that is a hard softlock, and it is the exact library bug
+   in a new costume: she walks to the doorstep of the crawl you are hiding
+   in, her path runs dry two or three cells short of the mark, and an
+   arrival test written against the MARK never fires. She then re-paths the
+   same impossible cell every 0.35–0.8s forever, standing perfectly still.
+   The movement watchdog cannot save her either, because that one only
+   fires while a path EXISTS and here the path is empty.
+
+   The fix is the library's: THE DOORSTEP IS THE DESTINATION. Callers snap
+   their mark onto `end` when `reached` is false, so every radius below is
+   measured against a place she can physically stand, the episode arrives,
+   and `investigate` closes it out the way it always did. */
 function setPath3(wx,wz){
   const s=spider;
   let a=worldToCell3(s.pos.x,s.pos.z);
@@ -1349,6 +1367,10 @@ function setPath3(wx,wz){
                        clamp(wz,-CAVE_SPAN/2+CELL,CAVE_SPAN/2-CELL));
   const p=bfsPath3(a.cx,a.cy,b.cx,b.cy,false);
   s.path = p? p.map(c=>cellToWorld3(c.cx,c.cy)) : [];
+  /* read the endpoint off the RAW route, before the shift and the smoothing
+     chew on the copy: an exhausted path is [] and would report nothing */
+  const endC = (p&&p.length)? p[p.length-1] : null;
+  const reached = !!endC && endC.cx===b.cx && endC.cy===b.cy;
   if(s.path.length>1) s.path.shift();
   /* smooth */
   if(s.path.length>=3){
@@ -1360,6 +1382,13 @@ function setPath3(wx,wz){
     }
     s.path=out;
   }
+  return {reached, end: endC? cellToWorld3(endC.cx,endC.cy) : null};
+}
+/* move a mark onto the closest ground she can actually stand on. Only ever
+   called when the route came back short — an unreachable pocket becomes its
+   own doorstep, which is what "she got as near as the cave allows" means. */
+function snapMark(mark,r){
+  if(mark&&r&&!r.reached&&r.end) mark.set(r.end.x,0,r.end.z);
 }
 /* ---- what a NOISE tells it ------------------------------------------
    THE GAINS MULTIPLY, AND FIVE OF THEM MULTIPLY TO TELEPATHY. Each one is
@@ -1575,7 +1604,13 @@ export function updateSpiderCave(dt){
       break;
     case "seek":{
       if(sees){ s.state="chase"; s.repath=0; if(s.screechCD<=0){s.screechCD=6;sfxSpiderShriek(1,panTo(s.pos.x,s.pos.z));} break; }
-      if(s.lastKnown&&s.repath<=0){ setPath3(s.lastKnown.x,s.lastKnown.z); s.repath=s.seekRun?0.35:0.8; }
+      if(s.lastKnown&&s.repath<=0){
+        /* the mark is usually YOU, and you are allowed to be somewhere she
+           is not: crouched down a squeeze, past a choke. Snap it to where
+           the route actually ends or she seeks that spot forever. */
+        snapMark(s.lastKnown, setPath3(s.lastKnown.x,s.lastKnown.z));
+        s.repath=s.seekRun?0.35:0.8;
+      }
       const dLK=s.lastKnown? s.pos.distanceTo(s.lastKnown) : 1e9;
       if(dLK<2.0||(s.path.length===0&&dLK<CELL*1.5)){
         if(s.lastKnown) s.faceAng=Math.atan2(s.lastKnown.x-s.pos.x,s.lastKnown.z-s.pos.z);
@@ -1607,7 +1642,10 @@ export function updateSpiderCave(dt){
     case "frenzy":{
       /* coming for the fire at a dead run */
       if(sees){ s.state="chase"; s.repath=0; break; }
-      if(s.lastKnown&&s.repath<=0){ setPath3(s.lastKnown.x,s.lastKnown.z); s.repath=0.4; }
+      if(s.lastKnown&&s.repath<=0){
+        snapMark(s.lastKnown, setPath3(s.lastKnown.x,s.lastKnown.z));
+        s.repath=0.4;
+      }
       const dB=s.lastKnown? s.pos.distanceTo(s.lastKnown):0;
       if(dB<3.4||(s.path.length===0&&dB<CELL*1.6)){
         s.state="rampage"; s.path=[]; s.repath=0;
@@ -1642,7 +1680,12 @@ export function updateSpiderCave(dt){
       if(s.lastKnown&&s.pos.distanceTo(s.lastKnown)>3){
         /* a real cue outranks anything it invented for itself */
         s.roamTgt=null;
-        if(s.repath<=0){ setPath3(s.lastKnown.x,s.lastKnown.z); s.repath=0.5; }
+        if(s.repath<=0){
+          /* same snap as `seek`: unsnapped, a mark she cannot reach never
+             falls inside the 3m release below, so the hunt parks on it */
+          snapMark(s.lastKnown, setPath3(s.lastKnown.x,s.lastKnown.z));
+          s.repath=0.5;
+        }
       } else {
         /* it has worked that spot — release it, or the quartering below is
            just a tether that keeps snapping back to one corner */
@@ -1736,6 +1779,30 @@ export function updateSpiderCave(dt){
     }
   } else s.stuckT=0;
 
+  /* THE WATCHDOG ABOVE ONLY FIRES WHILE A PATH EXISTS, AND THE CAVE'S
+     FAILURE IS THE OPPOSITE ONE: the path is EMPTY. Upstairs a pinned
+     spider is pinned by `pushFromTables` cancelling movement along a route
+     the grid still believes in, so there is always a path to drop. Down
+     here `bfsPath3` hands back the doorstep, she stands on it, the route
+     runs out and she is left commanded, pathless and motionless — moving
+     at 0 m/s with `curSpeed` sitting at the full seek pace, forever.
+     The snaps above close every case we know of; this closes the shape.
+     Any pursuit that cannot move and has nowhere to go ENDS. */
+  if(!s.path.length&&s.curSpeed>0.5&&movedSpeed<0.3&&
+     (s.state==="seek"||s.state==="frenzy"||s.state==="hunt"||s.state==="tend")){
+    s.idleT=(s.idleT||0)+dt;
+    if(s.idleT>1.5){
+      s.idleT=0; s.repath=0; s.roamTgt=null;
+      if(s.state==="tend") s.tendTgt=null;          // that nest is not reachable from here: take the next one
+      else if(s.state==="hunt") s.lastKnown=null;   // stop working a mark she can't close on
+      else {
+        if(s.lastKnown) s.faceAng=Math.atan2(s.lastKnown.x-s.pos.x,s.lastKnown.z-s.pos.z);
+        s.state="investigate"; s.searchT=rand(1.8,3.2);
+        startSniffFit(s,1,rand(0.4,0.9));
+      }
+    }
+  } else s.idleT=0;
+
   /* ---- the catch: the squeezes are the tables of this level ---- */
   const lethal = s.state==="chase"||s.state==="frenzy"||s.state==="hunt"||(s.state==="seek"&&s.seekRun);
   if(!inSqueeze() && d<(lethal?2.1:1.5)) die();
@@ -1818,7 +1885,7 @@ export function resetSpiderCave(farFromX,farFromZ,minDist=30){
   s.state="tend"; s.tendTgt=null; s.nestIdx=-1; s.path=[]; s.repath=0; s.curSpeed=0;
   s.pendingT=0; s.speedMult=1; s.stacking=false; s.seekRun=false;
   s.lastKnown=null; s.target=null; s.mildCD=0; s.screechCD=0; s.stepAcc=0;
-  s.sniffsLeft=0; s.scratchCD=0; s.sniffCD=0; s.stuckT=0;
+  s.sniffsLeft=0; s.scratchCD=0; s.sniffCD=0; s.stuckT=0; s.idleT=0;
   s.roomLast=null; s.roomN=0; s.roamTgt=null; s.roamT=0;
   s.glowT=0; s.glowCD=0; s.hearT=0; s.burnSeen=CAVE.lastBurn? CAVE.lastBurn.at : null;
   s.huntT=rand(8,14);
