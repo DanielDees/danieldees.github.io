@@ -16,9 +16,11 @@
 import { rand, clamp, lerp, srand, hash } from "./utils.js";
 import { CELL } from "./map.js";
 import { STATE } from "./state.js";
-import { scene, camera, renderer, lights, hemi, amb, makeLightRecord, markShared, mergeStatic, freezeStaticScene } from "./scene.js";
-import { makeCanvas, texLibWall, texLibCarpet, texLibCeil, texShelfWood, texDeskWood,
+import { scene, camera, renderer, lights, hemi, amb, makeLightRecord, markShared, mergeStatic, freezeStaticScene, tubeTex } from "./scene.js";
+import { makeCanvas, texLibWall, texLibCarpet, texLibCarpetBump, texLibCeil, texShelfWood, texDeskWood,
+         texCaveRock, texGalv, texBeige, makeKeyboardTexture, makeFloppyTexture,
          makeCrackTexture, makeEndTextTexture, makePosterTexture, makeArtTexture,
+         makeWrapTexture, texTape, texCartPaint, texMannequin,
          makeBookCoverTexture, BOOK_TITLES, BOOK_BASES,
          makeArchiveBoxTexture, BOX_LABELS,
          texPages, texPagesAged, makeOpenPagesTexture, scaleBoxUV } from "./textures.js";
@@ -44,6 +46,7 @@ export const LIB={
   blackActive:false, blackElapsed:0, blackDur:0, nextBlack:35,   // periodic light failures (staggered 2s wave)
   webs:[], webGroup:null,             // the spider's silk: live rappel strands + shrivelled coils left on the ceiling
   hole:null,                          // the dug way down: {x,z,r,group,plug,lights,glow,stair} (see buildHole)
+  weeping:false, weepT:0, weepPaint:0,// the terminal's last face, still crying after the cutscene hands you back
 };
 /* the stacks' shared dimensions: collision, the ladders and the disc sites
    all derive from these so a resize can never strand them again */
@@ -335,14 +338,185 @@ function genLibrary(){
 }
 
 /* ---------------- prop builders ---------------- */
+/* THE GRAIN HAS A DIRECTION. Both wood canvases are drawn with the grain
+   running down the image (v), which is right for an upright — a stile, a
+   leg, a shelf end — and wrong for everything that lies along its length.
+   Left alone with world-scaled UVs, a 3.6m tabletop wore its grain running
+   across the 90mm edge and smeared flat over the face, which is what made
+   every board in the building read as painted board rather than timber.
+   A rotated CLONE fixes it for nothing: the same image, u and v swapped,
+   so horizontal members get grain that runs the way they were cut. */
+const grainH=t=>{ const c=t.clone(); c.center.set(0.5,0.5); c.rotation=Math.PI/2; c.needsUpdate=true; return c; };
+const texShelfWoodH=grainH(texShelfWood), texDeskWoodH=grainH(texDeskWood);
 const shelfMat=new THREE.MeshPhongMaterial({map:texShelfWood, specular:0x16100a, shininess:8});
 const deskMat =new THREE.MeshPhongMaterial({map:texDeskWood,  specular:0x1c1408, shininess:12});
+const shelfMatH=new THREE.MeshPhongMaterial({map:texShelfWoodH, specular:0x16100a, shininess:8});
+const deskMatH =new THREE.MeshPhongMaterial({map:texDeskWoodH,  specular:0x1c1408, shininess:12});
+/* every wooden member is a box with world-scaled UVs — one grain density
+   across the whole building, whatever the member's size */
+const woodBox=(w,h,d,x,y,z,m)=>{
+  const b=new THREE.Mesh(scaleBoxUV(new THREE.BoxGeometry(w,h,d),w,h,d,m||0.9));
+  b.position.set(x,y,z);
+  return b;
+};
+/* a box that narrows toward its LOW end on `axis` — the vertices past zero
+   pulled in by k. A leg that tapers to the floor and a CRT that isn't a
+   perfect cuboid are most of the distance between furniture and crates.
+   Box vertices are per-face duplicates, so recomputing normals afterwards
+   keeps the facets hard instead of rounding the whole thing off. */
+function taperBox(w,h,d,k,axis){
+  const g=scaleBoxUV(new THREE.BoxGeometry(w,h,d),w,h,d,0.9);
+  const p=g.attributes.position, byZ=axis==="z";
+  for(let i=0;i<p.count;i++){
+    if((byZ? p.getZ(i):p.getY(i))>0) continue;      // the wide end stays put
+    p.setX(i,p.getX(i)*k);
+    if(byZ) p.setY(i,p.getY(i)*k); else p.setZ(i,p.getZ(i)*k);
+  }
+  g.computeVertexNormals();
+  return g;
+}
 const darkMetalMat=new THREE.MeshPhongMaterial({color:0x474b50, specular:0x303336, shininess:36});
-const beigePlastic=new THREE.MeshPhongMaterial({color:0xb6ad97, specular:0x2a2822, shininess:18});
-const beigePlasticDark=new THREE.MeshPhongMaterial({color:0x8e8672, specular:0x222018, shininess:14});
-/* untouched objects "wrapped in plastic packaging" */
-const plasticWrap=new THREE.MeshPhongMaterial({color:0xcfd6da, specular:0x888d92, shininess:60,
-  transparent:true, opacity:0.18, depthWrite:false});
+const beigePlastic=new THREE.MeshPhongMaterial({map:texBeige, specular:0x2a2822, shininess:18});
+const beigePlasticDark=new THREE.MeshPhongMaterial({map:texBeige, color:0x6f6a5b,
+  specular:0x222018, shininess:14});
+/* ---- untouched objects, still in their packaging ----
+   This was a BoxGeometry at 0.18 opacity wearing a flat blue-grey, and from
+   any angle that is a cube of fog: a solid you can see a little way into,
+   with six hard corners and not one fold. Three things had to change, and
+   all three matter equally.
+   1. A SHEET IS NOT A BOX. `wrapShape` is a closed surface of revolution
+      about the bundle's axis with a rounded-rectangle section, standing off
+      the object by the slack the film actually has, tucked under at the
+      floor and GATHERED into a twist at the top — plus a fold field that
+      pushes it out of symmetry. Nothing in it is straight.
+   2. The alpha is CREASE-shaped (makeWrapTexture), so what you read is the
+      white lines where the sheet has doubled, not a tinted volume.
+   3. DoubleSide. Seeing the far wall of the bag THROUGH the near one is
+      most of what says "bag" rather than "block" — and with depthWrite off
+      the object inside still occludes the film behind it correctly.
+   And flatShading, which is worth as much as the other three together:
+   crumpled polythene is FACETS meeting at creases, and a smooth-shaded
+   shell of the same silhouette is a bell jar. Each panel takes its own
+   specular, so the bundle breaks up the moment any light moves. */
+const texWrapFilm=makeWrapTexture();
+const plasticWrap=new THREE.MeshPhongMaterial({map:texWrapFilm, color:0xdde6ea,
+  specular:0xb8c4c8, shininess:88, transparent:true, opacity:0.62,
+  depthWrite:false, side:THREE.DoubleSide, flatShading:true});
+/* the tape is DULL and nearly grey: at any real saturation two bands round
+   a wrapped chair read as brass hoops floating in the air, which is the
+   opposite of the thing they are meant to be holding shut */
+const wrapTapeMat=new THREE.MeshPhongMaterial({map:texTape, color:0x8c8a80,
+  specular:0x3a3830, shininess:18, transparent:true, opacity:0.62,
+  depthWrite:false, side:THREE.DoubleSide});
+/* the bundle's surface, as a function of (u around, v base→gather). Both the
+   film and the tape bands sample this one shape, so a band can never float
+   off the sheet it is supposed to be holding shut. */
+function wrapShape(w,d,h){
+  const n=3.2;                                   // rounded-rectangle section
+  const slack=0.035+Math.random()*0.02;          // how far off the object it stands
+  const a=w/2+slack, b=d/2+slack;
+  /* Fold harmonics. k is an INTEGER on purpose — u wraps, and a fractional
+     wavelength puts a hard crease down the seam. The LOW orders carry most
+     of the amplitude and that is the whole point: what makes a bundle read
+     as crumpled is its SILHOUETTE, and the first pass spent its amplitude
+     on k=5 and 7, which is surface ripple you cannot see against the sky.
+     k=1 is the big asymmetric lobe — the side the sheet was pulled from. */
+  const harm=[];
+  for(const[k,a]of[[1,0.150],[2,0.165],[3,0.105],[5,0.045],[7,0.024]])
+    harm.push({k, amp:a*(0.65+Math.random()*0.7),
+               ph:Math.random()*7, vq:(Math.random()-0.5)*9});
+  /* the vq spread above is the other half of it: with a small drift every
+     ridge runs the full height of the bag and the thing comes out FLUTED,
+     like a column. At this spread a fold wanders most of the way round as
+     it rises, which is what a sheet gathered at one end actually does. */
+  const vph=Math.random()*7, vph2=Math.random()*7;
+  const lean=(Math.random()-0.5)*0.05;           // nothing hangs plumb
+  /* envelope: tucked under at the foot, slack and uneven through the body,
+     pinched into the twist at the top — but never to a POINT, which is a
+     cone. It closes on a stub, and the knot sits on that. */
+  const env=v=>{
+    const lump=1+0.055*Math.sin(v*Math.PI*2.6+vph)+0.03*Math.sin(v*Math.PI*4.3+vph2);
+    if(v<0.10) return (0.62+0.38*(v/0.10))*lump;
+    if(v>0.80){ const k=(v-0.80)/0.20; return (1-0.80*(k*k*(3-2*k)))*lump; }
+    return lump;
+  };
+  return (u,v,off)=>{
+    const th=u*Math.PI*2;
+    const e=env(v), taper=Math.min(1,e*1.6);     // folds die into the gather
+    let f=0;
+    for(const q of harm) f+=q.amp*Math.sin(th*q.k+q.ph+v*q.vq);
+    f=f*taper+0.022*Math.sin(v*Math.PI*5+th*2)*taper;
+    const s=(1+f)*e+(off||0);
+    const ct=Math.cos(th), st=Math.sin(th);
+    const r=Math.pow(Math.pow(Math.abs(ct/a),n)+Math.pow(Math.abs(st/b),n),-1/n);
+    return [ct*r*s+lean*h*v, v*h, st*r*s];
+  };
+}
+/* the sheet: a (NU+1)×(NV+1) grid closed with a fan at each pole. It CLOSES
+   at both ends for the lathe reason — an open ring on a DoubleSide surface
+   is a rim you can see the inside of the bag through end-on. */
+function wrapSheetGeo(P,h){
+  /* COARSE on purpose: with flatShading the panel count IS the fold count,
+     and a 32×20 grid gives facets too small to read as anything but a
+     smooth shell */
+  const NU=20, NV=14, pos=[], uv=[], idx=[];
+  const push=(p,u,v)=>{ pos.push(p[0],p[1],p[2]); uv.push(u,v); };
+  for(let j=0;j<=NV;j++)for(let i=0;i<=NU;i++){
+    const u=i/NU, v=j/NV;
+    push(P(u===1?0:u,v),u,v);
+  }
+  const R=NU+1;
+  for(let j=0;j<NV;j++)for(let i=0;i<NU;i++){
+    const A=j*R+i, B=A+1, C=A+R, D=C+1;
+    idx.push(A,C,B, B,C,D);
+  }
+  /* the foot: a fan closing onto the floor, just clear of it */
+  const foot=pos.length/3;
+  push([0,0.004,0],0.5,0);
+  for(let i=0;i<NU;i++) idx.push(foot,i,i+1);
+  /* the knot: the gather twisted up into a short stub, leaning off plumb */
+  const knot=pos.length/3;
+  push([(Math.random()-0.5)*0.05,h+0.055,(Math.random()-0.5)*0.05],0.5,1);
+  const last=NV*R;
+  for(let i=0;i<NU;i++) idx.push(knot,last+i+1,last+i);
+  const g=new THREE.BufferGeometry();
+  g.setAttribute("position",new THREE.Float32BufferAttribute(pos,3));
+  g.setAttribute("uv",new THREE.Float32BufferAttribute(uv,2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+/* a tape band riding the sheet, standing 6mm proud of it */
+function wrapBandGeo(P,v0,v1){
+  const NU=20, pos=[], uv=[], idx=[];
+  for(let j=0;j<2;j++)for(let i=0;i<=NU;i++){
+    const u=i/NU, p=P(u===1?0:u, j?v1:v0, 0.006);
+    pos.push(p[0],p[1],p[2]); uv.push(u*5,j);
+  }
+  const R=NU+1;
+  for(let i=0;i<NU;i++){ const A=i,B=A+1,C=A+R,D=C+1; idx.push(A,C,B, B,C,D); }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute("position",new THREE.Float32BufferAttribute(pos,3));
+  g.setAttribute("uv",new THREE.Float32BufferAttribute(uv,2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+/* w×d footprint, h tall — the film clears the object on every side */
+function makeWrap(w,d,h){
+  const g=new THREE.Group();
+  const P=wrapShape(w,d,h);
+  g.add(new THREE.Mesh(wrapSheetGeo(P,h),plasticWrap));
+  const bands=[];
+  for(const v of[0.24+Math.random()*0.1, 0.58+Math.random()*0.1])
+    if(Math.random()<0.45) bands.push(new THREE.Mesh(wrapBandGeo(P,v,v+0.022),wrapTapeMat));
+  if(bands.length){
+    g.add(mergeStatic(bands,wrapTapeMat));
+    for(const b of bands) b.geometry.dispose();
+  }
+  g.rotation.y=Math.random()*Math.PI*2;          // the fold pattern faces anywhere
+  return g;
+}
 
 /* ---- the books: a pool of distinct, properly 3D volumes ----
    Every design is a real closed book — two cover boards with fore-edge
@@ -390,14 +564,22 @@ function mergeGroups(a,b){
   g.addGroup(a.idx.length,b.idx.length,1);
   return g;
 }
+/* every dimension of every volume — closed, open, and the ones riding a
+   returns trolley — runs through this one factor. The base numbers describe a
+   book that photographs correctly and reads a size too small in the room, and
+   the tightest clearance in the building is the 0.375m between shelf boards:
+   at 1.21 the tallest design stands 0.363, which is the ceiling on this.
+   The trolley (CART_S) is scaled with it — a book truck whose decks are
+   0.34 apart cannot carry a 0.363 volume. */
+const BOOK_S=1.21;
 let BOOKS=null;                 // [{geo, mats, h, tx, d}] — the design pool
 let OPEN_BOOK=null;             // prototype group, cloned per placement
 let pageMats=null;
 function buildBookDesign(title,author,vol){
   const base=BOOK_BASES[Math.floor(Math.random()*BOOK_BASES.length)];
-  const h=(0.20+Math.random()*0.10)*1.1;  // page length (standing height)
-  const tx=(0.025+Math.random()*0.04)*1.1;// thickness
-  const d=(0.14+Math.random()*0.05)*1.1;  // cover width (depth on the shelf)
+  const h=(0.20+Math.random()*0.10)*BOOK_S;  // page length (standing height)
+  const tx=(0.025+Math.random()*0.04)*BOOK_S;// thickness
+  const d=(0.14+Math.random()*0.05)*BOOK_S;  // cover width (depth on the shelf)
   const {tex,uv:UV}=makeBookCoverTexture(title,author,base,
     Math.floor(Math.random()*6),vol,h,tx,d);
   const cover=new GeoAcc(), pages=new GeoAcc();
@@ -445,7 +627,10 @@ function ensureBooks(){
     BOOKS.push(buildBookDesign(title,author,vol));
   }
   /* the open book: covers splayed flat, two page slabs meeting at a gutter */
-  const od=0.18, oh=0.26;
+  /* the open book is sized off the SAME base numbers the closed designs use
+     (mid of the cover-width and page-length ranges) times BOOK_S, so it can
+     never drift away from the volumes lying open beside it */
+  const od=0.165*BOOK_S, oh=0.238*BOOK_S;
   const leather=new THREE.MeshPhongMaterial({color:0x3a2c20, specular:0x161208, shininess:12});
   OPEN_BOOK=new THREE.Group();
   const cov=new THREE.Mesh(new THREE.BoxGeometry(od*2+0.012,0.006,oh+0.006),leather);
@@ -595,21 +780,40 @@ function placeAccent(g,sx,yTop,sz){
 function makeShelfRun(run){
   /* one continuous double-sided open stack: uprights at every cell seam,
      boards spanning the whole run — and, as of v2.1.0, properly stocked:
-     row after row of spines with gaps, strays and library clutter between */
+     row after row of spines with gaps, strays and library clutter between.
+     v3.1: it is joinery now rather than five slabs. A plinth it stands on,
+     a crown rail across the top, a lipped front edge on every board (that
+     shadow line under the lip is most of what tells your eye a shelf is a
+     shelf), and a brass card holder on each end. The whole carcass merges
+     to THREE draws — grain-along, grain-up, and the brass — where the five
+     bare slabs alone used to cost ten. */
   const g=new THREE.Group();
   const len=run.cells.length*CELL, H=SHELF_H, D=SHELF_D;
-  const boardGeo=new THREE.BoxGeometry(len,0.055,D);
+  const along=[], upright=[], brass=[];
   for(const by of BOARD_Y){
-    const b=new THREE.Mesh(boardGeo,shelfMat); b.position.y=by; g.add(b);
+    along.push(woodBox(len,0.055,D, 0,by,0));
+    /* the front lip, both faces — proud of the board and a touch deeper */
+    for(const s of[-1,1]) along.push(woodBox(len,0.075,0.022, 0,by-0.006,s*(D/2-0.011)));
   }
-  const upGeo=new THREE.BoxGeometry(0.09,H,D);
-  for(let i=0;i<=run.cells.length;i++){
-    const u=new THREE.Mesh(upGeo,shelfMat);
-    u.position.set(-len/2+i*CELL,H/2,0); g.add(u);
+  for(let i=0;i<=run.cells.length;i++)
+    upright.push(woodBox(0.09,H,D, -len/2+i*CELL,H/2,0));
+  if(Math.random()<0.75)                       // a thin centre back panel, most runs
+    along.push(woodBox(len,H-0.2,0.04, 0,H/2,0));
+  /* plinth and crown are held flush with the collision slab (SHELF_D/2 +
+     0.02) — anything proud of that is something you can walk your face
+     through */
+  along.push(woodBox(len+0.05,0.10,D+0.04, 0,0.05,0));        // plinth
+  along.push(woodBox(len+0.06,0.07,D+0.04, 0,H+0.035,0));     // crown rail
+  /* the card holders: what shelf this is, if anyone still filed by it */
+  for(const s of[-1,1])for(const f of[-1,1]){
+    const p=new THREE.Mesh(new THREE.BoxGeometry(0.075,0.05,0.006));
+    p.position.set(s*(len/2-0.045),1.34,f*(D/2+0.004));
+    brass.push(p);
   }
-  if(Math.random()<0.75){                      // a thin centre back panel, most runs
-    const sp=new THREE.Mesh(new THREE.BoxGeometry(len,H-0.2,0.04),shelfMat);
-    sp.position.y=H/2; g.add(sp);
+  for(const arr of[[along,shelfMatH],[upright,shelfMat],[brass,accentBrass]]){
+    if(!arr[0].length) continue;
+    g.add(mergeStatic(arr[0],arr[1]));
+    for(const m of arr[0]) m.geometry.dispose();
   }
   /* ---- the books ----
      Thinned out, not stripped: every board keeps 0–20 volumes (≈8 on
@@ -696,8 +900,9 @@ function makeShelfRun(run){
       }
       budget-=n;
     } else {
-      /* abandoned open, mid-read */
-      if(!claim(occ,x-0.20,x+0.20)) continue;
+      /* abandoned open, mid-read — the spread is 2·od wide, so the claim has
+         to carry BOOK_S with it or the next arrangement lands on top of it */
+      if(!claim(occ,x-0.23,x+0.23)) continue;
       const ob=OPEN_BOOK.clone();
       ob.position.set(x,yTop,z);
       ob.rotation.y=(s>0?Math.PI:0)+(Math.random()-0.5)*0.5;
@@ -729,36 +934,69 @@ function makeShelfRun(run){
   if(run.axis===1) g.rotation.y=Math.PI/2;
   return g;
 }
+/* a heavy reading table: just tall enough, easily wide and long enough to
+   crouch under. Now built like one — a plank top with real board seams and
+   a bullnose edge band, a deep apron all four sides carrying a bead, and
+   square legs that taper to a chamfered foot.
+   NOTHING GOES UNDER IT. The obvious next move is stretchers between the
+   legs, and it is wrong: a table cell is passable to a crouched player and
+   the collision island is a plain 3.1m square, so a bar down at shin height
+   is a bar you crawl straight through while hiding under the only cover in
+   the room. The apron carries the visual weight instead. */
+const TABLE_W=3.6, TABLE_D=3.0, TABLE_Y=1.3;
 function makeTable(){
-  /* just tall enough, easily wide and long enough to crouch under */
   const g=new THREE.Group();
-  const top=new THREE.Mesh(new THREE.BoxGeometry(3.6,0.09,3.0),deskMat);
-  top.position.y=1.3; g.add(top);
-  const skirtL=new THREE.Mesh(new THREE.BoxGeometry(3.3,0.12,0.06),deskMat);
-  skirtL.position.set(0,1.2,1.32); g.add(skirtL);
-  const skirtR=skirtL.clone(); skirtR.position.z=-1.32; g.add(skirtR);
-  const legGeo=new THREE.BoxGeometry(0.12,1.26,0.12);
+  const flat=[], upright=[];
+  /* the top, as five boards with the seams showing */
+  const nb=5, bw=TABLE_D/nb;
+  for(let i=0;i<nb;i++)
+    flat.push(woodBox(TABLE_W,0.075,bw-0.008, 0,TABLE_Y,-TABLE_D/2+bw*(i+0.5)));
+  /* bullnose band around the whole edge, proud of the boards */
+  flat.push(woodBox(TABLE_W+0.05,0.095,0.055, 0,TABLE_Y-0.004, TABLE_D/2+0.005));
+  flat.push(woodBox(TABLE_W+0.05,0.095,0.055, 0,TABLE_Y-0.004,-TABLE_D/2-0.005));
+  for(const s of[-1,1]){
+    flat.push(woodBox(0.055,0.095,TABLE_D+0.05, s*(TABLE_W/2+0.005),TABLE_Y-0.004,0));
+    /* the apron, and the bead that catches the light along its bottom edge */
+    flat.push(woodBox(0.055,0.19,TABLE_D-0.30, s*(TABLE_W/2-0.09),TABLE_Y-0.15,0));
+    flat.push(woodBox(0.075,0.028,TABLE_D-0.30, s*(TABLE_W/2-0.09),TABLE_Y-0.245,0));
+    flat.push(woodBox(TABLE_W-0.34,0.19,0.055, 0,TABLE_Y-0.15,s*(TABLE_D/2-0.09)));
+    flat.push(woodBox(TABLE_W-0.34,0.028,0.075, 0,TABLE_Y-0.245,s*(TABLE_D/2-0.09)));
+  }
   for(const[sx,sz]of[[-1,-1],[1,-1],[-1,1],[1,1]]){
-    const l=new THREE.Mesh(legGeo,deskMat);
-    l.position.set(sx*1.62,0.63,sz*1.32); g.add(l);
+    const lx=sx*(TABLE_W/2-0.18), lz=sz*(TABLE_D/2-0.18);
+    upright.push(woodBox(0.14,0.30,0.14, lx,TABLE_Y-0.20,lz));        // the block at the apron
+    const leg=new THREE.Mesh(taperBox(0.125,0.94,0.125,0.68));        // tapering to the floor
+    leg.position.set(lx,0.05+0.47,lz); upright.push(leg);
+    upright.push(woodBox(0.135,0.05,0.135, lx,0.025,lz));             // and a foot pad
+  }
+  for(const arr of[[flat,deskMatH],[upright,deskMat]]){
+    g.add(mergeStatic(arr[0],arr[1]));
+    for(const m of arr[0]) m.geometry.dispose();
   }
   return g;
 }
 function makeChair(wrapped){
   const g=new THREE.Group();
-  const seat=new THREE.Mesh(new THREE.BoxGeometry(0.46,0.05,0.44),deskMat);
-  seat.position.y=0.47; g.add(seat);
-  const back=new THREE.Mesh(new THREE.BoxGeometry(0.46,0.5,0.05),deskMat);
-  back.position.set(0,0.74,-0.21); g.add(back);
-  const legGeo=new THREE.BoxGeometry(0.05,0.46,0.05);
+  const flat=[], upright=[];
+  flat.push(woodBox(0.46,0.045,0.44, 0,0.47,0));                      // seat
+  flat.push(woodBox(0.48,0.022,0.46, 0,0.446,0));                     // and its underframe
+  /* three slats between two stiles — the stiles stand on the back legs */
+  for(const s of[-1,1]) upright.push(woodBox(0.05,0.56,0.05, s*0.205,0.75,-0.19));
+  for(const[by,bh]of[[0.66,0.10],[0.85,0.13],[1.00,0.06]])
+    flat.push(woodBox(0.36,bh,0.028, 0,by,-0.19));
   for(const[sx,sz]of[[-1,-1],[1,-1],[-1,1],[1,1]]){
-    const l=new THREE.Mesh(legGeo,deskMat);
-    l.position.set(sx*0.19,0.23,sz*0.18); g.add(l);
+    const leg=new THREE.Mesh(taperBox(0.05,0.45,0.05,0.7));
+    leg.position.set(sx*0.19,0.225,sz*0.18); upright.push(leg);
   }
-  if(wrapped){
-    const wrap=new THREE.Mesh(new THREE.BoxGeometry(0.56,1.04,0.56),plasticWrap);
-    wrap.position.y=0.52; g.add(wrap);
+  /* stretchers between the front and back legs — a chair is not cover, so
+     these are free, and they are most of what stops it reading as a stool */
+  for(const s of[-1,1]) flat.push(woodBox(0.028,0.028,0.34, s*0.19,0.15,0));
+  flat.push(woodBox(0.36,0.026,0.026, 0,0.13,0.18));
+  for(const arr of[[flat,deskMatH],[upright,deskMat]]){
+    g.add(mergeStatic(arr[0],arr[1]));
+    for(const m of arr[0]) m.geometry.dispose();
   }
+  if(wrapped) g.add(makeWrap(0.58,0.58,1.10));
   return g;
 }
 function makeLadder(){
@@ -778,14 +1016,29 @@ function makeLadder(){
   g.rotation.x=LADDER_LEAN;
   return g;
 }
+/* the reading stands. Three boxes on a stick before — a plinth, a turned
+   column and a slanted desk with a real ledge to stop the book sliding off
+   it now, which is the detail that makes a lectern read as a lectern. */
 function makeLectern(){
   const g=new THREE.Group();
-  const col=new THREE.Mesh(new THREE.BoxGeometry(0.14,1.1,0.14),shelfMat);
-  col.position.y=0.55; g.add(col);
-  const foot=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.06,0.5),shelfMat);
-  foot.position.y=0.03; g.add(foot);
-  const top=new THREE.Mesh(new THREE.BoxGeometry(0.62,0.04,0.48),deskMat);
-  top.position.y=1.16; top.rotation.x=-0.25; g.add(top);
+  const dark=[], light=[];
+  light.push(woodBox(0.50,0.05,0.50, 0,0.025,0));                 // the plinth,
+  light.push(woodBox(0.42,0.05,0.42, 0,0.068,0));                 // stepped
+  light.push(woodBox(0.16,0.06,0.16, 0,0.118,0));
+  const col=new THREE.Mesh(new THREE.CylinderGeometry(0.055,0.075,0.94,10));
+  col.position.y=0.62; light.push(col);
+  for(const[cy,r0,r1,ch]of[[0.17,0.09,0.075,0.045],[1.06,0.075,0.10,0.05]]){   // collars
+    const c=new THREE.Mesh(new THREE.CylinderGeometry(r1,r0,ch,10));
+    c.position.y=cy; light.push(c);
+  }
+  const top=woodBox(0.62,0.04,0.48, 0,1.16,0);
+  top.rotation.x=-0.25; dark.push(top);
+  const ledge=woodBox(0.62,0.045,0.035, 0,1.10,0.222);            // the book stop
+  ledge.rotation.x=-0.25; dark.push(ledge);
+  for(const[arr,mat]of[[light,shelfMat],[dark,deskMatH]]){
+    g.add(mergeStatic(arr,mat));
+    for(const m of arr) m.geometry.dispose();
+  }
   /* some still hold what their reader walked away from */
   if(OPEN_BOOK&&Math.random()<0.4){
     const ob=OPEN_BOOK.clone();
@@ -795,176 +1048,747 @@ function makeLectern(){
   }
   return g;
 }
-/* display mannequins, procedurally varied: build, tilt, which limbs are
-   still attached, whether anyone bothered to give it a head. Similar-ish,
-   never identical — and no reason at all for them to be in a library */
-const mannequinMat=new THREE.MeshPhongMaterial({color:0xb5ada0, specular:0x3a3832, shininess:22});
-const mannequinDark=new THREE.MeshPhongMaterial({color:0x6e675c, specular:0x26241e, shininess:16});
+/* ---- the display forms ----
+   A cylinder with a sphere on it, a sphere for a head and a stick for an
+   arm: a snowman on a pole, and the least convincing thing on the floor.
+   A dress form is a PROFILE — hip, waist, bust, the shoulder slope and the
+   sharp cut at the neck — and turning that profile is the whole difference,
+   exactly as it was for the almond water bottle. Everything here is turned:
+   the body, the head, the cast base, the collars on the pole. The arms are
+   the one exception, and they are jointed rather than a single peg, because
+   a straight stick hanging off a shoulder is a broom handle.
+   Every lathe CLOSES at both poles (radius 0.001): an open ring on a
+   backface-culled shell is a hole you see straight through, which is what
+   put a window in the spider's face.
+   texMannequin is fitted, u around and v base→neck, so its two mould
+   parting seams land where a real two-part shell's do. */
+/* the shell is a MATT painted fibreglass: at the old specular a warm light
+   turned every form in the room into polished brass */
+const mannequinMat=new THREE.MeshPhongMaterial({map:texMannequin, color:0x9a958d,
+  specular:0x1c1b18, shininess:9});
+const mannequinDark=new THREE.MeshPhongMaterial({map:texMannequin, color:0x5c564c,
+  specular:0x141310, shininess:7});
+const mannequinIron=new THREE.MeshPhongMaterial({color:0x3b3a37, specular:0x2a2c2e, shininess:26});
+/* r at t up the body, as a fraction of the widest point. The SHOULDER is
+   the load-bearing part of this list: the first pass ran the radius down
+   smoothly from the chest to the neck, and a smooth taper to a point is a
+   chess piece. A form holds its width to t≈0.86 and then falls off a
+   cliff, and that cliff is the shoulder line. */
+const FORM_PROFILE=[[0.001,0.00],[0.62,0.004],[0.94,0.030],[1.00,0.085],[0.97,0.19],
+                    [0.88,0.30],[0.79,0.40],[0.82,0.49],[0.93,0.59],[1.00,0.68],
+                    [1.00,0.78],[0.97,0.845],[0.86,0.875],[0.58,0.905],[0.33,0.94],
+                    [0.26,0.975],[0.001,1.00]];
+/* the head: an egg with a jaw, closed top and bottom */
+const HEAD_PROFILE=[[0.001,0.00],[0.30,0.03],[0.52,0.12],[0.68,0.26],[0.78,0.44],
+                    [0.80,0.60],[0.72,0.76],[0.52,0.90],[0.28,0.975],[0.001,1.00]];
+const lathe=(prof,R,H,seg)=>new THREE.LatheGeometry(
+  prof.map(([r,t])=>new THREE.Vector2(r*R,t*H)), seg||18);
 function makeMannequin(){
   const g=new THREE.Group(); g.userData.prop="mannequin";
-  const mat=Math.random()<0.78? mannequinMat : mannequinDark;
-  const poleH=0.62+Math.random()*0.22, torsoH=0.6+Math.random()*0.14;
-  const build=0.85+Math.random()*0.35;             // slender → broad
-  /* stand */
-  const foot=new THREE.Mesh(new THREE.CylinderGeometry(0.24,0.27,0.035,12),mannequinDark);
-  foot.position.y=0.0175; g.add(foot);
-  const pole=new THREE.Mesh(new THREE.CylinderGeometry(0.025,0.025,poleH,8),mannequinDark);
-  pole.position.y=0.035+poleH/2; g.add(pole);
-  /* torso group: hips → shoulders, with its own slump */
-  const tg=new THREE.Group(); tg.position.y=0.035+poleH; g.add(tg);
+  const mat=Math.random()<0.76? mannequinMat : mannequinDark;
+  const poleH=0.58+Math.random()*0.22, torsoH=0.66+Math.random()*0.13;
+  const build=0.90+Math.random()*0.28;             // slender → broad
+  /* a real form is ~0.42m across the shoulders. At the old 0.168 base it
+     was 0.34 wide over a 0.7m body, which is a skittle. */
+  const R=0.208*build;
+  const iron=[], skin=[];
+  /* the cast base: a turned disc with a cove rising into the pole boss */
+  iron.push(new THREE.Mesh(new THREE.LatheGeometry([
+    new THREE.Vector2(0.001,0),new THREE.Vector2(0.255,0),new THREE.Vector2(0.262,0.012),
+    new THREE.Vector2(0.245,0.026),new THREE.Vector2(0.14,0.036),new THREE.Vector2(0.075,0.058),
+    new THREE.Vector2(0.055,0.088),new THREE.Vector2(0.001,0.092)],20)));
+  /* two-stage pole with a knurled collar and the thumbscrew nobody undid */
+  const lower=new THREE.Mesh(new THREE.CylinderGeometry(0.021,0.023,poleH*0.55,10));
+  lower.position.y=0.05+poleH*0.275; iron.push(lower);
+  const upper=new THREE.Mesh(new THREE.CylinderGeometry(0.016,0.016,poleH*0.52,10));
+  upper.position.y=0.05+poleH*0.74; iron.push(upper);
+  const collar=new THREE.Mesh(new THREE.CylinderGeometry(0.030,0.030,0.036,12));
+  collar.position.y=0.05+poleH*0.55; iron.push(collar);
+  const screw=new THREE.Mesh(new THREE.CylinderGeometry(0.008,0.008,0.05,8));
+  screw.rotation.z=Math.PI/2; screw.position.set(0.03,0.05+poleH*0.55,0); iron.push(screw);
+  const wing=new THREE.Mesh(new THREE.BoxGeometry(0.008,0.028,0.014));
+  wing.position.set(0.054,0.05+poleH*0.55,0); iron.push(wing);
+  /* the body, on its own slump */
+  const tg=new THREE.Group(); tg.position.y=0.05+poleH; g.add(tg);
   tg.rotation.x=(Math.random()-0.5)*0.14; tg.rotation.z=(Math.random()-0.5)*0.18;
-  const torso=new THREE.Mesh(new THREE.CylinderGeometry(0.155*build,0.125*build,torsoH,10),mat);
-  torso.scale.z=0.62; torso.position.y=torsoH/2; tg.add(torso);
-  const should=new THREE.Mesh(new THREE.SphereGeometry(0.155*build,10,8),mat);
-  should.scale.set(1.08,0.5,0.62); should.position.y=torsoH; tg.add(should);
-  /* arms: each independently present, hung straight-ish down */
-  for(const sx of[-1,1]) if(Math.random()<0.62){
-    const aL=0.5+Math.random()*0.1;
-    const arm=new THREE.Mesh(new THREE.CylinderGeometry(0.032,0.026,aL,7),mat);
-    arm.position.set(sx*(0.165*build+0.03),torsoH-aL/2+0.03,0);
-    arm.rotation.z=sx*(0.06+Math.random()*0.2);
-    arm.rotation.x=(Math.random()-0.5)*0.24;
-    tg.add(arm);
+  tg.rotation.y=Math.random()*Math.PI*2;
+  const torso=new THREE.Mesh(lathe(FORM_PROFILE,R,torsoH,22));
+  torso.scale.z=0.63; tg.add(torso); skin.push(torso);
+  /* arms: shoulder → elbow → wrist, each joint a real break in the line.
+     Each one independently still attached. */
+  const shY=torsoH*0.855, shR=R*0.93;
+  for(const sx of[-1,1]) if(Math.random()<0.6){
+    const ag=new THREE.Group();
+    ag.position.set(sx*shR,shY,0);
+    ag.rotation.order="YXZ";
+    ag.rotation.z=sx*(0.10+Math.random()*0.18);
+    ag.rotation.x=(Math.random()-0.5)*0.3;
+    tg.add(ag);
+    const uL=0.27+Math.random()*0.04;
+    const ball=new THREE.Mesh(new THREE.SphereGeometry(0.056,10,8));
+    ball.scale.set(1,0.86,1); ag.add(ball); skin.push(ball);
+    const up=new THREE.Mesh(new THREE.CylinderGeometry(0.050,0.038,uL,9));
+    up.position.y=-uL/2; ag.add(up); skin.push(up);
+    const eg=new THREE.Group(); eg.position.y=-uL; ag.add(eg);
+    eg.rotation.x=-(0.14+Math.random()*0.55);      // the elbow, never locked
+    const el=new THREE.Mesh(new THREE.SphereGeometry(0.040,9,8));
+    eg.add(el); skin.push(el);
+    const fL=0.25+Math.random()*0.04;
+    const fore=new THREE.Mesh(new THREE.CylinderGeometry(0.037,0.026,fL,9));
+    fore.position.y=-fL/2; eg.add(fore); skin.push(fore);
+    /* and a bare wrist peg where the hand should have gone */
+    const wr=new THREE.Mesh(new THREE.CylinderGeometry(0.018,0.014,0.055,8));
+    wr.position.y=-fL-0.022; eg.add(wr); skin.push(wr);
   }
-  /* head: usually. A bare neck spike otherwise */
-  const neck=new THREE.Mesh(new THREE.CylinderGeometry(0.022,0.03,0.09,7),mat);
-  neck.position.y=torsoH+0.07; tg.add(neck);
-  if(Math.random()<0.7){
-    const head=new THREE.Mesh(new THREE.SphereGeometry(0.105,10,9),mat);
-    head.scale.set(0.88,1.22,0.92); head.position.y=torsoH+0.22;
-    head.rotation.y=(Math.random()-0.5)*1.6;       // looking somewhere. Not at you. Probably.
-    head.rotation.z=(Math.random()-0.5)*0.22;
-    tg.add(head);
+  /* the head. Turned, closed, faceless — with just enough of a nose that an
+     egg on a neck resolves as looking somewhere. It has to be SMALL and
+     sunk into the skull: at 22×55mm and standing clear of the surface it
+     stopped being a nose and became a beak. */
+  const makeHead=()=>{
+    const hg=new THREE.Group();
+    const hd=new THREE.Mesh(lathe(HEAD_PROFILE,0.118,0.245,18));
+    hd.scale.set(0.90,1,0.96); hg.add(hd); skin.push(hd);
+    const nose=new THREE.Mesh(new THREE.ConeGeometry(0.017,0.032,7));
+    nose.rotation.x=Math.PI/2*0.86; nose.position.set(0,0.140,0.083); hg.add(nose); skin.push(nose);
+    return hg;
+  };
+  const neck=new THREE.Mesh(new THREE.CylinderGeometry(0.030,0.048,0.105,10));
+  neck.position.y=torsoH+0.042; tg.add(neck); skin.push(neck);
+  /* the packaging is decided FIRST, because it constrains the head: a form
+     still sealed in its film cannot have its head lying on the floor
+     outside the bag, and the two rolled independently the first time */
+  const wrapped=Math.random()<0.24;
+  const r=wrapped? Math.random()*0.84 : Math.random();
+  if(r<0.66){
+    const hg=makeHead();
+    hg.position.y=torsoH+0.088;
+    hg.rotation.y=(Math.random()-0.5)*1.7;         // looking somewhere. Not at you. Probably.
+    hg.rotation.z=(Math.random()-0.5)*0.22;
+    tg.add(hg);
+  } else if(r<0.84){
+    /* the head came off, and lies on the floor beside the base. It rests on
+       its own widest radius — parked at a fixed 0.115 it floated, and an
+       egg hovering 2cm off a carpet reads as a dropped plate. */
+    const hg=makeHead();
+    const a=Math.random()*Math.PI*2, dd=0.34+Math.random()*0.26;
+    hg.position.set(Math.sin(a)*dd,0.118*0.90,Math.cos(a)*dd);
+    hg.rotation.set(Math.PI*0.5,Math.random()*7,(Math.random()-0.5)*0.5);
+    g.add(hg);
+  } else {
+    /* neither: a turned finial capping the neck, the way an unused form
+       leaves the factory */
+    const fin=new THREE.Mesh(new THREE.LatheGeometry([
+      new THREE.Vector2(0.001,0),new THREE.Vector2(0.034,0.004),new THREE.Vector2(0.024,0.022),
+      new THREE.Vector2(0.038,0.048),new THREE.Vector2(0.022,0.070),new THREE.Vector2(0.001,0.078)],12));
+    fin.position.y=torsoH+0.092; tg.add(fin); iron.push(fin);
   }
+  /* two merged meshes, whatever the variant rolled: the shell and the iron.
+     mergeStatic bakes each part's world matrix, so the slump, the arm poses
+     and the non-uniform torso scale all come along — but ONLY if the pose
+     groups above them are current. Object3D.updateMatrixWorld reads its
+     PARENT's matrixWorld and does not walk up to build it, so without this
+     one call every limb merges at the body's origin. */
+  g.updateMatrixWorld(true);
+  const merged=[];
+  for(const[arr,m]of[[skin,mat],[iron,mannequinIron]]){
+    if(!arr.length) continue;
+    merged.push(mergeStatic(arr,m));
+    for(const p of arr) p.geometry.dispose();
+  }
+  for(const c of[...g.children]) g.remove(c);      // the pose groups have done their job
+  for(const m of merged) g.add(m);
   /* a few are still in their packaging */
-  if(Math.random()<0.22){
-    const wrap=new THREE.Mesh(new THREE.BoxGeometry(0.52,poleH+torsoH+0.4,0.4),plasticWrap);
-    wrap.position.y=(poleH+torsoH+0.4)/2; g.add(wrap);
-  }
+  if(wrapped) g.add(makeWrap(0.60,0.48,poleH+torsoH+0.30));
   return g;
 }
-/* a returns trolley nobody pushed back — now actually loaded: runs of
-   shelved spines on the lower decks, strays leaning on top, a push handle
-   and a stencilled plaque on one side */
+/* ---- the returns trolley ----
+   It was eleven bare boxes wearing one flat grey — no finish, no formed
+   edges, and four discs lying on their sides for castors, which is the
+   detail that decided the whole object read as a shelf unit somebody had
+   drawn wheels on. A book truck is SHEET STEEL: every edge of it is folded
+   over, which is both how it gets its stiffness and the only reason it
+   catches a light at all. So each deck here is a plate with a hemmed lip
+   turned down on both long edges, the ends are pressed panels with a swage
+   across them, the corners take real rubber bumpers, and each castor is a
+   top plate + swivel + fork + a rubber tyre on a hub.
+   Three merged draws (paint · rubber · bright steel) plus the load, where
+   the old one cost eleven before a single book went on it. */
+/* Institutional enamel, and DESATURATED — the first pass offered an oxide
+   red, and a warm saturated tint over a bright map turns a hemmed steel
+   deck into an orange plank: the whole truck read as joinery, in a room
+   that is already made of joinery. Nothing here can be mistaken for wood. */
+const cartPaintMats=[0x9aa39c,0x7c848c,0xa5a29a].map(c=>new THREE.MeshPhongMaterial(
+  {map:texCartPaint, color:c, specular:0x35383a, shininess:34}));
+const cartRubberMat=new THREE.MeshPhongMaterial({color:0x1b1c1e, specular:0x2a2c2e, shininess:14});
+const cartSteelMat=new THREE.MeshPhongMaterial({map:texBrushed, color:0xa8aeb4,
+  specular:0x8a9096, shininess:70});
+const DECKS=[0.175,0.535,0.895];
+/* the truck grows with the books. Its decks are 0.36 apart, which leaves
+   0.34 of clear height between them — a volume standing on one at the new
+   BOOK_S is 0.363 and would push its head straight through the deck above.
+   Rather than re-typing thirty literals, the whole structure is scaled at
+   the merge (positions AND geometry), and the load is placed in the scaled
+   frame; the books themselves are already at BOOK_S and must NOT be scaled
+   a second time, which is why they go on after the merge, unscaled. */
+const CART_S=1.10;
+const CART_R=0.52*CART_S;                     // its floor-population keep-out
 function makeBookCart(){
   const g=new THREE.Group(); g.userData.prop="cart";
-  for(const sx of[-0.42,0.42]){
-    const side=new THREE.Mesh(new THREE.BoxGeometry(0.05,0.86,0.56),darkMetalMat);
-    side.position.set(sx,0.5,0); g.add(side);
+  const paint=[], rubber=[], steel=[];
+  /* every painted box maps its finish at one world scale, so a 0.9m panel
+     and an 18mm lip carry the same enamel */
+  const pbox=(w,h,d,x,y,z)=>{
+    const m=new THREE.Mesh(scaleBoxUV(new THREE.BoxGeometry(w,h,d),w,h,d,0.5));
+    m.position.set(x,y,z); paint.push(m); return m;
+  };
+  const FRAME_B=0.115, TOP=0.965;                 // frame underside / top of the ends
+  /* the two end panels: a skin, a rolled rib all the way round it, and a
+     pressed swage across the middle. The rib is what stops a 3mm plate
+     reading as card. */
+  for(const sx of[-1,1]){
+    const ex=sx*0.455;
+    pbox(0.028,TOP-FRAME_B,0.50, ex,(TOP+FRAME_B)/2,0);
+    for(const ey of[FRAME_B+0.022,TOP-0.022])     // top & bottom rails of the rib
+      pbox(0.040,0.044,0.50, ex,ey,0);
+    for(const ez of[-0.23,0.23])                  // and its stiles
+      pbox(0.040,TOP-FRAME_B,0.044, ex,(TOP+FRAME_B)/2,ez);
+    pbox(0.038,0.030,0.46, ex,(TOP+FRAME_B)/2,0); // the swage
   }
-  for(const sy of[0.16,0.52,0.88]){
-    const shelf=new THREE.Mesh(new THREE.BoxGeometry(0.84,0.035,0.52),darkMetalMat);
-    shelf.position.y=sy; g.add(shelf);
+  /* the decks. Plate + a hem folded DOWN on each long edge — the shadow
+     under that hem is most of what says "formed" rather than "cut". */
+  for(const sy of DECKS){
+    pbox(0.88,0.020,0.50, 0,sy,0);
+    for(const sz of[-0.24,0.24]) pbox(0.88,0.046,0.018, 0,sy-0.031,sz);
   }
-  /* a low retaining rail along each long edge of the top deck */
-  for(const sz of[-0.245,0.245]){
-    const rail=new THREE.Mesh(new THREE.BoxGeometry(0.84,0.05,0.025),darkMetalMat);
-    rail.position.set(0,0.93,sz); g.add(rail);
+  /* the top deck alone gets retaining rails, standing proud */
+  for(const sz of[-0.245,0.245]) pbox(0.88,0.052,0.020, 0,DECKS[2]+0.036,sz);
+  /* a bottom apron tying the ends together under the lowest deck */
+  for(const sz of[-0.235,0.235]) pbox(0.90,0.055,0.020, 0,FRAME_B+0.030,sz);
+  /* corner bumpers: rubber, full height, and the reason a real truck can be
+     driven into a shelf end for thirty years without marking either */
+  for(const sx of[-1,1])for(const sz of[-1,1]){
+    const b=new THREE.Mesh(new THREE.CylinderGeometry(0.019,0.019,TOP-FRAME_B,10));
+    b.position.set(sx*0.452,(TOP+FRAME_B)/2,sz*0.245); rubber.push(b);
   }
-  /* push handle arcing off one end */
-  for(const sz of[-0.2,0.2]){
-    const post=new THREE.Mesh(new THREE.BoxGeometry(0.035,0.26,0.035),darkMetalMat);
-    post.position.set(0.46,1.0,sz); post.rotation.z=-0.2; g.add(post);
+  /* the push handle: a bent tube, so the corners are ELBOWS. Two uprights,
+     two quarter-torus bends and a crossbar, with a grip sleeve on it. */
+  const HX=0.455, HZ=0.20, HY=TOP+0.20, EB=0.055;   // elbow radius
+  for(const sz of[-1,1]){
+    const pl=HY-EB-TOP;
+    const post=new THREE.Mesh(new THREE.CylinderGeometry(0.016,0.016,pl,10));
+    post.position.set(HX,TOP+pl/2,sz*HZ); steel.push(post);
+    /* a TorusGeometry sweeps in its own XY plane from +x toward +y. Turning
+       it about Y by ∓90° swings that +x end onto ±z: the arc then leaves the
+       upright travelling vertically and arrives at the crossbar travelling
+       along z, which is exactly a bend. Get the sign wrong on one side and
+       that elbow curls out into the room. */
+    const el=new THREE.Mesh(new THREE.TorusGeometry(EB,0.016,7,9,Math.PI/2));
+    el.rotation.y=sz>0? -Math.PI/2 : Math.PI/2;
+    el.position.set(HX,HY-EB,sz*(HZ-EB));
+    steel.push(el);
   }
-  const grip=new THREE.Mesh(new THREE.CylinderGeometry(0.022,0.022,0.46,8),darkMetalMat);
-  grip.rotation.x=Math.PI/2; grip.position.set(0.485,1.12,0); g.add(grip);
-  for(const[sx,sz]of[[-0.36,-0.2],[0.36,-0.2],[-0.36,0.2],[0.36,0.2]]){
-    const caster=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,0.04,8),darkMetalMat);
-    caster.rotation.z=Math.PI/2; caster.position.set(sx,0.05,sz); g.add(caster);
+  const bar=new THREE.Mesh(new THREE.CylinderGeometry(0.016,0.016,2*(HZ-EB),10));
+  bar.rotation.x=Math.PI/2; bar.position.set(HX,HY,0); steel.push(bar);
+  const grip=new THREE.Mesh(new THREE.CylinderGeometry(0.023,0.023,0.26,12));
+  grip.rotation.x=Math.PI/2; grip.position.set(HX,HY,0); rubber.push(grip);
+  /* castors. Two rigid under the far end, two swivel under the handle —
+     and the swivel pair is left wherever it was last shoved. */
+  for(const[sx,sz]of[[-1,-1],[-1,1],[1,-1],[1,1]]){
+    const cg=new THREE.Group();
+    cg.position.set(sx*0.375,0,sz*0.19);
+    cg.rotation.y=sx>0? (Math.random()-0.5)*2.4 : 0;   // only the swivels wander
+    g.add(cg);
+    const plate=new THREE.Mesh(new THREE.BoxGeometry(0.072,0.008,0.072));
+    plate.position.y=FRAME_B-0.004; cg.add(plate); steel.push(plate);
+    const king=new THREE.Mesh(new THREE.CylinderGeometry(0.020,0.024,0.030,10));
+    king.position.y=FRAME_B-0.023; cg.add(king); steel.push(king);
+    const off=sx>0? 0.016:0;                      // a swivel castor trails its axle
+    for(const fs of[-1,1]){                       // the fork cheeks
+      const ch=new THREE.Mesh(new THREE.BoxGeometry(0.012,0.060,0.046));
+      ch.position.set(fs*0.033,0.062,-off); cg.add(ch); steel.push(ch);
+    }
+    const axle=new THREE.Mesh(new THREE.CylinderGeometry(0.006,0.006,0.078,6));
+    axle.rotation.z=Math.PI/2; axle.position.set(0,0.050,-off); cg.add(axle); steel.push(axle);
+    const tyre=new THREE.Mesh(new THREE.CylinderGeometry(0.050,0.050,0.030,14));
+    tyre.rotation.z=Math.PI/2; tyre.position.set(0,0.050,-off); cg.add(tyre); rubber.push(tyre);
+    for(const hs of[-1,1]){
+      const hub=new THREE.Mesh(new THREE.CylinderGeometry(0.024,0.024,0.006,10));
+      hub.rotation.z=Math.PI/2; hub.position.set(hs*0.017,0.050,-off); cg.add(hub); steel.push(hub);
+    }
   }
+  /* blow the structure up to CART_S before anything is baked. The castor
+     groups are real parents, so they take the factor on their own transform
+     and their children ride it; every other part is still unparented, so it
+     takes both its offset and its size directly. */
+  for(const c of g.children){ c.position.multiplyScalar(CART_S); c.scale.setScalar(CART_S); }
+  for(const arr of[paint,rubber,steel])
+    for(const m of arr) if(!m.parent){ m.position.multiplyScalar(CART_S); m.scale.setScalar(CART_S); }
+  g.updateMatrixWorld(true);                      // the castor groups carry a pose
+  const tint=cartPaintMats[Math.floor(Math.random()*cartPaintMats.length)];
+  const built=[];
+  for(const[arr,m]of[[paint,tint],[rubber,cartRubberMat],[steel,cartSteelMat]]){
+    built.push(mergeStatic(arr,m));
+    for(const p of arr) p.geometry.dispose();
+  }
+  for(const c of[...g.children]) g.remove(c);
+  for(const m of built) g.add(m);
   /* its last load: 2–12 real volumes nobody reshelved — some standing
      (one usually slumped), the rest lying flat on the decks */
   let load=2+Math.floor(Math.random()*11);
-  const decks=[0.16,0.52,0.88];
   let guard=40;
   const used=[];                       // [deckY, x0, x1] claims
   while(load>0&&guard-->0){
-    const sy=decks[Math.floor(Math.random()*decks.length)]+0.0175;
+    const sy=(DECKS[Math.floor(Math.random()*DECKS.length)]+0.010)*CART_S;
     const s=Math.random()<0.5?1:-1;
     const des=pickBook();
     const flat=Math.random()<0.35;
     const hw=flat? des.h/2+0.02 : des.tx/2+0.02;
-    const bx=rand(-0.34+hw,0.34-hw);
+    const half=0.36*CART_S;
+    if(hw>=half) continue;                        // nothing this long lies across a deck
+    const bx=rand(-half+hw,half-hw);
     if(used.some(([uy,a,b])=>uy===sy&&a<bx+hw&&b>bx-hw)) continue;
     used.push([sy,bx-hw,bx+hw]);
-    spawnBook(g,des,bx,sy,rand(-0.08,0.08),s,
+    spawnBook(g,des,bx,sy,rand(-0.08,0.08)*CART_S,s,
       flat? {flat:true,yaw:(Math.random()-0.5)*0.5}
           : {lean:Math.random()<0.5?(Math.random()-0.5)*0.5:0});
     load--;
   }
-  /* a stencilled RETURNS plaque hanging off the handle end */
-  const plq=new THREE.Mesh(new THREE.PlaneGeometry(0.42,0.105),
+  /* the RETURNS card, in a real holder screwed to the end panel */
+  const hold=new THREE.Mesh(new THREE.BoxGeometry(0.010,0.13*CART_S,0.44*CART_S),cartSteelMat);
+  hold.position.set(0.474*CART_S,0.72*CART_S,0); g.add(hold);
+  const plq=new THREE.Mesh(new THREE.PlaneGeometry(0.40*CART_S,0.10*CART_S),
     new THREE.MeshPhongMaterial({map:makeEndTextTexture("RETURNS"), transparent:true,
       specular:0x000000, shininess:1}));
-  plq.position.set(0.452,0.74,0); plq.rotation.y=Math.PI/2;
+  plq.position.set(0.480*CART_S,0.72*CART_S,0); plq.rotation.y=Math.PI/2;
   g.add(plq);
   g.rotation.z=(Math.random()-0.5)*0.02;
   return g;
 }
-/* a floor globe on a wooden stand — the geography is long gone */
-const globeTex=()=>makeCanvas(128,64,(c,w,h)=>{
-  c.fillStyle="#2c3a42";c.fillRect(0,0,w,h);
-  c.fillStyle="rgba(94,88,60,0.85)";
-  for(let i=0;i<7;i++){
-    const x=Math.random()*w, y=h*0.18+Math.random()*h*0.64;
-    c.beginPath();
-    for(let a=0;a<Math.PI*2;a+=0.5)
-      c.lineTo(x+Math.cos(a)*(6+Math.random()*14),y+Math.sin(a)*(4+Math.random()*9));
-    c.closePath();c.fill();
+/* ================= framed artwork =================
+   Fourteen flat planes with a brown border drawn into the canvas. A picture
+   on a wall is not an image — it is a MOULDING with an image inside it, and
+   the three things that say so are all things a print cannot do: the frame
+   is a profile that steps forward out of the wall and catches the strip
+   lights along its top edge, the mat has a bevel cut through it that takes
+   a different angle of light than the board around it, and there is GLASS,
+   which is most of what anyone actually looks at on a picture.
+   All of it is real geometry here, and none of it is expensive, because
+   every piece's frame/mat/glass is merged ACROSS the whole room by material
+   at the end of the hang: 34 pictures cost ~40 draws, where the 14 flat
+   planes cost 14. The art plates stay individual — each is its own canvas. */
+const texGilt=makeCanvas(128,128,(g,w,h)=>{
+  g.fillStyle="#b89a54";g.fillRect(0,0,w,h);
+  for(let i=0;i<420;i++){                        // the burnish, laid one way
+    g.fillStyle=`rgba(${Math.random()<0.5?142:236},${Math.random()<0.5?116:214},${Math.random()<0.5?58:148},${0.06+Math.random()*0.16})`;
+    g.fillRect(Math.random()*w,Math.random()*h,3+Math.random()*22,1);
   }
-  c.strokeStyle="rgba(180,170,140,0.18)";c.lineWidth=1;
-  for(let i=1;i<6;i++){ c.beginPath();c.moveTo(0,h*i/6);c.lineTo(w,h*i/6);c.stroke(); }
+  for(let i=0;i<40;i++){                         // rubbed back to the red bole
+    const x=Math.random()*w,y=Math.random()*h,r=2+Math.random()*7;
+    g.beginPath();
+    for(let k=0;k<=8;k++){
+      const a=k/8*Math.PI*2, rr=r*(0.5+Math.random()*0.8);
+      const px=x+Math.cos(a)*rr, py=y+Math.sin(a)*rr;
+      k? g.lineTo(px,py) : g.moveTo(px,py);
+    }
+    g.closePath();
+    g.fillStyle=`rgba(${118+Math.random()*30|0},${62+Math.random()*24|0},${40+Math.random()*20|0},${0.35+Math.random()*0.4})`;
+    g.fill();
+  }
+  for(let i=0;i<150;i++){                        // craquelure: short and kinked
+    let px=Math.random()*w, py=Math.random()*h, a=Math.random()*7;
+    g.strokeStyle=`rgba(74,54,26,${0.14+Math.random()*0.24})`;g.lineWidth=0.7;
+    g.beginPath();g.moveTo(px,py);
+    for(let s=0;s<3;s++){
+      a+=(Math.random()-0.5)*1.6;
+      px+=Math.cos(a)*(3+Math.random()*6); py+=Math.sin(a)*(3+Math.random()*6);
+      g.lineTo(px,py);
+    }
+    g.stroke();
+  }
+  for(let i=0;i<300;i++){                        // dust in the hollows
+    g.fillStyle=`rgba(58,48,30,${0.05+Math.random()*0.14})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1,1);
+  }
+});
+texGilt.wrapS=texGilt.wrapT=THREE.RepeatWrapping;
+/* mat board: paper, so almost featureless on purpose — a fibre tooth and
+   the foxing forty damp years puts on rag board, and nothing else */
+const texMatBoard=makeCanvas(128,128,(g,w,h)=>{
+  g.fillStyle="#cdc4ac";g.fillRect(0,0,w,h);
+  for(let i=0;i<1800;i++){
+    const v=Math.random()<0.5;
+    g.fillStyle=`rgba(${v?176:236},${v?168:230},${v?142:206},${0.05+Math.random()*0.1})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*2,1);
+  }
+  for(let i=0;i<14;i++){
+    const x=Math.random()*w,y=Math.random()*h,r=3+Math.random()*13;
+    const gr=g.createRadialGradient(x,y,0.5,x,y,r);
+    gr.addColorStop(0,`rgba(122,90,42,${0.06+Math.random()*0.13})`);
+    gr.addColorStop(1,"rgba(122,90,42,0)");
+    g.fillStyle=gr;g.beginPath();g.arc(x,y,r,0,7);g.fill();
+  }
+});
+texMatBoard.wrapS=texMatBoard.wrapT=THREE.RepeatWrapping;
+/* the glazing's own dirt — alpha-shaped, so it is wipe MARKS and dust, never
+   a translucent sheet. Without it a pane with no light on it is invisible. */
+const texGlassFilm=makeCanvas(128,128,(g,w,h)=>{
+  g.clearRect(0,0,w,h);
+  for(let i=0;i<16;i++){                         // the arcs of a cloth, long ago
+    const y=Math.random()*h, a=(Math.random()-0.5)*0.5;
+    g.save();g.translate(w/2,y);g.rotate(a);
+    const gr=g.createLinearGradient(-w/2,0,w/2,0);
+    gr.addColorStop(0,"rgba(226,232,234,0)");
+    gr.addColorStop(0.5,`rgba(226,232,234,${0.06+Math.random()*0.1})`);
+    gr.addColorStop(1,"rgba(226,232,234,0)");
+    g.fillStyle=gr;g.fillRect(-w/2,-1.5-Math.random()*3,w,3+Math.random()*6);
+    g.restore();
+  }
+  for(let i=0;i<420;i++){
+    g.fillStyle=`rgba(212,216,214,${0.05+Math.random()*0.16})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1,1);
+  }
+});
+texGlassFilm.wrapS=texGlassFilm.wrapT=THREE.RepeatWrapping;
+const frameGiltMat =new THREE.MeshPhongMaterial({map:texGilt, specular:0xa08850, shininess:58});
+const frameEbonyMat=new THREE.MeshPhongMaterial({map:texDeskWood, color:0x4a4038,
+  specular:0x2a241c, shininess:26});
+const frameOakMat  =new THREE.MeshPhongMaterial({map:texShelfWood, color:0x9a8a70,
+  specular:0x241c12, shininess:14});
+const artMatMat  =new THREE.MeshPhongMaterial({map:texMatBoard, specular:0x141210, shininess:4});
+const artBackMat =new THREE.MeshPhongMaterial({color:0x2a251f, specular:0x0a0908, shininess:3});
+const artGlassMat=new THREE.MeshPhongMaterial({map:texGlassFilm, color:0xcdd6da,
+  specular:0xffffff, shininess:120, transparent:true, opacity:0.55, depthWrite:false});
+const FRAME_MATS=[frameGiltMat,frameEbonyMat,frameOakMat];
+/* the hang rejects pieces that will not fit their wall; these are the
+   materials it must NOT dispose on the way out (every piece owns its own
+   art canvas and crack decal, and those it must) */
+const SHARED_ART=new Set([frameGiltMat,frameEbonyMat,frameOakMat,
+                          artMatMat,artBackMat,artGlassMat]);
+/* one hung picture. Everything is built in the piece's own frame with the
+   wall at z=0 and the room at +z; the caller places the group, and the bulk
+   parts are merged room-wide afterwards. */
+function makeFramedArt(sw){
+  const g=new THREE.Group();
+  const bulk=[];                                  // [mesh, material] — merged later
+  const sh=sw*1.25;                               // the plate's own proportion
+  const empty=Math.random()<0.10;
+  const matted=!empty&&Math.random()<0.6;
+  const mb=matted? sw*(0.09+Math.random()*0.07) : 0;
+  const oval=matted&&Math.random()<0.22;
+  const glazed=!empty&&Math.random()<0.78;
+  const ow=sw+2*mb, oh=sh+2*mb;                   // the frame's opening
+  const mw=0.030+Math.random()*0.045, md=0.032+Math.random()*0.036;
+  const fm=FRAME_MATS[Math.floor(Math.random()*FRAME_MATS.length)];
+  const put=(geo,mat,x,y,z)=>{
+    const m=new THREE.Mesh(geo,mat); m.position.set(x,y,z); g.add(m);
+    bulk.push([m,mat]); return m;
+  };
+  const fbox=(w,h,d,x,y,z,mat)=>
+    put(scaleBoxUV(new THREE.BoxGeometry(w,h,d),w,h,d,0.35),mat,x,y,z);
+  /* the backing board fills the rebate — and IS the picture once the plate
+     has gone, which is what an empty frame in this building looks like */
+  fbox(ow+2*mw*0.7,oh+2*mw*0.7,0.014, 0,0,0.007, artBackMat);
+  /* the moulding: three courses stepping FORWARD as they step OUT, so the
+     top member throws a shadow line down the wall and the outer bead is the
+     first thing any light finds */
+  for(const[cw,a,b]of[[mw,0,0.30],[mw*0.70,0.30,0.66],[mw*0.34,0.66,1.0]]){
+    const inW=ow+2*(mw-cw), inH=oh+2*(mw-cw);
+    const z0=a*md, z1=b*md, t=z1-z0, cz=(z0+z1)/2;
+    fbox(inW+2*cw, cw, t, 0, (inH+cw)/2, cz, fm);
+    fbox(inW+2*cw, cw, t, 0,-(inH+cw)/2, cz, fm);
+    fbox(cw, inH, t,  (inW+cw)/2, 0, cz, fm);
+    fbox(cw, inH, t, -(inW+cw)/2, 0, cz, fm);
+  }
+  if(!empty){
+    const art=new THREE.Mesh(new THREE.PlaneGeometry(sw,sh),
+      new THREE.MeshPhongMaterial({map:makeArtTexture(), specular:0x0a0a0a, shininess:8}));
+    art.position.z=0.016; g.add(art);             // its own canvas: never merged
+  }
+  if(matted){
+    const MZ=md*0.30-0.004;
+    if(oval){
+      /* an oval opening cannot be made of boxes, and the oval IS the point
+         of it — a ShapeGeometry with an elliptical hole instead */
+      const s=new THREE.Shape();
+      s.moveTo(-ow/2,-oh/2); s.lineTo(ow/2,-oh/2); s.lineTo(ow/2,oh/2);
+      s.lineTo(-ow/2,oh/2); s.closePath();
+      const hole=new THREE.Path();
+      hole.absellipse(0,0,sw*0.46,sh*0.46,0,Math.PI*2,true);
+      s.holes.push(hole);
+      put(new THREE.ShapeGeometry(s,32),artMatMat,0,0,MZ);
+    } else {
+      for(const[w2,h2,x2,y2]of[[ow,mb,0,(sh+mb)/2],[ow,mb,0,-(sh+mb)/2],
+                               [mb,sh,(sw+mb)/2,0],[mb,sh,-(sw+mb)/2,0]])
+        fbox(w2,h2,0.006, x2,y2,MZ+0.003, artMatMat);
+      /* the BEVEL: a strip turned 45° at the sight edge. It is the same
+         board as the mat and reads as a different tone purely because it
+         faces somewhere else, which is exactly what a cut bevel does. */
+      const bv=mb*0.30;
+      for(const[w2,h2,x2,y2,rx,rz]of[
+        [sw,bv,0, (sh+bv*0.7)/2, -Math.PI/4,0],[sw,bv,0,-(sh+bv*0.7)/2, Math.PI/4,0],
+        [bv,sh,(sw+bv*0.7)/2,0, 0,Math.PI/4],[bv,sh,-(sw+bv*0.7)/2,0, 0,-Math.PI/4]]){
+        const m=fbox(w2,h2,0.004, x2,y2,MZ,artMatMat);
+        m.rotation.x=rx; m.rotation.z=rz;
+      }
+    }
+  }
+  if(glazed){
+    const gz=md*0.66-0.004;
+    put(new THREE.PlaneGeometry(ow*0.99,oh*0.99),artGlassMat,0,0,gz);
+    if(Math.random()<0.16){
+      /* and some of it has gone. makeCrackTexture grows a crack for a 3m
+         wall — stretched over the whole pane it comes out as one black
+         branch the size of the picture. It runs at a THIRD of the opening
+         and off-centre, so it reads as a break from one impact instead. */
+      const cs=Math.min(ow,oh)*0.62;
+      const cr=new THREE.Mesh(new THREE.PlaneGeometry(cs*0.55,cs),
+        new THREE.MeshPhongMaterial({map:makeCrackTexture(), transparent:true,
+          opacity:0.6, depthWrite:false, specular:0x000000, shininess:1}));
+      cr.position.set((Math.random()-0.5)*ow*0.34,(Math.random()-0.5)*oh*0.3,gz+0.002);
+      cr.rotation.z=Math.random()*Math.PI*2;
+      g.add(cr);
+    }
+  }
+  return {g, bulk, w:ow+2*mw, h:oh+2*mw};
+}
+
+/* ---- a floor globe on a wooden stand — the geography is long gone ----
+   The old sphere wore seven wobbly blobs on a 128×64 canvas and read, at
+   any distance, as a mouldy ball. It is a real cartographic surface now:
+   graticule at proper 15° spacing, a warm ocean plate with depth banding,
+   plausible continental masses grown from lobed blobs at plate scale, an
+   equator and tropics picked out heavier than the rest, and the varnish
+   gone amber and crazed. You still cannot find anywhere you have been on
+   it, which is the point. */
+const globeTex=()=>makeCanvas(512,256,(c,w,h)=>{
+  c.fillStyle="#3c5566";c.fillRect(0,0,w,h);
+  for(let i=0;i<34;i++){                       // ocean depth plates
+    const x=Math.random()*w,y=Math.random()*h,r=24+Math.random()*90;
+    const gr=c.createRadialGradient(x,y,2,x,y,r);
+    gr.addColorStop(0,`rgba(${Math.random()<0.5?"30,58,74":"86,116,132"},0.20)`);
+    gr.addColorStop(1,"rgba(40,64,80,0)");
+    c.fillStyle=gr;c.fillRect(x-r,y-r,r*2,r*2);
+  }
+  /* landmasses: a few seeds each grown from overlapping lobes, so the
+     coastline comes out ragged instead of round */
+  const land=(cx,cy,sc,n)=>{
+    c.fillStyle="#8a8054";
+    for(let i=0;i<n;i++){
+      const a=Math.random()*Math.PI*2, rr=Math.random()*sc*0.8;
+      const x=cx+Math.cos(a)*rr, y=cy+Math.sin(a)*rr*0.62;
+      const r=sc*(0.20+Math.random()*0.34);
+      c.beginPath();
+      for(let t=0;t<Math.PI*2;t+=0.4)
+        c.lineTo(x+Math.cos(t)*r*(0.6+Math.random()*0.8), y+Math.sin(t)*r*(0.5+Math.random()*0.8));
+      c.closePath();c.fill();
+    }
+  };
+  land(80,80,58,9); land(150,170,44,7); land(250,70,70,11);
+  land(300,180,40,6); land(410,110,62,10); land(455,205,28,5);
+  c.globalCompositeOperation="source-atop";     // relief, only on the land
+  for(let i=0;i<900;i++){
+    const v=Math.random();
+    c.fillStyle=v<0.4? "rgba(112,96,58,0.30)" : v<0.7? "rgba(150,142,104,0.22)"
+                                               : "rgba(74,86,52,0.22)";
+    c.fillRect(Math.random()*w,Math.random()*h,2+Math.random()*7,1+Math.random()*4);
+  }
+  c.globalCompositeOperation="source-over";
+  /* the graticule: 15° everywhere, the equator and tropics heavier */
+  for(let i=1;i<12;i++){
+    c.strokeStyle=i===6? "rgba(50,38,22,0.55)" : (i===4||i===8)? "rgba(60,46,26,0.32)"
+                                               : "rgba(214,206,178,0.13)";
+    c.lineWidth=i===6? 2:1;
+    c.beginPath();c.moveTo(0,h*i/12);c.lineTo(w,h*i/12);c.stroke();
+  }
+  for(let i=0;i<24;i++){
+    c.strokeStyle=i%6===0? "rgba(60,46,26,0.30)":"rgba(214,206,178,0.11)";
+    c.lineWidth=1;
+    c.beginPath();c.moveTo(w*i/24,0);c.lineTo(w*i/24,h);c.stroke();
+  }
+  /* varnish: gone amber, and crazed with age */
+  const am=c.createLinearGradient(0,0,0,h);
+  am.addColorStop(0,"rgba(120,88,34,0.26)");
+  am.addColorStop(0.5,"rgba(150,116,52,0.10)");
+  am.addColorStop(1,"rgba(120,88,34,0.26)");
+  c.fillStyle=am;c.fillRect(0,0,w,h);
+  c.strokeStyle="rgba(58,44,24,0.14)";c.lineWidth=1;
+  for(let i=0;i<70;i++){
+    c.beginPath();
+    let x=Math.random()*w,y=Math.random()*h;
+    c.moveTo(x,y);
+    for(let k=0;k<4;k++){ x+=(Math.random()-0.5)*26; y+=(Math.random()-0.5)*20; c.lineTo(x,y); }
+    c.stroke();
+  }
 });
 function makeGlobe(){
   const g=new THREE.Group(); g.userData.prop="globe";
-  const wood=new THREE.MeshPhongMaterial({color:0x41301d, specular:0x161208, shininess:12});
-  const foot=new THREE.Mesh(new THREE.CylinderGeometry(0.2,0.24,0.04,12),wood);
-  foot.position.y=0.02; g.add(foot);
-  const col=new THREE.Mesh(new THREE.CylinderGeometry(0.032,0.045,0.5,8),wood);
-  col.position.y=0.29; g.add(col);
-  const ring=new THREE.Mesh(new THREE.TorusGeometry(0.31,0.018,8,24),darkMetalMat);
-  ring.rotation.x=Math.PI/2-0.41; ring.position.y=0.85; g.add(ring);
-  const globe=new THREE.Mesh(new THREE.SphereGeometry(0.27,14,12),
-    new THREE.MeshPhongMaterial({map:globeTex(), specular:0x1a2026, shininess:30}));
+  const wood=new THREE.MeshPhongMaterial({map:texDeskWood, color:0x8a7050,
+    specular:0x161208, shininess:12});
+  /* a three-legged cradle rather than a post in a dinner plate */
+  const parts=[];
+  const ring=new THREE.Mesh(new THREE.TorusGeometry(0.205,0.016,6,18));
+  ring.rotation.x=Math.PI/2; ring.position.y=0.055; parts.push(ring);
+  for(let i=0;i<3;i++){
+    const a=i/3*Math.PI*2;
+    const leg=new THREE.Mesh(new THREE.CylinderGeometry(0.019,0.028,0.12,7));
+    leg.position.set(Math.cos(a)*0.205,0.0,Math.sin(a)*0.205);
+    parts.push(leg);
+    const brace=new THREE.Mesh(new THREE.CylinderGeometry(0.013,0.013,0.30,6));
+    brace.position.set(Math.cos(a)*0.105,0.24,Math.sin(a)*0.105);
+    brace.rotation.z=-Math.cos(a)*0.36; brace.rotation.x=Math.sin(a)*0.36;
+    parts.push(brace);
+  }
+  const col=new THREE.Mesh(new THREE.CylinderGeometry(0.030,0.048,0.44,8));
+  col.position.y=0.31; parts.push(col);
+  const knop=new THREE.Mesh(new THREE.SphereGeometry(0.052,9,7));
+  knop.scale.y=0.7; knop.position.y=0.52; parts.push(knop);
+  g.add(mergeStatic(parts,wood));
+  for(const m of parts) m.geometry.dispose();
+  /* the meridian and its yoke, in brass */
+  const br=[];
+  const mer=new THREE.Mesh(new THREE.TorusGeometry(0.305,0.014,6,26));
+  mer.rotation.x=Math.PI/2-0.41; mer.position.y=0.85; br.push(mer);
+  for(const s of[-1,1]){                        // the axle pins through the poles
+    const pin=new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.012,0.07,6));
+    pin.position.set(s*Math.sin(0.41)*0.29,0.85+s*Math.cos(0.41)*0.29,0);
+    pin.rotation.z=0.41; br.push(pin);
+  }
+  g.add(mergeStatic(br,accentBrass));
+  for(const m of br) m.geometry.dispose();
+  const globe=new THREE.Mesh(new THREE.SphereGeometry(0.27,20,16),
+    new THREE.MeshPhongMaterial({map:globeTex(), specular:0x2a3038, shininess:44}));
   globe.position.y=0.85; globe.rotation.z=0.41; globe.rotation.y=Math.random()*Math.PI*2;
   g.add(globe);
   return g;
 }
-/* a 3.5" floppy disk — the only thing in this library worth taking */
+/* ---- a 3.5" floppy disk — the only thing in this library worth taking ----
+   It was three untextured boxes, and it is the ONE prop the whole level
+   asks you to look for: it earns a printed label somebody actually wrote
+   on, the shutter with its window, the hub ring on the underside and the
+   write-protect tab. The label keeps its faint phosphor sheen — that
+   emissive is what makes it findable on a murky shelf and it is a gameplay
+   property, not a decorative one. */
+let FLOPPY=null;
+function ensureFloppy(){
+  if(FLOPPY) return FLOPPY;
+  /* four labels, one geometry. The UV regions are identical across the
+     variants, so the box is built once and only the map differs — twenty
+     disks in one room all carrying the same handwriting reads as one prop
+     copied twenty times, which is exactly what they are otherwise. */
+  const mats=[];
+  let uv=null;
+  for(let i=0;i<4;i++){
+    const f=makeFloppyTexture();
+    uv=f.uv;
+    const m=new THREE.MeshPhongMaterial({map:f.tex, emissive:0x1a1c14,
+      specular:0x3a3e46, shininess:34});
+    markShared(f.tex,m);
+    mats.push(m);
+  }
+  const body=new THREE.BoxGeometry(0.27,0.022,0.28);
+  setFaceUV(body,2,...uv.top);                            // +y: the label face
+  for(const f of[0,1,3,4,5]) setFaceUV(body,f,...uv.plain);
+  FLOPPY={mats, geo:markShared(body)};
+  return FLOPPY;
+}
+const shutterMat=new THREE.MeshPhongMaterial({color:0x9aa0a6, emissive:0x0a0c0e,
+  specular:0x70757c, shininess:74});
+const discHubMat=new THREE.MeshPhongMaterial({color:0x5f666d, specular:0x40454a, shininess:40});
 function makeDisc(){
+  const F=ensureFloppy();
   const g=new THREE.Group();
-  const body=new THREE.Mesh(new THREE.BoxGeometry(0.27,0.022,0.27),
-    new THREE.MeshPhongMaterial({color:0x181b22, emissive:0x0e1424, specular:0x30343c, shininess:30}));
-  g.add(body);
-  /* the label carries a faint phosphor sheen — findable in the murk */
-  const label=new THREE.Mesh(new THREE.BoxGeometry(0.2,0.024,0.13),
-    new THREE.MeshPhongMaterial({color:0xcfc8b4, emissive:0x2a2618, specular:0x111111, shininess:4}));
-  label.position.set(0,0.002,0.05); g.add(label);
-  const shutter=new THREE.Mesh(new THREE.BoxGeometry(0.16,0.026,0.07),
-    new THREE.MeshPhongMaterial({color:0x9aa0a6, specular:0x55585c, shininess:60}));
-  shutter.position.set(-0.01,0,-0.09); g.add(shutter);
+  g.add(new THREE.Mesh(F.geo,F.mats[Math.floor(Math.random()*F.mats.length)]));
+  /* the sprung steel shutter, standing a hair proud of the shell, with the
+     window cut through it.
+     −z, because that is the end the LABEL's printed shutter lands on with
+     the top face's v mapped upright (makeFloppyTexture) — steel on one end
+     and the printed slot on the other is the kind of mismatch nobody names
+     but everybody sees, and the old cure for it was flipping v, which
+     mirrored every letter on the label.
+     The placement is baked into the PARTS, not applied to the merged mesh:
+     mergeStatic ends in freezeStatic, so a .position.set afterwards writes a
+     matrix that is never recomposed and the steel silently renders at the
+     group's origin — which is where it has been sitting, dead centre on the
+     label, since the merge went in. */
+  const SX=-0.008, SY=0.001, SZ=-0.116;
+  const sh=[];
+  for(const [w,hh,d,dx] of [[0.185,0.026,0.045,0],[0.042,0.027,0.052,-0.072],
+                            [0.042,0.027,0.052,0.072]]){
+    const m=new THREE.Mesh(new THREE.BoxGeometry(w,hh,d));
+    m.position.set(SX+dx,SY,SZ); sh.push(m);
+  }
+  g.add(mergeStatic(sh,shutterMat));
+  for(const m of sh) m.geometry.dispose();
+  /* the hub, underneath, at the other end */
+  const hub=new THREE.Mesh(new THREE.CylinderGeometry(0.043,0.043,0.006,12),discHubMat);
+  hub.position.set(0,-0.012,0.03); g.add(hub);
   g.scale.setScalar(1.35);                       // readable from a few metres out
   g.userData.animated=true;                      // idle-spins/hovers in updateProps
   return g;
 }
-/* vintage personal computer: CRT + case + keyboard, in pristine condition.
-   Returns the group plus a tiny screen-painting API the boot sequences use. */
+/* ---- vintage personal computer: CRT + case + keyboard ----
+   The one machine you are sent to feed, and eight more scattered on the
+   tables, so it is worth building properly: the CRT genuinely TAPERS to
+   its neck now (a cuboid monitor is the single loudest "this is a box with
+   a picture on it" tell), the tube is recessed behind a real bezel and
+   bulges the way glass does, the case has vents and a drive bay and a
+   badge, and the keyboard is a drawn keyfield rather than a dark slab.
+   Everything static merges by material — 4 draws, down from 9 — and the
+   pieces the cutscenes drive (the screen canvas, the drive LED) stay their
+   own meshes because their materials are written to at runtime. */
 export function makeVintagePC(scale=1){
   const g=new THREE.Group();
-  const cse=new THREE.Mesh(new THREE.BoxGeometry(0.62,0.16,0.5),beigePlastic);
-  cse.position.y=0.08; g.add(cse);
-  /* drive bays + the slot the discs go into */
-  const slot=new THREE.Mesh(new THREE.BoxGeometry(0.26,0.035,0.02),beigePlasticDark);
-  slot.position.set(-0.1,0.08,0.251); g.add(slot);
+  const pale=[], dark=[];
+  const paleBox=(w,h,d,x,y,z)=>{ pale.push(woodBox(w,h,d,x,y,z,0.34)); };
+  const darkBox=(w,h,d,x,y,z)=>{ dark.push(woodBox(w,h,d,x,y,z,0.34)); };
+  const CASE_W=0.62, CASE_H=0.16, CASE_D=0.5;
+  paleBox(CASE_W,CASE_H,CASE_D, 0,CASE_H/2,0);            // the case
+  paleBox(0.66,0.022,0.54, 0,0.163,0);                    // its lid overhang
+  /* louvred cooling slots down each FLANK. They were spread along x (the
+     case's WIDTH) and extruded 0.24 along z at z=±0.251 — i.e. jammed
+     through the front and back faces, poking 0.12m out into the air over
+     the keyboard. Fourteen of them, and from the seat they read as a row
+     of brown tabs standing on a plate attached to nothing. A flank slot
+     runs front-to-back: long in z, thin in y, a hair proud of the x face
+     it is cut into (the drive bay's idiom, one axis over). */
+  for(const sx of[-1,1])for(let i=0;i<3;i++)
+    darkBox(0.012,0.009,0.30, sx*(CASE_W/2-0.002),0.052+i*0.032,0.02);
+  /* the drive bay: a recessed face, the slot, the eject button */
+  darkBox(0.30,0.075,0.014, -0.1,0.085,0.249);
+  darkBox(0.245,0.012,0.02, -0.1,0.092,0.252);
+  paleBox(0.03,0.022,0.018, 0.03,0.062,0.252);
   const led=new THREE.Mesh(new THREE.BoxGeometry(0.02,0.02,0.012),
     new THREE.MeshBasicMaterial({color:0x201008}));
   led.position.set(0.18,0.08,0.252); g.add(led); g.userData.led=led.material;
-  /* CRT body, slightly tapered toward the back */
-  const crt=new THREE.Mesh(new THREE.BoxGeometry(0.56,0.46,0.5),beigePlastic);
-  crt.position.y=0.16+0.25; crt.scale.z=1;
-  g.add(crt);
-  const back=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.34,0.12),beigePlasticDark);
-  back.position.set(0,0.41,-0.3); g.add(back);
+  /* the badge nobody has read in thirty years */
+  const badge=new THREE.Mesh(new THREE.PlaneGeometry(0.17,0.028),
+    new THREE.MeshPhongMaterial({map:makeEndTextTexture("ARCHIVE"), transparent:true,
+      specular:0x000000, shininess:1}));
+  badge.position.set(0.16,0.128,0.2515); g.add(badge);
+  /* CRT: a real frustum, wide at the glass and pinched at the neck */
+  const CRT_W=0.56, CRT_H=0.46, CRT_D=0.52, CRT_K=0.72, CRT_Y=CASE_H+0.25, CRT_Z=-0.01;
+  const crt=new THREE.Mesh(taperBox(CRT_W,CRT_H,CRT_D,CRT_K,"z"));
+  crt.position.set(0,CRT_Y,CRT_Z); pale.push(crt);
+  paleBox(0.30,0.26,0.10, 0,0.40,-0.31);                  // the neck housing
+  /* Vents on the crown, and the crown SLOPES: taperBox pinches the −z end,
+     so the top face runs from (+D/2, +H/2) down to (−D/2, +H/2·k). Seat
+     each vent on that line at its own z. Stacking them in y instead — the
+     first pass climbed 0.615→0.685 at one fixed z — put all six of them in
+     the air ABOVE the monitor, up to 0.1m clear of the glass, and a 0.34m
+     plate floating over a CRT is the largest unattached thing in the room. */
+  const crownY=z=>CRT_Y+CRT_H/2*(CRT_K+(1-CRT_K)*((z-CRT_Z)/CRT_D+0.5));
+  for(let i=0;i<6;i++){
+    const vz=-0.21+i*0.04;
+    darkBox(0.34,0.008,0.016, 0,crownY(vz)+0.002,vz);
+  }
+  /* The bezel and the glass stack in front of the CRT's own front face, at
+     z 0.25. Getting this order wrong is not subtle: with the glass BEHIND
+     that face, the only part of the screen that showed was the patch where
+     the tube's bulge cleared it — a black OVAL floating on a beige box. */
+  darkBox(0.50,0.38,0.008, 0,0.41,0.2465);                // the dark surround
+  paleBox(0.56,0.055,0.03, 0,0.605,0.262);                // moulding, four sides
+  paleBox(0.56,0.055,0.03, 0,0.215,0.262);
+  for(const s of[-1,1]) paleBox(0.055,0.44,0.03, s*0.2525,0.41,0.262);
   /* the screen: its own canvas so each machine can boot/static/die alone */
   const cv=document.createElement("canvas"); cv.width=192; cv.height=144;
   const tex=new THREE.CanvasTexture(cv); tex.minFilter=THREE.LinearFilter; tex.generateMipmaps=false;
@@ -991,27 +1815,110 @@ export function makeVintagePC(scale=1){
       ctx.fillStyle="rgba(120,128,126,0.05)";       // the faintest burn-in ghost
       ctx.font="bold 30px Courier New"; ctx.textAlign="center"; ctx.textBaseline="middle";
       ctx.fillText("THE END",96,72); tex.needsUpdate=true; },
-    warn(alpha=1){ /* the machine's last words, burning red */
+    /* the machine's last word, burning red — and it doesn't use words.
+       A crying face, drawn on the coarsest grid the glass can hold: 8px
+       cells, nothing off-grid, no antialiasing anywhere. The tears run on
+       their own clock (`t`), so the thing goes on weeping for as long as
+       you stand there. */
+    warn(alpha=1,t=0){
       ctx.fillStyle="#0a0202"; ctx.fillRect(0,0,192,144);
       const gr=ctx.createRadialGradient(96,72,8,96,72,112);
       gr.addColorStop(0,`rgba(140,14,8,${0.55*alpha})`);
       gr.addColorStop(1,"rgba(30,3,2,0)");
       ctx.fillStyle=gr; ctx.fillRect(0,0,192,144);
-      ctx.fillStyle=`rgba(255,58,38,${alpha})`;
-      ctx.font="bold 21px Courier New"; ctx.textAlign="center"; ctx.textBaseline="middle";
-      ctx.fillText("I WARNED YOU",96,72);
-      ctx.fillStyle=`rgba(255,58,38,${alpha*0.28})`; ctx.fillText("I WARNED YOU",96,72); // bloom
+      /* 24×18 cells of 8px. The grid's centre is the SEAM between columns
+         11 and 12, so every feature is stamped as a mirrored pair and the
+         face cannot come out lopsided.
+
+         EVERY FEATURE HAS TO CLEAR THE OUTLINE. At this resolution the
+         head is only about seven cells of radius and a one-cell ring, so
+         anything drawn near the top of the face touches it — the first
+         pass put a lid over each eye at r 7.1 straight through a ring that
+         runs 6.5–7.5, and under the tube's bloom the whole top half fused
+         into one lump with two dark holes in it. The head is an ELLIPSE
+         (a face is taller than it is wide), the ring is tested in the
+         ellipse's own normalised radius, and there is a clear cell of
+         black between it and everything inside. */
+      const P=8, CX=11.5, CY=8.5, RX=7.5, RY=8.0;
+      const er=(x,y)=>Math.sqrt(((x-CX)/RX)**2+((y-CY)/RY)**2);
+      const px=(x,y,w=1,h=1)=>{
+        const yy=Math.round(y);
+        if(yy>17||yy+h<0) return;
+        ctx.fillRect(Math.round(x)*P,yy*P,w*P,h*P);
+      };
+      const mir=(x,y,w=1,h=1)=>{ px(x,y,w,h); px(23-x-(w-1),y,w,h); };
+      const face=()=>{
+        for(let y=0;y<18;y++)for(let x=0;x<24;x++){
+          const r=er(x,y);
+          if(r>0.875&&r<=1) px(x,y);
+        }
+        mir(8,6,2,2);                 // eyes
+        /* THE STREAK IS THE WHOLE THING. Three loose drops under an eye
+           read as noise on the tube; a standing wet line down the cheek is
+           what makes the face crying rather than merely sad, and the drops
+           below it are then legible as drops. */
+        mir(8,9,1,3);
+        /* the mouth: corners turned down — in screen space a frown is the
+           middle riding HIGHEST, so the row grows with the offset. It is
+           kept clear of column 8, which the tears own all the way down. */
+        mir(11,13); mir(10,14); mir(9,14);
+        for(let k=0;k<2;k++){
+          const y0=12+((t*3.2+k*3.0)%6.2), y1=12+((t*3.2+k*3.0+1.5)%6.2);
+          px(8,y0,1,y0>15?2:1); px(15,y1,1,y1>15?2:1);   // stretching as they fall
+        }
+      };
+      /* the glass blooms: one soft halo pass under one hard one. Two blur
+         passes closed every gap the layout just bought. */
+      ctx.save();
+      ctx.shadowColor=`rgba(255,58,34,${alpha})`; ctx.shadowBlur=5;
+      ctx.fillStyle=`rgba(226,46,28,${alpha*0.8})`;
+      face();
+      ctx.restore();
+      ctx.fillStyle=`rgba(255,138,112,${alpha})`;
+      face();
+      ctx.fillStyle="rgba(10,2,2,0.26)";            // the tube's own scanlines
+      for(let y=0;y<144;y+=3) ctx.fillRect(0,y,192,1);
       tex.needsUpdate=true; },
   };
   screen.off();
   const scrMat=new THREE.MeshBasicMaterial({map:tex});
-  const scr=new THREE.Mesh(new THREE.PlaneGeometry(0.42,0.3),scrMat);
-  scr.position.set(0,0.41,0.252); g.add(scr);
+  /* the glass BULGES. A CRT face is a section of a very large sphere, and a
+     dead-flat quad behind a bezel reads as a photograph in a frame */
+  const glass=new THREE.PlaneGeometry(0.44,0.32,6,6);
+  {
+    const p=glass.attributes.position;
+    for(let i=0;i<p.count;i++){
+      const x=p.getX(i)/0.22, y=p.getY(i)/0.16;
+      p.setZ(i, 0.019*Math.max(0,1-(x*x+y*y)*0.5));
+    }
+    glass.computeVertexNormals();
+  }
+  const scr=new THREE.Mesh(glass,scrMat);
+  scr.position.set(0,0.41,0.2515); g.add(scr);   // clear of the tube face, under the bezel's lip
   g.userData.screen=screen; g.userData.scrMat=scrMat;
-  const kb=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.035,0.2),beigePlastic);
-  kb.position.set(0,0.018,0.45); kb.rotation.x=0.06; g.add(kb);
-  const keys=new THREE.Mesh(new THREE.BoxGeometry(0.44,0.02,0.15),beigePlasticDark);
-  keys.position.set(0,0.042,0.448); keys.rotation.x=0.06; g.add(keys);
+  /* the keyboard: a wedge with the keyfield printed on its top face */
+  const kb=new THREE.Group();
+  kb.position.set(0,0.012,0.46); kb.rotation.x=0.07; g.add(kb);
+  const kbGeo=taperBox(0.52,0.042,0.21,0.86,"z");
+  const kbody=new THREE.Mesh(kbGeo,beigePlastic); kb.add(kbody);
+  const keys=new THREE.Mesh(new THREE.PlaneGeometry(0.48,0.175),
+    new THREE.MeshPhongMaterial({map:makeKeyboardTexture(), specular:0x18160f, shininess:8}));
+  keys.rotation.x=-Math.PI/2; keys.position.set(0,0.0215,0.004); kb.add(keys);
+  /* the coil back to the case, in two dropping arcs */
+  {
+    const c=[];
+    for(let i=0;i<7;i++){
+      const k=i/6, seg=new THREE.Mesh(new THREE.BoxGeometry(0.012,0.012,0.05));
+      seg.position.set(-0.02+Math.sin(k*4.2)*0.03, 0.006+Math.sin(k*Math.PI)*0.012, 0.32-k*0.075);
+      c.push(seg);
+    }
+    g.add(mergeStatic(c,beigePlasticDark));
+    for(const m of c) m.geometry.dispose();
+  }
+  for(const arr of[[pale,beigePlastic],[dark,beigePlasticDark]]){
+    g.add(mergeStatic(arr[0],arr[1]));
+    for(const m of arr[0]) m.geometry.dispose();
+  }
   g.scale.setScalar(scale);
   return g;
 }
@@ -1021,13 +1928,29 @@ function makeDesk(cx0,cy0){
   const g=new THREE.Group();
   const p=cellToWorld2(cx0,cy0);
   g.position.set(p.x,0,p.z);
-  const len=3*CELL-1.2;
-  const body=new THREE.Mesh(new THREE.BoxGeometry(len,1.12,1.7),deskMat);
-  body.position.y=0.56; g.add(body);
-  const top=new THREE.Mesh(new THREE.BoxGeometry(len+0.3,0.07,1.95),deskMat);
-  top.position.y=1.155; g.add(top);
-  const kick=new THREE.Mesh(new THREE.BoxGeometry(len,0.16,1.74),
-    new THREE.MeshPhongMaterial({color:0x241a10, specular:0x000000, shininess:2}));
+  /* An eleven-metre slab with one 4m tile smeared over it was the largest
+     untextured surface in the building. It is panelled now: a recessed
+     field between stiles on the public face, a counter with a nosing and a
+     raised transaction ledge, and a plinth it stands on. */
+  const len=3*CELL-1.2, front=[], up=[];
+  up.push(woodBox(len,1.12,1.7, 0,0.56,0));                       // the carcass
+  const nP=7, pw=(len-0.2)/nP;
+  for(let i=0;i<nP;i++){                                          // stiles between panels
+    const x=-len/2+0.1+pw*i;
+    up.push(woodBox(0.10,1.04,0.05, x,0.60,0.868));
+  }
+  up.push(woodBox(0.10,1.04,0.05, len/2-0.1,0.60,0.868));
+  front.push(woodBox(len,0.07,0.055, 0,1.09,0.868));              // top and bottom rails
+  front.push(woodBox(len,0.09,0.055, 0,0.145,0.868));
+  front.push(woodBox(len+0.30,0.07,1.95, 0,1.155,0));             // the counter
+  front.push(woodBox(len+0.34,0.035,1.99, 0,1.108,0));            // its nosing
+  front.push(woodBox(len-1.0,0.09,0.40, 0,1.235,-0.62));          // the transaction ledge
+  for(const arr of[[front,deskMatH],[up,deskMat]]){
+    g.add(mergeStatic(arr[0],arr[1]));
+    for(const m of arr[0]) m.geometry.dispose();
+  }
+  const kick=new THREE.Mesh(scaleBoxUV(new THREE.BoxGeometry(len,0.16,1.74),len,0.16,1.74,0.9),
+    new THREE.MeshPhongMaterial({map:texShelfWood, color:0x6a5238, specular:0x000000, shininess:2}));
   kick.position.y=0.08; g.add(kick);
   /* the terminal, facing the south approach (toward the elevator) */
   const pc=makeVintagePC(1);
@@ -1050,29 +1973,87 @@ function makeDesk(cx0,cy0){
      dependable light in the building used to survive "every light lets go") */
   return {group:g, pc, lamp, bulbMat:bulb.material};
 }
-/* a hanging twin-tube strip light, chained down from the high dark */
-const tubeGeo2=new THREE.CylinderGeometry(0.038,0.038,2.0,8); tubeGeo2.rotateZ(Math.PI/2);
-const housingGeo2=new THREE.BoxGeometry(2.2,0.1,0.34);
-const housingMat2=new THREE.MeshPhongMaterial({color:0x6a6e66,emissive:0x070706,
+/* ---- a hanging twin-tube strip light, chained down from the high dark ----
+   It used to be a flat slab with two sticks under it: from directly below —
+   which is how you see a hundred of them — a lit rectangle with no depth,
+   and from the side a floating plank. It is a REFLECTOR now: a pressed
+   spine with two wings splayed down and out to throw the tubes' light, end
+   caps closing the trough, sockets over the glass ends, and a guard cage
+   slung underneath. All of that is galvanized sheet, so it merges to ONE
+   mesh; only the backplate and the tubes stay separate, because lights.js
+   repaints their materials every frame. Three draws a fixture — half of
+   what the flat slab cost, with five times the hardware on it.
+
+   The wings are placed by their EDGES, not by eye: a plate's local +z under
+   a rotation θ about x points at (y=−sinθ, z=cosθ), so hinging one at the
+   spine's z edge and running it out along that direction lands the outer
+   edge exactly where the trough should open. */
+const tubeGeo2=new THREE.CylinderGeometry(0.036,0.036,2.0,8,1,true); tubeGeo2.rotateZ(Math.PI/2);
+const housingMat2=new THREE.MeshPhongMaterial({map:texGalv,color:0x7c8078,emissive:0x070706,
   specular:0x3a3c36,shininess:40});
-const cordGeo=new THREE.CylinderGeometry(0.012,0.012,1,4);
+const FIX_LEN=2.2, WING_A=0.5, WING_W=0.115;
+/* the turned hardware, built once for the whole building */
+const SOCK_GEO=new THREE.CylinderGeometry(0.052,0.052,0.07,8); SOCK_GEO.rotateZ(Math.PI/2);
+const GUARD_GEO=new THREE.CylinderGeometry(0.009,0.009,FIX_LEN-0.06,4); GUARD_GEO.rotateZ(Math.PI/2);
+const RIB_GEO=new THREE.CylinderGeometry(0.009,0.009,0.40,4); RIB_GEO.rotateX(Math.PI/2);
+const CORD_GEO=new THREE.CylinderGeometry(0.013,0.013,1,5);
+const EYE_GEO=new THREE.TorusGeometry(0.032,0.008,4,10);
+const SHELL_GEOS=new Set([SOCK_GEO,GUARD_GEO,RIB_GEO,CORD_GEO,EYE_GEO]);
+/* every shell member: [w,h,d, x,y,z, rotX] with y measured from the hang line */
+const boxAt=(w,h,d,x,y,z,rx,m)=>{
+  const b=new THREE.Mesh(scaleBoxUV(new THREE.BoxGeometry(w,h,d),w,h,d,m||0.5));
+  b.position.set(x,y,z); if(rx) b.rotation.x=rx;
+  return b;
+};
+function fixtureShell(FY){
+  const parts=[];
+  parts.push(boxAt(FIX_LEN,0.06,0.30, 0,FY+0.125,0));                       // reflector spine
+  for(const s of[-1,1]){                                                     // the two wings
+    const cz=s*(0.15+WING_W/2*Math.cos(WING_A)), cy=FY+0.095-WING_W/2*Math.sin(WING_A);
+    parts.push(boxAt(FIX_LEN,0.016,WING_W, 0,cy,cz, s*WING_A));
+    parts.push(boxAt(0.05,0.24,0.46, s*(FIX_LEN/2+0.02),FY+0.055,0));        // end cap
+  }
+  /* sockets: the lampholders the glass plugs into, one per tube end */
+  for(const sx of[-1,1])for(const tz of[-0.09,0.09]){
+    const m=new THREE.Mesh(SOCK_GEO); m.position.set(sx*1.015,FY-0.02,tz); parts.push(m);
+  }
+  /* the guard: four rods the length of the trough on three cross ribs */
+  for(const rz of[-0.16,-0.055,0.055,0.16]){
+    const m=new THREE.Mesh(GUARD_GEO); m.position.set(0,FY-0.115,rz); parts.push(m);
+  }
+  for(const rx of[-0.72,0,0.72]){
+    const m=new THREE.Mesh(RIB_GEO); m.position.set(rx,FY-0.113,0); parts.push(m);
+  }
+  /* the drop: a rod to the ceiling off each end, with an eye at the fixture
+     and a fixing plate where it meets the dark */
+  const cordLen=LIB_WALL_H-(FY+0.16);
+  for(const sx of[-0.95,0.95]){
+    const c=new THREE.Mesh(CORD_GEO);
+    c.scale.y=cordLen; c.position.set(sx,FY+0.16+cordLen/2,0); parts.push(c);
+    const e=new THREE.Mesh(EYE_GEO); e.position.set(sx,FY+0.17,0); parts.push(e);
+    parts.push(boxAt(0.14,0.02,0.14, sx,LIB_WALL_H-0.01,0));
+  }
+  const shell=mergeStatic(parts,housingMat2);
+  /* only the boxes were built for this fixture; the turned parts are
+     module-level and shared by every strip in the building */
+  const own=new Set(); for(const p of parts) if(!SHELL_GEOS.has(p.geometry)) own.add(p.geometry);
+  for(const gg of own) gg.dispose();
+  return shell;
+}
 function makeFixture(wx,wz,alongZ,fy=3.78){     // base layer hung +20% higher (3.15→3.78) to widen each pool against the new dropoff
   const g=new THREE.Group();
   const glowMat=new THREE.MeshBasicMaterial({color:0x111008});
-  const tubeMat=new THREE.MeshBasicMaterial({color:0x111008});
+  const tubeMat=new THREE.MeshBasicMaterial({map:tubeTex, color:0x111008});
   const FY=fy;                                     // hung this high; the cord reaches up from here to the ceiling
-  const housing=new THREE.Mesh(housingGeo2,housingMat2);
-  housing.position.y=FY+0.05; g.add(housing);
-  const plate=new THREE.Mesh(new THREE.PlaneGeometry(2.1,0.3),glowMat);
-  plate.rotation.x=Math.PI/2; plate.position.y=FY+0.01; g.add(plate);
-  for(const tz of[-0.09,0.09]){
-    const tube=new THREE.Mesh(tubeGeo2,tubeMat);
-    tube.position.set(0,FY-0.045,tz); g.add(tube);
-  }
-  const cordLen=LIB_WALL_H-(FY+0.1);
-  for(const sx of[-0.95,0.95]){
-    const c=new THREE.Mesh(cordGeo,darkMetalMat);
-    c.scale.y=cordLen; c.position.set(sx,FY+0.1+cordLen/2,0); g.add(c);
+  g.add(fixtureShell(FY));
+  const plate=new THREE.Mesh(new THREE.PlaneGeometry(2.14,0.29),glowMat);
+  plate.rotation.x=Math.PI/2; plate.position.y=FY+0.088; g.add(plate);
+  {
+    const t=[];
+    for(const tz of[-0.09,0.09]){
+      const tube=new THREE.Mesh(tubeGeo2); tube.position.set(0,FY-0.02,tz); t.push(tube);
+    }
+    g.add(mergeStatic(t,tubeMat));                 // both tubes, one draw, one material
   }
   g.position.set(wx,0,wz);
   if(alongZ) g.rotation.y=Math.PI/2;
@@ -1106,21 +2087,45 @@ function buildHole(hc,carpetMat){
   texStone.wrapS=texStone.wrapT=THREE.RepeatWrapping;
   const g=new THREE.Group();
   g.visible=false;
-  /* shaft wall, seen from inside; slightly belled so the depths read wider */
-  const shaftTex=texStone.clone(); shaftTex.needsUpdate=true; shaftTex.repeat.set(6,4);
-  const shaftMat=new THREE.MeshPhongMaterial({map:shaftTex, specular:0x0a0c10, shininess:6,
-    emissive:0x04070a, side:THREE.BackSide});
+  /* shaft wall, seen from inside; slightly belled so the depths read wider.
+     THE NEST's rock, like the treads, and for the same reason: this is the
+     bore you walk down and step off the bottom of onto the cave's own
+     continuation of it. The local packed-earth canvas it used to wear was
+     128² at repeat(6,4) — 44 px/m around and 23 px/m down, the lowest
+     resolution of any surface in the game — and its "strata" were fourteen
+     full-width sine curves, which is precisely the pass texCaveRock's own
+     header was written to bury: at tiling scale they read as dark worms
+     crawling round the shaft. texCaveRock is 512², seam-safe (everything in
+     it is drawn wrapped), fractures instead of undulating, and carries the
+     grain that lets it double as its own bump map. repeat.x stays an
+     INTEGER — the cylinder's u wraps, and a fractional rate puts a hard
+     vertical cut down the full 22m of wall. */
+  const shaftTex=texCaveRock.clone(); shaftTex.needsUpdate=true; shaftTex.repeat.set(6,7.6);
+  /* No colour tint: texCaveRock is a dark, deliberately low-contrast map
+     (built to be read at arm's length under a fungus colony), and the only
+     things lighting 22m of shaft are four dim blue points. Multiplying it
+     down as well left a flat teal field with the detail buried. The bump is
+     carried hard (0.16) because raking blue light across the joints is the
+     only thing here that says how far away the far wall is. */
+  const shaftMat=new THREE.MeshPhongMaterial({map:shaftTex, bumpMap:shaftTex, bumpScale:0.16,
+    specular:0x14181e, shininess:10,
+    emissive:0x070c11, side:THREE.BackSide});
   const shaft=new THREE.Mesh(
     new THREE.CylinderGeometry(HOLE_R+0.05,HOLE_R+0.4,HOLE_DEPTH,40,1,true),shaftMat);
   shaft.position.set(hc.x,-HOLE_DEPTH/2,hc.z); g.add(shaft);
   /* the stair: chunky stone treads hugging the wall, one merged mesh.
-     Entry tread on the south rim (the desk side — where you arrive from). */
-  const stepMat=new THREE.MeshPhongMaterial({map:texStone, color:0xbcc8d2,
-    emissive:0x0c141b, specular:0x141a22, shininess:12});
+     Entry tread on the south rim (the desk side — where you arrive from).
+     These are THE NEST's slabs: the same rock map, the same bump, the same
+     world-scaled UVs. They have to be — you walk down this flight and step
+     off the bottom of it onto the cave's own continuation of it, and the
+     old local packed-earth canvas at raw box UVs crammed a 4m tile onto a
+     1.25m tread, which averaged out to a flat grey slab with no grain. */
+  const stepMat=new THREE.MeshPhongMaterial({map:texCaveRock, bumpMap:texCaveRock,
+    bumpScale:0.06, color:0x525a63, emissive:0x0a1017, specular:0x141a22, shininess:8});
   const stair={a0:Math.PI/2, dir:1, rc:HOLE_R-0.62, rise:STAIR_RISE, steps:STAIR_STEPS,
                n:Math.round(4.5*STAIR_STEPS)};
   {
-    const stepGeo=new THREE.BoxGeometry(1.3,0.24,1.05);
+    const stepGeo=scaleBoxUV(new THREE.BoxGeometry(1.3,0.24,1.05),1.3,0.24,1.05,2);
     const steps=[];
     const n=stair.n;                             // ~4½ turns; the glow takes the rest
     for(let i=0;i<n;i++){
@@ -1186,6 +2191,7 @@ function buildHole(hc,carpetMat){
   const spr=new THREE.Sprite(new THREE.SpriteMaterial({map:texStone, transparent:true, opacity:0}));
   spr.scale.set(0.001,0.001,1); spr.position.set(hc.x,-2,hc.z); g.add(spr);
   renderer.initTexture(texStone); renderer.initTexture(shaftTex);
+  renderer.initTexture(texCaveRock);         // the treads' map — first upload here, not at the reveal
   scene.add(g);
   /* the plug: a carpet-matched disc hiding all of it until the dig */
   const plugGeo=new THREE.CircleGeometry(HOLE_R+0.14,44);
@@ -1206,6 +2212,7 @@ export function revealHole(){
   const h=LIB.hole;
   if(!h||STATE.holeOpen) return;
   STATE.holeOpen=true;
+  STATE.guide={x:h.x, z:h.z};       // the HUD's one legitimate pointer (see ui.js)
   h.group.visible=true;
   if(h.plug){ scene.remove(h.plug); h.plug.geometry.dispose(); h.plug=null; }
 }
@@ -1214,6 +2221,7 @@ export function revealHole(){
 export function buildLibrary(){
   ensureBooks();                       // the design pool, built on first visit
   LIB.hole=null;
+  LIB.weeping=false; LIB.weepT=0; LIB.weepPaint=0;
   LIB.obstacles=[]; LIB.pcAnims=[]; LIB.blackActive=false; LIB.blackElapsed=0; LIB.nextBlack=35;
   LIB.webs=[]; LIB.webGroup=new THREE.Group(); LIB.webGroup.userData.animated=true;   // strands spawn/reskin at runtime
   scene.add(LIB.webGroup);
@@ -1227,8 +2235,12 @@ export function buildLibrary(){
      two cells behind the desk (the protected clearing keeps those cells open)
      — the librarian's way down. A carpet plug covers it seamlessly until the
      terminal ending digs it open (revealHole). */
-  texLibCarpet.repeat.set(LW,LH);
-  const carpetMat=new THREE.MeshPhongMaterial({map:texLibCarpet, specular:0x000000, shininess:1});
+  texLibCarpet.repeat.set(LW,LH); texLibCarpetBump.repeat.set(LW,LH);
+  /* a whisper of specular: real broadloom is not matte, it just isn't shiny —
+     without it the pile's bump has nothing to catch and the floor stays the
+     flat plane it always was */
+  const carpetMat=new THREE.MeshPhongMaterial({map:texLibCarpet,
+    bumpMap:texLibCarpetBump, bumpScale:0.022, specular:0x0a0c10, shininess:3});
   const holeC=cellToWorld2(cx0,cy0-2);
   {
     const shape=new THREE.Shape();
@@ -1293,7 +2305,13 @@ export function buildLibrary(){
   {
     const p=cellToWorld2(exC,eyC);
     const dp=new THREE.Vector3(p.x,0,p.z-CELL/2);
-    const elev=makeElevator(dp,Math.PI,{wallH:LIB_WALL_H, wallMat:libWallMat, uvTile:4});
+    /* `wrecked` is what makes this cab the one the brakes failed on rather
+       than a second working elevator: the inspection hatch forced open and
+       hanging into the car, the egg-crate short two bars, the back panel
+       broken, one leaf out of its track. The 0.022 lean was all the damage
+       it used to carry, and a lean on its own just reads as sloppy build. */
+    const elev=makeElevator(dp,Math.PI,{wallH:LIB_WALL_H, wallMat:libWallMat, uvTile:4,
+                                        wrecked:true});
     elev.rotation.z=0.022;                       // it did not land well
     scene.add(elev);
     LIB.elev=elev;
@@ -1393,66 +2411,186 @@ export function buildLibrary(){
   };
   dropFloor(makeLectern,12,0.36);
   dropFloor(makeMannequin,9,0.3);
-  dropFloor(makeBookCart,8,0.52);
+  dropFloor(makeBookCart,8,CART_R);
   dropFloor(makeGlobe,5,0.34);
   /* wall dressing: posters, cracks, and the level's name — meaninglessly.
      The stretch of south wall holding the crashed cab stays bare: nothing
      may spawn over (or hang beside) the elevator. */
   const wallFaces=[];
+  /* a face is only dressable if the cell in FRONT of it is open: a shelf run
+     that anchors into the perimeter fills the cell against the wall, and
+     anything hung there — a poster, and now a 70mm-deep frame — grows out
+     through the end of the stack */
+  const faceOK=(cx,cy)=>grid2[cy]&&grid2[cy][cx]===0;
   for(let x=1;x<LW-1;x++){
-    wallFaces.push({x:cellToWorld2(x,0).x,        z:cellToWorld2(x,0).z+CELL/2+0.03,  ry:0});
-    if(Math.abs(x-exC)>1)
+    if(faceOK(x,1))
+      wallFaces.push({x:cellToWorld2(x,0).x,      z:cellToWorld2(x,0).z+CELL/2+0.03,  ry:0});
+    if(Math.abs(x-exC)>1&&faceOK(x,LH-2))
       wallFaces.push({x:cellToWorld2(x,LH-1).x,   z:cellToWorld2(x,LH-1).z-CELL/2-0.03, ry:Math.PI});
   }
   for(let y=1;y<LH-1;y++){
-    wallFaces.push({x:cellToWorld2(0,y).x+CELL/2+0.03,  z:cellToWorld2(0,y).z, ry:Math.PI/2});
-    wallFaces.push({x:cellToWorld2(LW-1,y).x-CELL/2-0.03, z:cellToWorld2(LW-1,y).z, ry:-Math.PI/2});
+    if(faceOK(1,y))
+      wallFaces.push({x:cellToWorld2(0,y).x+CELL/2+0.03,  z:cellToWorld2(0,y).z, ry:Math.PI/2});
+    if(faceOK(LW-2,y))
+      wallFaces.push({x:cellToWorld2(LW-1,y).x-CELL/2-0.03, z:cellToWorld2(LW-1,y).z, ry:-Math.PI/2});
   }
   for(let i=wallFaces.length-1;i>0;i--){
     const j=Math.floor(srand()*(i+1)); [wallFaces[i],wallFaces[j]]=[wallFaces[j],wallFaces[i]];
   }
+  /* ---- the occupancy ledger ----
+     Every pass that puts something on a wall books its rectangle here, and
+     every pass checks it first. It used to be that only the picture hang
+     tracked its own placements: the texts, the posters and the cracks each
+     took a face off a cycling cursor and stamped themselves on it blind, so
+     two passes landing on one face never knew about each other — and once
+     the four of them between them wanted more faces than the room had, the
+     cursor WRAPPED and the cracks, which run last, came down on top of
+     pictures that were already hanging.
+     The elevator books a rectangle too. The south wall already skips the
+     cells either side of the doorway, but a keep-out written in world space
+     is the one a pass added later cannot fail to see. */
+  const dressed=[];
+  {
+    const ep=cellToWorld2(exC,eyC);
+    dressed.push({x:ep.x, z:ep.z-CELL/2, y:(ELEV.OPEN_H+1.6)/2,
+                  w:ELEV.OPEN_W+1.6, h:ELEV.OPEN_H+1.6});
+  }
+  /* 0.045, not 0.22: the hang's cursor deliberately leaves a 0.10–0.19m gap
+     between neighbours, so a separation margin wider than the gap it is
+     checking rejects every second piece in every cluster — which is how a
+     34-picture hang quietly became a 10-picture one */
+  const spotFree=(x,z,y,w,h)=>!dressed.some(q=>
+    Math.hypot(q.x-x,q.z-z)<(q.w+w)/2+0.045 && Math.abs(q.y-y)<(q.h+h)/2+0.045);
   let fi=0;
   const take=()=>wallFaces[fi++%wallFaces.length];
+  /* walk the shuffled list from the cursor looking for a face — and a spot
+     along it — with room for a w×h piece, rather than taking the next face
+     blind. A full face now costs a retry instead of an overlap. */
+  const place=(w,h,yFn)=>{
+    for(let n=0;n<wallFaces.length;n++){
+      const f=take();
+      for(const t of[0,-1.05,1.05,-1.7,1.7]){
+        if(Math.abs(t)+w/2>1.86) continue;
+        const x=f.x+Math.cos(f.ry)*t, z=f.z-Math.sin(f.ry)*t;
+        for(let a=0;a<5;a++){
+          const y=yFn();
+          if(!spotFree(x,z,y,w,h)) continue;
+          dressed.push({x,z,y,w,h});
+          return {f,x,z,y};
+        }
+      }
+    }
+    return null;
+  };
   for(let i=0;i<7;i++){
-    const f=take();
+    const r=srand();
+    /* sideways stands the 3.4m banner on end, so it books its footprint the
+       other way round — a rect booked at the wrong orientation is no keep-out */
+    const side=r>=0.14&&r<0.24;
+    const p=place(side?0.85:3.4, side?3.4:0.85, ()=>rand(1.4,5.2));
+    if(!p) continue;
     const txt=new THREE.Mesh(new THREE.PlaneGeometry(3.4,0.85),
       new THREE.MeshPhongMaterial({map:makeEndTextTexture(), transparent:true,
         specular:0x000000, shininess:1}));
-    txt.position.set(f.x,rand(1.4,5.2),f.z);
-    txt.rotation.y=f.ry;
-    const r=srand();
+    txt.position.set(p.x,p.y,p.z);
+    txt.rotation.y=p.f.ry;
     if(r<0.14) txt.rotation.z=Math.PI;            // upside-down
-    else if(r<0.24) txt.rotation.z=Math.PI/2;     // sideways
+    else if(side) txt.rotation.z=Math.PI/2;
     else txt.rotation.z=(srand()-0.5)*0.06;
     scene.add(txt);
   }
   for(let i=0;i<12;i++){
-    const f=take();
+    const p=place(0.92,1.24,()=>rand(1.3,2.6));
+    if(!p) continue;
     const po=new THREE.Mesh(new THREE.PlaneGeometry(0.92,1.24),
       new THREE.MeshPhongMaterial({map:makePosterTexture(), specular:0x000000, shininess:2}));
-    po.position.set(f.x,rand(1.3,2.6),f.z);
-    po.rotation.y=f.ry; po.rotation.z=(srand()-0.5)*0.12;
+    po.position.set(p.x,p.y,p.z);
+    po.rotation.y=p.f.ry; po.rotation.z=(srand()-0.5)*0.12;
     scene.add(po);
   }
-  /* framed artwork: five families of almost-library pieces — donor
-     portraits with no face, collection maps to nowhere, acuity charts
-     that test something else entirely */
-  for(let i=0;i<14;i++){
-    const f=take();
-    const aw=rand(0.95,1.25);
-    const art=new THREE.Mesh(new THREE.PlaneGeometry(aw,aw*1.29),
-      new THREE.MeshPhongMaterial({map:makeArtTexture(), specular:0x0a0a0a, shininess:8}));
-    art.position.set(f.x,rand(1.6,3.2),f.z);
-    art.rotation.y=f.ry; art.rotation.z=(srand()-0.5)*0.07;
-    scene.add(art);
+  /* ---- the hang ----
+     Nine families of almost-library pieces — donor portraits with no face,
+     collection maps to nowhere, acuity charts that test something else,
+     a staff photograph where the faces never developed — and twice as many
+     of them as before, because 14 pictures spread evenly round a 400m
+     perimeter is one every 28m, which is not a dressed wall, it is a wall
+     with a picture on it.
+     They go up in CLUSTERS, which is how a reading room actually hangs
+     pictures and the only way the eye reads a wall as furnished: 2–5 pieces
+     sharing a face, either on a common centre line or stacked in a block.
+     Every cluster gets one piece well over a metre, and a few go up HIGH —
+     the room is 24m to the ceiling and the old band stopped at 3.2m, which
+     dressed the bottom eighth of it and left the rest bare plaster. */
+  {
+    const bulk=new Map();                       // material → parts, merged room-wide
+    /* the cluster layout keeps its own cursor, but the free test is now the
+       ROOM's ledger: a cluster laid over a poster or a banner was every bit
+       as wrong as a crack laid over a picture, it just never got reported */
+    const free=(f,t,y,w,h)=>spotFree(f.dx*t+f.x, f.dz*t+f.z, y, w, h);
+    let hangs=0;
+    for(let c=0;c<18&&hangs<34;c++){
+      const f=take();
+      /* the wall's own tangent: forward is (sin ry, 0, cos ry), so the run
+         along the face is (cos ry, 0, −sin ry) */
+      f.dx=Math.cos(f.ry); f.dz=-Math.sin(f.ry);
+      const n=2+Math.floor(srand()*4);
+      const tall=srand()<0.30;                  // this cluster hangs high
+      const midY=tall? rand(4.4,7.6) : rand(1.75,2.9);
+      const line=srand()<0.5;                   // a common centre line, or a block
+      /* the pieces are laid out with a running CURSOR, not on a fixed pitch:
+         a salon hang leaves a hand's width between frames, and stepping by
+         a constant ~1.5m scattered five pictures over five metres of wall,
+         which is not a cluster, it is five pictures */
+      const half=[];                            // signed order: 0, −1, +1, −2, +2 …
+      for(let i=0;i<n;i++) half.push(i? (i%2? -Math.ceil(i/2) : Math.ceil(i/2)) : 0);
+      let lft=0, rgt=0;                         // how far the hang already reaches each way
+      for(let i=0;i<n&&hangs<34;i++){
+        /* one piece per cluster is the big one; the rest are its company */
+        const sw=i===0? (tall? rand(1.5,2.4) : rand(0.95,1.45))
+                      : (srand()<0.35? rand(0.42,0.62) : rand(0.62,1.0));
+        const p=makeFramedArt(sw);
+        const gap=0.10+srand()*0.09;
+        const tx=i===0? 0 : (half[i]<0? -(lft+gap+p.w/2) : (rgt+gap+p.w/2));
+        const y=(line? midY : midY+rand(-0.55,0.55)*(tall?2.2:1))+(line?rand(-0.05,0.05):0);
+        if(Math.abs(tx)+p.w/2>1.86||y-p.h/2<0.75||!free(f,tx,y,p.w,p.h)){
+          p.g.traverse(o=>{ if(o.isMesh){ o.geometry.dispose();
+            if(!SHARED_ART.has(o.material)){ if(o.material.map) o.material.map.dispose(); o.material.dispose(); } } });
+          continue;
+        }
+        p.g.position.set(f.x+f.dx*tx, y, f.z+f.dz*tx);
+        p.g.rotation.y=f.ry;
+        p.g.rotation.z=(srand()-0.5)*0.045;     // nothing in this building is level
+        scene.add(p.g);
+        p.g.updateMatrixWorld(true);
+        for(const[m,mat]of p.bulk){
+          if(!bulk.has(mat)) bulk.set(mat,[]);
+          bulk.get(mat).push(m);
+        }
+        dressed.push({x:p.g.position.x, z:p.g.position.z, y, w:p.w, h:p.h});
+        if(tx<=0) lft=Math.max(lft,-tx+p.w/2);   // the centre piece sets BOTH
+        if(tx>=0) rgt=Math.max(rgt, tx+p.w/2);
+        hangs++;
+      }
+    }
+    /* collapse every frame, mat, backing and pane in the room down to one
+       mesh per material — the whole reason a real moulding is affordable */
+    for(const[mat,arr]of bulk){
+      scene.add(mergeStatic(arr,mat));
+      for(const m of arr){ if(m.parent) m.parent.remove(m); m.geometry.dispose(); }
+    }
   }
+  /* the cracks run LAST, which is exactly why they were the pass that showed
+     the bug: by the time they pick a face the room is already dressed, so
+     they are the ones that have to give way */
   for(let i=0;i<11;i++){
-    const f=take();
-    const cr=new THREE.Mesh(new THREE.PlaneGeometry(rand(0.7,1.2),rand(2.2,3.6)),
+    const cw=rand(0.7,1.2), ch=rand(2.2,3.6);
+    const p=place(cw,ch,()=>rand(2.2,6.2));
+    if(!p) continue;
+    const cr=new THREE.Mesh(new THREE.PlaneGeometry(cw,ch),
       new THREE.MeshPhongMaterial({map:makeCrackTexture(), transparent:true,
         depthWrite:false, specular:0x000000, shininess:1}));
-    cr.position.set(f.x,rand(2.2,6.2),f.z);
-    cr.rotation.y=f.ry;
+    cr.position.set(p.x,p.y,p.z);
+    cr.rotation.y=p.f.ry;
     scene.add(cr);
   }
   /* hanging lights: faulty and uneven, but no longer rare — and every one
@@ -1693,6 +2831,12 @@ export function updateLibrary(dt){
     }
   }
   LIB.pcAnims=LIB.pcAnims.filter(a=>a.phase!=="dead");
+  /* the terminal keeps crying once the cutscene hands you back — a tear
+     frozen halfway down the glass is a picture, not a face */
+  if(LIB.weeping&&LIB.term){
+    LIB.weepT+=dt;
+    if(LIB.weepT-LIB.weepPaint>0.085){ LIB.weepPaint=LIB.weepT; LIB.term.screen.warn(1,LIB.weepT); }
+  }
   /* the open hole breathes: its glow discs swell and settle, out of phase */
   if(STATE.holeOpen&&LIB.hole){
     const tN=performance.now()/1000;
@@ -1728,7 +2872,13 @@ export function startDeadPC(it){
 
 /* ---- shared-asset registration (module-level singletons reused across every
    library build; teardown must never dispose these) ---- */
-markShared(texLibWall,texLibCarpet,texLibCeil,texShelfWood,texDeskWood,texPages,texPagesAged,texBrushed);
-markShared(shelfMat,deskMat,darkMetalMat,beigePlastic,beigePlasticDark,plasticWrap,
+markShared(texLibWall,texLibCarpet,texLibCarpetBump,texLibCeil,texShelfWood,texDeskWood,texPages,texPagesAged,texBrushed,
+           texCaveRock,   // the way down is cut in THE NEST's rock (cave.js marks it too — the Set dedupes)
+           texGalv,housingMat2,tubeGeo2,
+           SOCK_GEO,GUARD_GEO,RIB_GEO,CORD_GEO,EYE_GEO);   // the strip lights' shared hardware
+markShared(shelfMat,deskMat,shelfMatH,deskMatH,texShelfWoodH,texDeskWoodH,texBeige,
+           darkMetalMat,beigePlastic,beigePlasticDark,plasticWrap,shutterMat,discHubMat,
            bookendMat,accentWood,accentBrass,mannequinMat,mannequinDark,webMat);
-markShared(tubeGeo2,housingGeo2,housingMat2,cordGeo);
+markShared(texWrapFilm,texTape,texCartPaint,texMannequin,             // the graphics pass's own
+           wrapTapeMat,cartRubberMat,cartSteelMat,mannequinIron,
+           ...cartPaintMats, frameGiltMat,frameEbonyMat,frameOakMat,artGlassMat,artMatMat,artBackMat);

@@ -1,8 +1,9 @@
 /* ---------------- three.js scene & level geometry ---------------- */
 import { rand, clamp } from "./utils.js";
 import { W, H, CELL, WALL_H, grid, genMap, cellToWorld, isWall } from "./map.js";
-import { makeCanvas, texWall, texCarpet, texStains, texCeil, texCeilStains,
-         makeMoldTextures, makeDripTextures, sliceTexture } from "./textures.js";
+import { texWall, texCarpet, texStains, texCeil, texCeilBump, texCeilStains,
+         makeMoldTextures, makeDripTextures, sliceTexture,
+         makeTubeTexture, texGalv, texReflector, texLouvre, scaleBoxUV } from "./textures.js";
 import { $ } from "./utils.js";
 import { readSettings } from "./settings.js";
 
@@ -75,7 +76,8 @@ for(const o of scene.children) o.userData.persist=true;
    own shared assets via markShared. */
 export const SHARED=new Set();
 export function markShared(...res){ for(const r of res) if(r) SHARED.add(r); return res[0]; }
-markShared(texWall,texCarpet,texStains,texCeil,texCeilStains);   // level-0 tileable textures (mutated, reused)
+// level-0 tileable textures (repeat is mutated per build, and they're reused)
+markShared(texWall,texCarpet,texStains,texCeil,texCeilBump,texCeilStains);
 const _MAT_MAPS=["map","alphaMap","aoMap","bumpMap","displacementMap","emissiveMap",
   "envMap","lightMap","metalnessMap","normalMap","roughnessMap","specularMap","gradientMap"];
 function disposeMaterial(m,done){
@@ -171,12 +173,21 @@ export function setLevelEnvironment(level){
   if(level===1){
     scene.background.setHex(0x030404);
     /* linear fog, pinned at both ends: clear within 10m, ~50% at the 100m far wall.
-       three's linear fog is a smoothstep over [near,far], so 50% sits at the midpoint —
+       three's linear fog is a smoothstep over [10,190], so 50% sits at the midpoint —
        far=190 puts that midpoint at (10+190)/2 = 100m. */
     scene.fog = new THREE.Fog(0x030404, 10, 190);
     hemi.color.setHex(0xe8e2d0); hemi.groundColor.setHex(0x14161c);
     hemi.intensity=0.048;
     amb.color.setHex(0x4a5060); amb.intensity=0.03;
+  } else if(level===2){
+    /* THE NEST: close air, blue-black dark — the fog eats a tunnel in ~50m
+       (stretched with the caverns: the far side of the central vault is a
+       silhouette, not a wall of black at arm's length) */
+    scene.background = new THREE.Color(0x020506);
+    scene.fog = new THREE.Fog(0x020506, 6, 66);
+    hemi.color.setHex(0x9fc4d2); hemi.groundColor.setHex(0x0a1114);
+    hemi.intensity=0.030;
+    amb.color.setHex(0x24404a); amb.intensity=0.026;
   }
 }
 /* one fixture record, one behavior: every light in the game — level-0
@@ -191,6 +202,7 @@ export function makeLightRecord(glowMat,tubeMat,cx,cy,world,opts={}){
   const bright = opts.bright!==undefined? opts.bright : (warm?1:rand(0.85,1));
   const dimDen = opts.dimDen||0.15;
   return {glowMat, tubeMat, cx, cy, world,
+    louvMat:opts.louvMat,                    // level-0 troffers only; lights.js dims the blades
     fixY:opts.fixY, wakeAt:opts.wakeAt||0,
     flickery: opts.flickery!==undefined? opts.flickery : Math.random()<0.22,
     warm, warmth:warm?1:0, bright, dimY:warm?0:(1-bright)/dimDen,
@@ -222,97 +234,189 @@ export function removeDecalsOnWall(key){
   }
 }
 /* ---------------- the level-0 troffer fixture ----------------
-   A shallow housing with an OPEN bottom face — tubes and diffuse backplate
-   sit recessed inside it, and the grille is inset flush with the bottom rim,
-   exactly like a real troffer. The record driving it (makeLightRecord) is the
+   A recessed housing with an OPEN bottom, the lamps hung inside it and a real
+   egg-crate louvre below them. The record driving it (makeLightRecord) is the
    shared one; only the shell differs from the library's hanging strip.
    Assets live at module level and are markShared'd: buildLevel runs on every
    respawn, and regenerating identical canvases/geometry each time was pure
-   churn (the library's makeFixture already worked this way). */
-/* single full-cover grate texture (no tiling) so it can close with a rail on
-   ALL four edges — a repeating tile always ends on a gap at the far side,
-   leaving the grate visually open on two sides */
-const grateTex = makeCanvas(256,128,(g,w,h)=>{
-  g.clearRect(0,0,w,h);
-  g.fillStyle="rgba(22,19,11,0.96)";
-  /* exact division: rails on both edges with N uniform cells between,
-     so the pattern closes flush on every side — fixed-step spacing left
-     a partial sliver cell against the far rails */
-  const NX=32, NY=8;
-  for(let i=0;i<=NX;i++) g.fillRect(i*(w-2)/NX,0,2,h);   // grille vanes
-  for(let j=0;j<=NY;j++) g.fillRect(0,j*(h-2)/NY,w,2);   // cross ribs
-});
-/* end-of-life tubes: a gentle hue drift — yellower at the ends, a touch
-   more orange at the center where the phosphor has worn the most.
-   CylinderGeometry's v axis runs end-to-end, so a vertical gradient maps
-   along the tube. */
-const warmTubeTex = makeCanvas(4,64,(g,w,h)=>{
-  const gr=g.createLinearGradient(0,0,0,h);
-  gr.addColorStop(0,  "#ffdf94");
-  gr.addColorStop(0.5,"#ff9742");
-  gr.addColorStop(1,  "#ffdf94");
-  g.fillStyle=gr; g.fillRect(0,0,w,h);
-});
-const HOUSE_D=0.096;                               // 20% shallower than before
-const housingGeo=new THREE.BoxGeometry(CELL*0.66,HOUSE_D,CELL*0.34);
+   churn (the library's makeFixture already worked this way).
+
+   THE GRID UNDER THE LAMPS IS ROUND BAR, and it has to be. It was twenty
+   single quads — a real egg-crate louvre blade, 1.4mm of steel — and that is
+   an object that DISAPPEARS from the one place everybody looks at a ceiling
+   light from, straight up at it, then reappears as graph paper the moment you
+   step aside. Round bar presents the same 16mm from every angle. The housing
+   was also six draws (a box with a six-material array); merged, the shell is
+   one, and the guard grid is still one.
+
+   IT IS RECESSED, half its depth up inside the ceiling — which needs a real
+   HOLE in the ceiling, not just a shift. Everything above WALL_H (the pan,
+   the reflector, both lamps) is otherwise occluded by the very plane it is
+   set into: the fixture would come out as a dark slot with a grid over it.
+   scene.js cuts the openings (see ceilingGeometry), and the TRIM FLANGE stays
+   down at the ceiling line lapping over the cut edge — that flange is the
+   only thing hiding the 6mm clearance the opening is cut with. */
+const FW=CELL*0.66, FD=CELL*0.34;    // the fixture's footprint
+const HOUSE_D=0.165;                 // deep enough to actually recess the lamps
+const RISE=HOUSE_D*0.5;              // half of that goes up inside the ceiling
+const FLANGE=0.035;                  // the trim's reach onto the tile (was 0.05)
+const OPEN_C=0.006;                  // clearance the ceiling opening is cut with
+const TUBE_Y=-0.068, TUBE_Z=FD/6, TUBE_L=CELL*0.55, TUBE_R=0.042;
+const ROD_R=0.008, ROD_Y=-HOUSE_D+0.005+ROD_R;
+const SHEET=0.014;                   // the steel's thickness
+/* the tubes themselves are the shared filament asset (textures.js): burnt
+   electrodes, worn phosphor, and — on the dying ones — the end-of-life hue
+   drift toward orange at the centre. The library's hanging strips import
+   the same two maps. */
+export const tubeTex = makeTubeTexture(false), warmTubeTex = makeTubeTexture(true);
 /* galvanized-steel fixture frame — clearly a piece of metal hardware,
    not a patch of ceiling; faint emissive keeps it readable right next
    to its own glowing tubes */
-const housingSide=new THREE.MeshPhongMaterial({color:0xb4b2aa,emissive:0x0d0d0b,
+const housingSide=new THREE.MeshPhongMaterial({map:texGalv,color:0xb4b2aa,emissive:0x0d0d0b,
   specular:0x6a6960,shininess:55});
-/* bottom face: metallic trim flange with the centre punched out via
-   alphaTest so the grate & glow show through — keeps the fixture visible
-   from directly underneath without transparency-sorting issues */
-const rimTex=makeCanvas(256,128,(g,w,h)=>{
-  g.clearRect(0,0,w,h);
-  g.fillStyle="#a8a69d";
-  g.fillRect(0,0,w,8);g.fillRect(0,h-8,w,8);g.fillRect(0,0,8,h);g.fillRect(w-8,0,8,h);
-  g.fillStyle="rgba(30,28,22,0.85)";                 // shadowed inner lip
-  g.fillRect(8,8,w-16,2);g.fillRect(8,h-10,w-16,2);g.fillRect(8,8,2,h-16);g.fillRect(w-10,8,2,h-16);
-});
-const housingRim=new THREE.MeshPhongMaterial({map:rimTex,alphaTest:0.5,
-  specular:0x55534a,shininess:45});
-// box face order: +x,-x,+y,-y,+z,-z — bottom (-y) carries the trim flange
-const housingMats=[housingSide,housingSide,housingSide,housingRim,housingSide,housingSide];
-const tubeGeo=new THREE.CylinderGeometry(0.042,0.042,CELL*0.55,8);
-tubeGeo.rotateZ(Math.PI/2);                        // lie along x
-/* backplate fills the housing opening edge-to-edge: the box's top face is
-   back-face culled from below, so any gap around the backplate would show
-   straight through to the ceiling plane — ceiling texture inside the
-   fixture. Full coverage seals the interior. */
-const glowGeo=new THREE.PlaneGeometry(CELL*0.66,CELL*0.34);
-/* the grate must line up with the rim flange's inner opening
-   (0.61875 × 0.2975 of CELL — the rim border is 8px of its 256×128
-   texture). Sized a hair larger so the grate's outer rails tuck just
-   under the rim: the first visible cell inside the rim is then always
-   a full one. A larger grate hides its rails deeper under the rim and
-   exposes a glowing sliver of part-cell instead. */
-const grateGeo=new THREE.PlaneGeometry(CELL*0.625,CELL*0.305);
-const grateMat=new THREE.MeshBasicMaterial({map:grateTex,transparent:true});
-markShared(grateTex,warmTubeTex,rimTex,housingGeo,tubeGeo,glowGeo,grateGeo,
-           housingSide,housingRim,grateMat);
+/* build a set of positioned boxes and hand back ONE geometry. mergeStatic
+   returns a Mesh (and freezes it) — the geometry is what's wanted here, so
+   every fixture can hang its own Mesh on the same buffers. */
+function bakeParts(parts,mat){
+  const mg=mergeStatic(parts,mat);
+  for(const p of parts) p.geometry.dispose();
+  return mg.geometry;
+}
+const shellGeo=(()=>{
+  const parts=[], P=(w,hh,d,x,y,z)=>{
+    const m=new THREE.Mesh(scaleBoxUV(new THREE.BoxGeometry(w,hh,d),w,hh,d,0.5));
+    m.position.set(x,y,z); parts.push(m);
+  };
+  P(FW,0.012,FD, 0,-0.006,0);                              // the pan closes the top
+  const H2=HOUSE_D-0.012, CY=-0.012-H2/2;
+  for(const s of[-1,1]) P(SHEET,H2,FD, s*(FW/2-SHEET/2),CY,0);
+  for(const s of[-1,1]) P(FW-2*SHEET,H2,SHEET, 0,CY,s*(FD/2-SHEET/2));
+  /* the trim flange: a RING, at the ceiling line, lapping outward over the cut
+     tile edge. Its top sits 1.5mm proud of the ceiling plane so the two
+     intersect rather than fight for the same depth, and it must never be a
+     solid plate — that would close the opening it is trimming. */
+  const FY=-RISE-0.0075;
+  for(const s of[-1,1]) P(FW+2*FLANGE,0.018,FLANGE, 0,FY,s*(FD/2+FLANGE/2));
+  for(const s of[-1,1]) P(FLANGE,0.018,FD, s*(FW/2+FLANGE/2),FY,0);
+  for(const s of[-1,1]) P(0.028,0.018,FD, s*(FW/2-0.014),-HOUSE_D+0.009,0);   // the rim the
+  for(const s of[-1,1]) P(FW-0.056,0.018,0.028, 0,-HOUSE_D+0.009,s*(FD/2-0.014)); // grid sits in
+  return bakeParts(parts,housingSide);
+})();
+/* lampholders. Ivory plastic, not steel — and they are the detail that says
+   the tube is SEATED in something rather than floating in a box. */
+const holderMat=new THREE.MeshPhongMaterial({color:0xcfc8b2,emissive:0x131208,
+  specular:0x3a382c,shininess:24});
+const holderGeo=(()=>{
+  const parts=[];
+  for(const sx of[-1,1])for(const sz of[-1,1]){
+    const m=new THREE.Mesh(new THREE.BoxGeometry(0.042,0.088,0.058));
+    m.position.set(sx*(TUBE_L/2+0.024),TUBE_Y+0.004,sz*TUBE_Z); parts.push(m);
+  }
+  return bakeParts(parts,holderMat);
+})();
+const tubeGeo=(()=>{
+  const parts=[];
+  for(const sz of[-1,1]){
+    const g=new THREE.CylinderGeometry(TUBE_R,TUBE_R,TUBE_L,8);
+    g.rotateZ(Math.PI/2);                              // lie along x
+    const m=new THREE.Mesh(g); m.position.set(0,TUBE_Y,sz*TUBE_Z); parts.push(m);
+  }
+  return bakeParts(parts,null);
+})();
+/* the guard grid: 12 × 6 cells at a ~0.22m pitch of 16mm round bar, all twenty
+   rods merged into one buffer. Every rod is turned the SAME way about its own
+   axis — rotateZ then rotateY for the cross runs — so that texLouvre's wrap
+   puts u=0.25 (its bright side) on top of every one of them, facing the lamps.
+   Getting that inconsistent lights half the grid from underneath. */
+const louvreGeo=(()=>{
+  const NX=12, NY=6, parts=[];
+  const rod=(len,cross)=>{
+    const g=new THREE.CylinderGeometry(ROD_R,ROD_R,len,8,1,true);
+    g.rotateZ(Math.PI/2);                              // lie along x
+    if(cross) g.rotateY(Math.PI/2);                    // …or along z, same way up
+    return g;
+  };
+  /* the two families are one bar-diameter apart in y, because a welded grid is
+     welded: bars at the same height interpenetrate, and every crossing then
+     eats a bite out of whichever run is behind it — the long runs came out
+     visibly DASHED. Long runs up against the lamps, cross bars under them. */
+  for(let i=0;i<=NX;i++){
+    const m=new THREE.Mesh(rod(FD,true)); m.position.set(-FW/2+i*(FW/NX),ROD_Y,0); parts.push(m);
+  }
+  for(let j=0;j<=NY;j++){
+    const m=new THREE.Mesh(rod(FW,false)); m.position.set(0,ROD_Y+2*ROD_R,-FD/2+j*(FD/NY)); parts.push(m);
+  }
+  return bakeParts(parts,null);
+})();
+/* the backplate stops short of the side walls so its edge can't poke through
+   them; the walls close the gap from below */
+const glowGeo=new THREE.PlaneGeometry(FW-2*SHEET,FD-2*SHEET);
+markShared(tubeTex,warmTubeTex,texGalv,texReflector,texLouvre,
+           shellGeo,holderGeo,tubeGeo,louvreGeo,glowGeo,housingSide,holderMat);
 /* the TUBES are the light source — the housing interior only catches spill,
    so every backplate sits darker than its tubes: a faint glow on dying
    fixtures, a brighter (but still secondary) wash on healthy ones.
-   glowMat = backplate, tubeMat = tubes; both stay per-fixture (lights.js
-   drives their colors every frame), created fresh here and disposed with
-   the level. */
+   glowMat = backplate, tubeMat = tubes, louvMat = the guard rods; all three
+   stay per-fixture (lights.js drives their colors every frame), created fresh
+   here and disposed with the level. */
 function makeTroffer(warm){
-  const glowMat=new THREE.MeshBasicMaterial({color: warm?0x4d3419:0xb8b2a2});
-  const tubeMat=warm? new THREE.MeshBasicMaterial({map:warmTubeTex})
-                    : new THREE.MeshBasicMaterial({color:0xfff6cf});
+  const glowMat=new THREE.MeshBasicMaterial({map:texReflector,
+    color: warm?0x4d3419:0xb8b2a2});
+  const tubeMat=new THREE.MeshBasicMaterial({map: warm? warmTubeTex:tubeTex,
+                                             color: warm?0xffffff:0xfff6cf});
+  /* painted steel a few centimetres under a burning lamp: lights.js drives
+     the emissive so the rods go dark WITH the fixture instead of hanging
+     there lit under a dead one */
+  const louvMat=new THREE.MeshPhongMaterial({map:texLouvre,emissiveMap:texLouvre,
+    color:0x33322d,emissive:0x000000,specular:0x8e8b80,shininess:70});
   const fix=new THREE.Group();
-  const housing=new THREE.Mesh(housingGeo,housingMats);
-  housing.position.y=WALL_H-HOUSE_D/2; fix.add(housing);
-  const backplate=new THREE.Mesh(glowGeo,glowMat);
-  backplate.rotation.x=Math.PI/2; backplate.position.y=WALL_H-0.014; fix.add(backplate);
-  for(const tz of[-0.32,0.32]){
-    const tube=new THREE.Mesh(tubeGeo,tubeMat);
-    tube.position.set(0,WALL_H-0.05,tz); fix.add(tube);   // recessed inside the housing
+  /* the whole fixture rides up by RISE — see the header: the ceiling has a
+     hole cut for it, so everything above WALL_H is seen THROUGH that hole */
+  const add=(geo,mat,y)=>{ const m=new THREE.Mesh(geo,mat); m.position.y=WALL_H+RISE+(y||0); fix.add(m); return m; };
+  add(shellGeo,housingSide);
+  add(holderGeo,holderMat);
+  const backplate=add(glowGeo,glowMat,-0.016);   // right under the pan
+  backplate.rotation.x=Math.PI/2;
+  add(tubeGeo,tubeMat);
+  add(louvreGeo,louvMat);
+  return {fix, glowMat, tubeMat, louvMat};
+}
+/* ---------------- the ceiling field ----------------
+   One plane with a texture on it can't hold a recessed fixture: the plane is
+   opaque and 8cm of the troffer lives above it. So the field is emitted as a
+   quad grid — one quad per cell, and the cells carrying a fixture emit the
+   four border strips around a cut opening instead. UVs come straight from
+   world position, so the tiling runs across the joins exactly as the single
+   plane's did, and the whole thing is still one draw call.
+   Winding: (B−A)×(C−A) has to come out (0,−1,0) or the field faces up into
+   the void and the level has no ceiling at all. */
+function ceilingGeometry(SZ,openings){
+  const pos=[],uv=[],nor=[],idx=[];
+  const quad=(x0,z0,x1,z1)=>{
+    const b=pos.length/3;
+    for(const[x,z]of[[x0,z0],[x1,z0],[x1,z1],[x0,z1]]){
+      pos.push(x,0,z); nor.push(0,-1,0);
+      uv.push((x+SZ/2)/SZ,(z+SZ/2)/SZ);
+    }
+    idx.push(b,b+1,b+2, b,b+2,b+3);
+  };
+  const half=SZ/2;
+  for(let cz=0;cz<H;cz++)for(let cx=0;cx<W;cx++){
+    const x0=-half+cx*CELL, z0=-half+cz*CELL, x1=x0+CELL, z1=z0+CELL;
+    const o=openings.get(cz*W+cx);
+    if(!o){ quad(x0,z0,x1,z1); continue; }
+    const ox0=o.x-o.w/2, ox1=o.x+o.w/2, oz0=o.z-o.d/2, oz1=o.z+o.d/2;
+    quad(x0,z0,x1,oz0);            // the four strips around the hole
+    quad(x0,oz1,x1,z1);
+    quad(x0,oz0,ox0,oz1);
+    quad(ox1,oz0,x1,oz1);
   }
-  const grate=new THREE.Mesh(grateGeo,grateMat);
-  grate.rotation.x=Math.PI/2; grate.position.y=WALL_H-HOUSE_D+0.004; fix.add(grate); // flush with the rim
-  return {fix, glowMat, tubeMat};
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute("position",new THREE.Float32BufferAttribute(pos,3));
+  geo.setAttribute("normal",new THREE.Float32BufferAttribute(nor,3));
+  geo.setAttribute("uv",new THREE.Float32BufferAttribute(uv,2));
+  geo.setIndex(idx);
+  return geo;
 }
 
 export function buildLevel(){
@@ -335,9 +439,10 @@ export function buildLevel(){
     }
   }
   const SZ=W*CELL;
-  /* ceiling tiles at W,H (not W*2,H*2): doubles the grid squares to 1m —
-     exactly two wall-paper stripes wide, the classic drop-tile size */
-  texCarpet.repeat.set(W/2,H/2); texCeil.repeat.set(W,H);
+  /* The ceiling repeats once per CELL, which puts its four tiles at 1m — the
+     classic drop-tile size. The carpet keeps its original 8m tile. */
+  texCarpet.repeat.set(W/2,H/2);
+  texCeil.repeat.set(W,H); texCeilBump.repeat.set(W,H);
   const floor=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),
     new THREE.MeshPhongMaterial({map:texCarpet, specular:0x000000, shininess:1}));
   floor.rotation.x=-Math.PI/2; scene.add(floor);
@@ -347,16 +452,42 @@ export function buildLevel(){
     new THREE.MeshPhongMaterial({map:texStains, transparent:true, depthWrite:false,
       specular:0x000000, shininess:1}));
   stains.rotation.x=-Math.PI/2; stains.position.y=0.015; scene.add(stains);
-  const ceil=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),
-    new THREE.MeshPhongMaterial({map:texCeil, specular:0x050503, shininess:2}));
-  ceil.rotation.x=Math.PI/2; ceil.position.y=WALL_H; scene.add(ceil);
+  /* ---- where the troffers go ----
+     Decided BEFORE the ceiling is built, because each one needs an opening cut
+     for it. ~30% of fixture slots stay dark. A truly independent per-slot roll
+     produces runs of adjacent misses, which read as whole missing ROWS at this
+     8m slot spacing — so a slot may only go dark if its left and up neighbors
+     spawned, and the base rate is raised to keep net density near 30%. Same
+     average, no long gaps. */
+  const slots=[], openings=new Map();
+  const darkSlots=new Set(), slotKey=(sx,sy)=>sy*W+sx;
+  for(let y=1;y<H-1;y+=2)for(let x=1;x<W-1;x+=2){
+    if(grid[y][x]!==0) continue;
+    if(Math.random()<0.55 && !darkSlots.has(slotKey(x-2,y)) && !darkSlots.has(slotKey(x,y-2))){
+      darkSlots.add(slotKey(x,y));
+      continue;
+    }
+    /* ~10% of fixtures are end-of-life: warm orange, half brightness,
+       slower dim-down cycles instead of random flicker bursts */
+    const p=cellToWorld(x,y);
+    slots.push({x,y,p,warm:Math.random()<0.10});
+    openings.set(y*W+x,{x:p.x,z:p.z,w:FW+2*OPEN_C,d:FD+2*OPEN_C});
+  }
+  const ceil=new THREE.Mesh(ceilingGeometry(SZ,openings),
+    /* 0.008, down from 0.012: with the tile face carrying real fibre relief
+       now, the old scale turned the fissures into raised veins */
+    new THREE.MeshPhongMaterial({map:texCeil, bumpMap:texCeilBump, bumpScale:0.008,
+      specular:0x050503, shininess:2}));
+  ceil.position.y=WALL_H; scene.add(ceil);
   /* rare water stains: overlay tiled at a non-integer rate (same trick as
-     the carpet stains) so they never line up with the tile grid */
+     the carpet stains) so they never line up with the tile grid. It takes the
+     same openings — a full sheet 12mm under the ceiling would hang across
+     every fixture's mouth as a translucent film. */
   texCeilStains.repeat.set(4.07,3.77);
-  const ceilStains=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),
+  const ceilStains=new THREE.Mesh(ceilingGeometry(SZ,openings),
     new THREE.MeshPhongMaterial({map:texCeilStains, transparent:true, depthWrite:false,
       specular:0x000000, shininess:1}));
-  ceilStains.rotation.x=Math.PI/2; ceilStains.position.y=WALL_H-0.012; scene.add(ceilStains);
+  ceilStains.position.y=WALL_H-0.012; scene.add(ceilStains);
 
   /* ---- slime-mold at the baseboards ----
      Each colony is a UNIQUE procedural growth on a paired wall+floor
@@ -515,29 +646,15 @@ export function buildLevel(){
     dQuota--;
   }
 
-  /* fluorescent troffers (built by makeTroffer above).
-     ~30% of fixture slots stay dark. A truly independent per-slot roll
-     produces runs of adjacent misses, which read as whole missing ROWS at
-     this 8m slot spacing — so a slot may only go dark if its left and up
-     neighbors spawned, and the base rate is raised to keep net density
-     near 30%. Same average, no long gaps. */
-  const darkSlots=new Set(), slotKey=(sx,sy)=>sy*W+sx;
-  for(let y=1;y<H-1;y+=2)for(let x=1;x<W-1;x+=2){
-    if(grid[y][x]!==0) continue;
-    if(Math.random()<0.55 && !darkSlots.has(slotKey(x-2,y)) && !darkSlots.has(slotKey(x,y-2))){
-      darkSlots.add(slotKey(x,y));
-      continue;
-    }
-    /* ~10% of fixtures are end-of-life: warm orange, half brightness,
-       slower dim-down cycles instead of random flicker bursts */
-    const warm=Math.random()<0.10;
-    const p=cellToWorld(x,y);
+  /* fluorescent troffers (built by makeTroffer above) into the slots chosen
+     up at the top of the build, where the ceiling took its openings from */
+  for(const {x,y,p,warm} of slots){
     const f=makeTroffer(warm);
     f.fix.position.set(p.x,0,p.z);
     scene.add(f.fix);
     /* healthy panels idle at 85–100% of max; dimY (0 at full, 1 at the
        floor) faintly yellows the dimmer ones — same idea as the dying
        tubes' orange gradient, far subtler */
-    lights.push(makeLightRecord(f.glowMat,f.tubeMat,x,y,p,{warm}));
+    lights.push(makeLightRecord(f.glowMat,f.tubeMat,x,y,p,{warm,louvMat:f.louvMat}));
   }
 }

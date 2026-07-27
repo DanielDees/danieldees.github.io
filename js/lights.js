@@ -62,8 +62,8 @@ export function updateLights(dt,t){
   const escD = 1 + 0.10*monster.escalation;   // disruption AOE & hue deepen +10% per objective
   /* whichever thing haunts the current level is the disruption source —
      in THE END the librarian carries the same tell */
-  const disPos = STATE.level===1? (spider.active? spider.pos:null)
-                                : (monster.active? monster.pos:null);
+  const disPos = STATE.level===0? (monster.active? monster.pos:null)
+                                : (spider.active? spider.pos:null);
   for(const L of lights){
     const dl=Math.hypot(L.world.x-px,L.world.z-pz);
     /* the AOE is centered on the ENTITY: panels near IT misbehave,
@@ -78,7 +78,12 @@ export function updateLights(dt,t){
     if(near>0.2) L.timer-=dt*near*7.7;     // its approach collapses calm periods already in progress
     if(L.mode==="steady"){
       if(L.timer<=0){
-        const canBurst = L.flickery || L.warm || near>0.2;   // healthy panels only misbehave near the entity
+        /* fungus NEVER bursts. Flicker is a failing ballast — a fluorescent
+           tube stuttering — and a plant has no ballast to fail. Inherited
+           straight from the electric floors, it just looked wrong on the
+           mushrooms. They keep their slow idle breathe and their region
+           die-back (mul2) when a brood burns; that is all. */
+        const canBurst = !L.cold && (L.flickery || L.warm || near>0.2);
         if(canBurst){
           L.mode="burst";
           L.pattern=Math.floor(Math.random()*FLICKER_PATTERNS);
@@ -123,6 +128,8 @@ export function updateLights(dt,t){
       /* the periodic failure: each strip dips on its own schedule (set in library.js) */
       v*=L.blackMul;
     }
+    /* THE NEST: a burned brood chamber's fungus dies back (cave.js ramps mul2) */
+    if(STATE.level===2&&L.mul2!==undefined) v*=L.mul2;
     if(L.shockT>0){
       /* the wake shockwave passing through: a hard strobe on impact, then
          held dim and DEEP — dimness drags the hue past orange into red,
@@ -142,6 +149,21 @@ export function updateLights(dt,t){
       const k = L.shockT<0.5? L.shockT/0.5 : 1;                    // ease back at the end
       v=lerp(v,vS,k); warmth=lerp(warmth,wS,k);
     }
+    if(L.cold){
+      /* fungus: a cold blue-green ramp, no warmth pipeline, no ballast tick —
+         living light misbehaves silently. The glow is EMISSIVE (the brackets
+         are Phong, so they keep their shading), and the additive halo + vein
+         decals breathe with the same value. */
+      if(Math.abs(v-L.on)>0.03){
+        L.on=v;
+        const vb=v*L.bright;
+        /* each colony carries its own tint (variety + violet brood-blush);
+           components run >1 because the emissive map averages under white */
+        const t=L.tint||[0.28,0.85,0.95];
+        L.glowMat.emissive.setRGB(vb*t[0], vb*t[1], vb*t[2]);
+        if(L.haloMat) L.haloMat.opacity=0.13*Math.min(1,vb);
+      }
+    } else
     if(Math.abs(v-L.on)>0.04 || Math.abs(warmth-L.warmth)>0.02){
       /* ballast tick fires WITH the visible transition, from the fixture's
          direction, fading with distance — classic fluorescent static */
@@ -164,6 +186,18 @@ export function updateLights(dt,t){
       else L.tubeMat.color.setRGB(vb,
         lerp(lerp(0.965,0.89,L.dimY),0.60,warmth)*vb,
         lerp(lerp(0.81,0.56,L.dimY),0.26,warmth)*vb);
+      /* the guard rods hang 90mm under a burning tube, so they are lit by it —
+         emissive rather than shading, because the tubes are unlit MeshBasic
+         and cast nothing (and the pool light that stands in for the fixture
+         sits BELOW the rods, so real shading lights their undersides, which
+         is backwards). Drive it, or a flickered-off fixture keeps a bright
+         grid hanging under a dead lamp. */
+      if(L.louvMat){
+        const lv=v*(L.warm? 0.26:0.40)*L.bright;
+        L.louvMat.emissive.setRGB(lv,
+          lerp(lerp(0.90,0.84,L.dimY),0.56,warmth)*lv,
+          lerp(lerp(0.64,0.48,L.dimY),0.22,warmth)*lv);
+      }
     }
   }
 
@@ -213,7 +247,11 @@ export function updateLights(dt,t){
       pl.intensity=j.I;
       /* warmth >1 (shockwave) extrapolates the gradient into red — clamp so
          the channels never go negative and subtract light */
-      pl.color.setRGB(1,
+      if(j.L.cold){                                // fungus glow: the colony's own cold color
+        const c=j.L.poolCol;
+        if(c) pl.color.setRGB(c[0],c[1],c[2]); else pl.color.setRGB(0.36,0.86,1);
+      }
+      else pl.color.setRGB(1,
         Math.max(0, lerp(lerp(0.933,0.875,j.L.dimY),0.55,j.L.warmth)),
         Math.max(0, lerp(lerp(0.753,0.55,j.L.dimY),0.20,j.L.warmth)));
     } else pl.intensity=0;
@@ -226,7 +264,7 @@ export function updateLights(dt,t){
     const tN=AU.ctx.currentTime;
     for(let i=0;i<AU.humVoices.length;i++){
       const hv=AU.humVoices[i];
-      if(i<candN){
+      if(i<candN&&_cand[i].L.buzz!==false){
         const L=_cand[i].L, dist=Math.sqrt(_cand[i].d2);
         /* falloff radius trimmed 10% (16 → 14.4): the steeper roll-off makes
            walking past a fixture read more clearly as approach/retreat */
@@ -238,7 +276,8 @@ export function updateLights(dt,t){
   }
   /* murk floor: THE END's minimum ambient is HALF of level 0's, and it
      sinks further once the lights drop */
-  const hemiTgt = (STATE.level===1? (STATE.libDim? 0.032:0.048)
-                                  : (STATE.powerOn? 0.10:0.08)) * STATE.ambDim;
+  const hemiTgt = (STATE.level===2? 0.030
+                 : STATE.level===1? (STATE.libDim? 0.032:0.048)
+                 : (STATE.powerOn? 0.10:0.08)) * STATE.ambDim;
   hemi.intensity = lerp(hemi.intensity, hemiTgt, 0.1);
 }

@@ -1,15 +1,35 @@
 # NOCLIP — Escape the Backrooms
 
-**Version: v2.6.0**
+**Version: v3.1.0**
 
-A browser-based survival horror game, playable at
-[danieldees.github.io](https://danieldees.github.io). Vanilla JS ES modules built
-on three.js — no build step, no dependencies to install.
-Vibe-coded with Claude Fable 5 / Claude Mythos 5.
+A first-person browser survival horror game, playable right now at
+**[danieldees.github.io](https://danieldees.github.io)** — no install, no login,
+no plugin. Three procedurally generated floors, three things that hunt you, and
+one way down from each.
+
+Vanilla JS ES modules on three.js r128 from a CDN: **no build step, no package
+manager, no dependencies to install, and not a single image or audio file** —
+every texture is drawn at runtime into a 2D canvas and every sound is synthesized
+in the Web Audio API. Vibe-coded with Claude Fable 5 / Claude Mythos 5.
+Per-level lore lives in [lore/](lore/).
+
+## Run it locally
+
+The game uses ES modules, so it has to be served over HTTP — opening
+`index.html` from the filesystem will not work.
+
+```bash
+npx serve .
+# or
+python -m http.server
+```
+
+Then open the printed URL. GitHub Pages serves the repo root as the live site,
+so what you run locally is exactly what ships.
 
 ## The game
 
-Two levels, two monsters, one way down.
+Three levels, one keeper you keep meeting again, and always another way down.
 
 **Level 0 — the backrooms.** You fell through the world into damp carpet, yellowed
 wallpaper, and the endless drone of fluorescent light. Collect 3 bottles of almond
@@ -36,6 +56,21 @@ and a half after you take the first disk, the lights burn down to embers and the
 wakes up the rest of the way. Return every disk and the librarian answers in person —
 not for you, but to open the way down. It did warn you.
 
+**THE NEST — the cave below.** You followed it home. The stair gives up into a karst
+warren lit only by veins of blue fungus: crawl-squeezes the spider can't follow you
+through, a black stream that hides your footsteps while you wade it, loud scree, a rock
+bridge over a chasm, and silk that thickens toward what it protects. Beside the dead
+stair, a corpse still cradles a **hand-crank lantern**, its ember glowing faintly in
+all that blue: take it, and its warm ring of flame-light physically drives the
+eight-eyed, cat-sized **hatchlings** back all around you — but cranking it is loud, and a flame held
+burning in open cave is a beacon the **matriarch** reads fluently. She tends her four egg clutches on a
+patrol; near the nests the silk-laced ground carries your footfalls to her at twice the
+range. Ignite all four clutches — a three-second channel, stationary, sparking — and
+survive what each burn wakes: a frenzy, a rockfall that reshapes the maze, and less
+fungus-light every time. When the last clutch burns she stops tending anything, ever
+again — and somewhere in the rubble a fissure opens, breathing cold air from above.
+The chimney is real: climb it yourself, tread by tread, into the pale.
+
 ## Controls
 
 | Key | Action |
@@ -44,13 +79,160 @@ not for you, but to open the way down. It did warn you.
 | `SHIFT` | sprint (drains stamina / makes noise; bottomless once adrenaline kicks in) |
 | `SPACE` | jump |
 | `C` | crouch / hide (silent in THE END; the only way past the spider). Hold by default, or switch to a toggle in the sound/options sheet |
-| `E` | interact |
-| `O` / `ESC` | sound mixer / pause (how to play lives on the pause sheet) |
+| `E` | interact (hold it to channel THE NEST's clutch burns) |
+| `F` / `R` | THE NEST only: lantern on/off / hold to crank the charge back up (loudly) |
+| `O` / `ESC` | options / pause — the **field notes** (how to play) live on the pause sheet |
 
 Headphones recommended — audio is positional, and both monsters are far easier to
 track by ear.
 
+The in-game **field notes** are a tabbed guide: CONTROLS, SURVIVAL (the five rules
+every floor obeys), and one page per floor. The pages for floors you have not
+reached yet stay sealed, so the guide can never spoil a level transition.
+
 ## Changelog
+
+### v3.1.0 (2026-07-27)
+An interface and presentation pass. No level geometry, AI or generation changed;
+everything here is about the game explaining itself and landing its endings.
+- **The field notes are a real guide.** How-to-play was five paragraphs of prose
+  in one scroll. It is now **tabbed** — CONTROLS (a proper key table plus a legend
+  for every HUD element, including the fact that flickering lights *are* the
+  hunter's position), SURVIVAL (the five rules that carry across all three floors),
+  and a page each for LEVEL 0, THE END and THE NEST with that floor's objectives,
+  its keeper's actual rules, and **what its cover is**. Floors you have not reached
+  keep their pages **sealed**, so the guide cannot spoil a transition.
+- **The interface takes the colour of the floor.** Backrooms yellow, the library's
+  dead blue-grey, the cave's fungus teal — one accent variable drives the HUD,
+  every menu, and the key hints, and it swaps on the level change.
+- **A readable objectives log.** It now says *where you are* ("THE NEST · THE CAVE
+  BELOW"), draws progress as **pips** when the count is small and a **meter** when
+  it isn't (twenty-two pips is a barcode, not a count), marks the live objective
+  with a lit row instead of strikethrough, and takes one visible breath when a new
+  objective goes live. The status strip carries the clock, the death count, and
+  state chips (FRENZY, CARRYING, POWER ON).
+- **The endings point somewhere.** Once a level has *shown* you its way out in a
+  cutscene — the library's hole, the cave's fissure — the log carries a live
+  **bearing** to it (`COLD AIR ↗ 46 m`). It is the draught you can feel, and it is
+  the only thing the HUD ever points at: collectibles you still find yourself.
+- **THE NEST has a real ending.** Climbing out of the cave used to hand you the
+  same generic level card with "TO BE CONTINUED" on it. Beating the third floor is
+  beating the game as it currently exists, and it now says so: a cold, pale
+  **RUN COMPLETE** sheet with a per-floor time breakdown, total time, clutches
+  burned, disks returned, times caught — and a plain note that you have reached the
+  end of the content.
+- **Death is something that happens to a body.** It used to be a red screen and a
+  menu in the same frame. There is now a **death sequence**: the hit knocks you
+  back, your legs go, you land (with the sound of it), and the camera — on the
+  floor, rolled over — **turns to look up at whatever is standing over you** while
+  the colour drains out of the world and the dark closes in as an iris. Falling
+  into the chasm gets its own shot: no impact, just the spin and the drop. The card
+  fades in after, and it is specific now — who killed you, **what you keep**, time
+  on that floor, and a rotating, floor-appropriate *"try this"* that names the
+  actual mistake.
+- **Fixed — THE NEST softlock.** The matriarch could freeze permanently. Hearing
+  you crank a lantern while you were crouched down a squeeze gave her a mark
+  inside ground she cannot enter; her pathfinder quietly routed her to the
+  nearest cell she *could* stand on, her route ran dry there two or three cells
+  short, and every arrival test — which measured against the mark itself — kept
+  failing. She re-pathed the same impossible cell three times a second, forever,
+  standing still. (The library had the same bug at its reading tables and was
+  fixed differently: there the body stays *pinned along a live path*, which the
+  movement watchdog catches. Here the path is simply empty, which that watchdog
+  structurally cannot see.) An unreachable mark is now snapped to the doorstep,
+  so the crawl you are hiding in *is* the destination: she comes as close as the
+  cave allows, sniffs around the mouth, and goes back to her rounds. A second
+  guard ends any pursuit that is commanded, pathless and motionless for 1.5s.
+- **Fixed:** dying inside a cinematic (the breaker scene keeps the entity live)
+  left the cutscene latched and resumed it after the respawn.
+- Options is grouped into AUDIO / INPUT / DISPLAY with a real explanation under
+  every row; the pause sheet shows the run so far; the title screen links straight
+  to the field notes.
+
+### v3.0.0 (2026-07-18)
+- **A third level: THE NEST.** The spiral stair below the library now lands somewhere —
+  a procedurally carved karst cave (chambers, winding tunnels, crawl-squeezes, a black
+  stream, scree aprons, one rock bridge over a chasm) lit only by bioluminescent fungus
+  wired into the same flicker-radar light pool as every floor above it. Cosmetic silk
+  thickens toward the brood chambers: you navigate by reading how afraid you should be.
+- **The crank lantern.** Found on a corpse beside the dead stair — the dropped lantern
+  still holds a **dying ember**, a warm breathing point of light in the fungus blue that
+  marks the pickup (with the journal lying open beside it) from across the chamber. In
+  hand it is a *lantern*, not a flashlight: an all-round pool of warm orange flame-light
+  that breathes with the slow unevenness of a real mantle (plus a soft wide forward wash —
+  no cone edge on the rock). The glow repels the brood in every direction, the charge
+  runs down, cranking it back up is loud, and a flame held burning in open cave steers
+  the matriarch to you. Both of its lights live in the scene from boot at intensity 0,
+  so switching it on can never trigger a shader recompile.
+- **The hatchlings.** 5–6 sound-hunting, photophobic skitterers with their own
+  territories. One that reaches you latches on — stamina bleed, screen-corner horror,
+  and a screech that feeds the matriarch your position until you shake it off or burn
+  it off with the lantern. At range their taps are tuned to be mistakable for dripwater.
+- **The librarian, at home.** Same spider, same gait — new life: a tending patrol
+  between the four clutches, doubled hearing through the silk-laced nest floors, duller
+  senses in open cave, a dead-run frenzy when a clutch burns, and a permanent hunt once
+  the last one goes. It cannot follow you through the squeezes; they are the tables of
+  this level.
+- **Burn the brood.** Four egg clutches, each a held three-second ignite channel —
+  stationary, sparking, maximally vulnerable. Every burn triggers a 60–90s frenzy, kills
+  the local fungus glow, and drops a rockfall that closes one corridor and opens a
+  sealed one — validated so the cave can never strand you. The fourth burn opens the
+  fissure: a real, walkable chimney (the library stair's math, inverted) climbed into a
+  pale fade-out.
+- **Cave audio.** Drip percussion with double echoes, a stream bed that masks your
+  noise, crank ratchet, striker ticks, clutch fire crackle, rockfalls, hatchling
+  hisses/screeches, and the fissure's updraft wind — all synthesized, as ever.
+- **The look.** A cave that is actually cave-shaped: no boxes, no flat panels
+  anywhere — the floor rolls, the walls are displaced faceted rock that leans
+  into overhangs near the vault, and the ceiling is a craggy corner-shared
+  surface that domes to 18m over the central chamber and pinches into the
+  crawls (their mouths ramp down inside the squeeze — over any ground you can
+  stand on, the rock is guaranteed to clear twice your height). Tunnels are 8m
+  bores you could drive a bus through; every surface, the player's feet, the
+  spiders' legs and every web/fungus/dripstone anchor sample the same terrain
+  functions, so nothing floats and nothing buries. The way you came is still
+  there: the library's own descent shaft comes down **through the vault** —
+  a round stone bore ringed in flowstone, the same spiral stair (same treads,
+  same pitch, the same helix) winding up out of sight into a haze that goes
+  lightless, its lowest flight collapsed into half-sunk treads and silked
+  shut — the mirror, wrong side out, of looking down the hole behind the
+  library desk. Bump-mapped strata rock;
+  real dripstone grown from lathe profiles with drip-ring bulges,
+  per-vertex noise and a pale streaked calcite skin (nothing is a cone), in
+  location-bred varieties — knobby spire stacks on flowstone mounds answered by
+  hanging spires, full floor-to-vault columns waisted where the pair met,
+  drapery curtains folded off the chamber walls, flowstone cascades spilling
+  down the stream banks, snapped stumps and toppled spires in the scree,
+  soda straws clustered around ceiling seeps, and partner-less stalactite
+  fields hung thick across every chamber dome — merged to three draws total;
+  a real fungus ecosystem — lathe-built
+  mushrooms skinned by a procedural atlas (glowing gill undersides, banded conk
+  tops, pore-speckled bulbs) in location-driven varieties: shelf conks climbing
+  the chamber walls in size classes from palm-width juveniles to metre-wide
+  ancients mounted above head height, toadstool families on the floors, green
+  coral fingers on the stream banks, pale puffballs in the scree, all blushing
+  violet near the brood chambers — every colony trailing real **mycelium
+  cords**, thin glowing root-ribbons that follow the displaced rock point by
+  point (no painted-on decals anywhere); webs that are
+  silk STRUCTURES, not wall decals — sagging corner sheets strung between wall
+  faces, cobweb fans hung off the wall-ceiling line, funnel-weaver retreats
+  diving into the floor junctions, hammocks slung on real guy-lines, twisting
+  streamers that brush your face in the low tunnels, torn veils choking the
+  squeeze mouths, old stalagmites wrapped and staked in silk, a layered canopy
+  of generations directly over every brood, every chamber dome **rigged like
+  the den it is** — sheets slung under the vault, veils off the stalactite
+  line, lines strung vault-to-vault — and the mouth you arrived by webbed
+  shut — all of it lit silk that glistens under the lantern, dense by brood
+  proximity, merged to seven draws; a drifting
+  caustic skin on the stream;
+  layered cold haze in the chasm; nest-glow pooled under the clutches that turns
+  fire-orange as they burn.
+- New intro and ending cinematics; new death/win copy; level-2 objectives HUD +
+  lantern charge bar; the descent from THE END now hands off seamlessly mid-black.
+- Cheat: triple-[9] drops you into THE NEST with the lantern (again from inside: burns
+  the brood down to one and stands you at the survivor).
+- `lore/` folder: parseable per-level lore documents (wiki entry + in-world found
+  document per level) — the groundwork for in-game lore pickups and a menu viewer.
 
 ### v2.6.0 (2026-07-04)
 - **A real ending for THE END.** Feeding the terminal its last disk no longer whites
@@ -62,8 +244,8 @@ track by ear.
   the spider stays half-readable inside it. When the dust settles there is a **round
   hole** rimmed with flung dirt, a **stone spiral stair** winding down its wall, and a
   blue glow/fog that lets you read two or three turns before it swallows the depths.
-  The camera settles back into your eyes — and the terminal's CRT burns red with one
-  line: **I WARNED YOU**.
+  The camera settles back into your eyes — and the terminal's CRT burns red with a
+  crying face, drawn in chunky pixels, weeping for as long as you stand there.
 - **Enter the hole.** A new final objective — and the stairs are *real*. Walk over
   the rim and descend the spiral yourself, tread by tread, the shaft wall at your
   shoulder and the blue fog thickening with every turn. A couple of spirals down,

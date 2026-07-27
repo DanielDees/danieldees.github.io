@@ -17,10 +17,12 @@ import { AU, panTo, sfxAlert, sfxStinger, sfxClunk, sfxPowerOn,
          sfxSpiderScratch, sfxSpiderDig, sfxHoleRumble, sfxStoneStep } from "./audio.js";
 import { ui, renderObjectives } from "./ui.js";
 import { monsterRushTo } from "./monster.js";
-import { exitDoor } from "./props.js";
-import { win, enterTheEnd } from "./lifecycle.js";
+import { exitDoor, ELEV } from "./props.js";
+import { win, enterTheEnd, enterTheNest } from "./lifecycle.js";
 import { LIB, losCells2, revealHole } from "./library.js";
+import { CAVE } from "./cave.js";
 import { spiderPose, spiderDigPose } from "./spider.js";
+import { startUpdraftWind, sfxHatchTap, sfxBodyFall } from "./audio.js";
 
 export const CINE={active:false, kind:null, t:0};
 let D=null;                                   // per-cutscene working data
@@ -53,6 +55,8 @@ export function updateCinematic(dt){
   else if(CINE.kind==="libIntro") updateLibIntro(dt);
   else if(CINE.kind==="terminal") updateTerminal(dt);
   else if(CINE.kind==="descend") updateDescend(dt);
+  else if(CINE.kind==="nestIntro") updateNestIntro(dt);
+  else if(CINE.kind==="ascend") updateAscend(dt);
 }
 
 /* ================= breaker: the fuse seats itself ================= */
@@ -281,11 +285,12 @@ function runMonster(dt){
 }
 function updateElevator(dt){
   const t=CINE.t, u=D.u;
-  /* ---- doors: open ramp minus close ramp; ±0.515 closed, 1.0m of travel
-     pockets each leaf fully behind the flank walls ---- */
+  /* ---- doors: open ramp minus close ramp. Closed centre and travel both
+     come off ELEV — they are the leaf's own geometry, and a copy of them
+     here silently detached the doors from the cab the first time it grew. */
   const slide=seg(t,T_DOORS_O,T_DOORS_O+1.4)-seg(t,T_DOORS_C,T_DOORS_C+1.3);
-  u.doorL.position.x=-(0.515+1.0*slide);
-  u.doorR.position.x= (0.515+1.0*slide);
+  u.doorL.position.x=-(ELEV.LEAF_X+ELEV.TRAVEL*slide);
+  u.doorR.position.x= (ELEV.LEAF_X+ELEV.TRAVEL*slide);
   /* ---- cab light: the main panel stays WHITE — its level sags and
      stutters as the power fails, and it dies outright at the lurch. The
      red lives where it belongs: the emergency lamp at the back of the cab,
@@ -348,7 +353,9 @@ function updateElevator(dt){
   const litBtn=(idx,color)=>u.panelBtns.forEach((bm,i)=>bm.color.set(i===idx?color:0x2a2014));
   /* ---- cues ---- */
   cue("press",T_PRESS,()=>{ sfxElevButton(); u.btnMat.color.set(0x39d24a); });
-  cue("ding",T_DING,()=>sfxElevDing());
+  /* the ding IS the hall lantern: a car has answered, and the down arrow
+     over the head is how a lobby says so before the doors move */
+  cue("ding",T_DING,()=>{ sfxElevDing(); if(u.hallLamps) u.hallLamps[1].color.set(0xffb347); });
   cue("doorsO",T_DOORS_O,()=>sfxElevDoors(1.4));
   cue("cabOn",3.9,()=>{ u.drawFloor("0"); litBtn(0,0x39e052); });
   cue("spawn",T_WALK1,()=>spawnRunner());
@@ -476,9 +483,9 @@ export function startTheEndIntro(){
   /* the wreck: doors shut, lit only by the emergency lamp — a REAL point
      source parked at the lamp itself, with distance falloff like every
      other light in the game, not a screen wash */
-  u.doorL.position.x=-0.515; u.doorR.position.x=0.515;
+  u.doorL.position.x=-ELEV.LEAF_X; u.doorR.position.x=ELEV.LEAF_X;
   u.emergMat.color.set(0xff2515);
-  u.cabLight.position.set(0,2.3,-2.35);
+  u.cabLight.position.set(0,ELEV.OPEN_H-0.30,-2.35);
   u.cabLight.distance=5; u.cabLight.decay=2;
   u.cabLight.intensity=0.42; u.cabLight.color.setRGB(1,0.15,0.09);
   u.cabLightMat.color.setRGB(0.02,0.004,0.003);   // the main panel is dead
@@ -498,8 +505,8 @@ function updateLibIntro(dt){
   cue("stuck",LI_STUCK,()=>sfxClunk());
   cue("doors2",LI_DOOR2,()=>{ sfxElevDoors(1.2); sfxElevRattle(0.8); });
   const slide = 0.34*seg(t,LI_DOOR1,LI_STUCK) + 0.66*seg(t,LI_DOOR2,LI_OPEN);
-  u.doorL.position.x=-(0.515+1.0*slide);
-  u.doorR.position.x= (0.515+1.0*slide);
+  u.doorL.position.x=-(ELEV.LEAF_X+ELEV.TRAVEL*slide);
+  u.doorR.position.x= (ELEV.LEAF_X+ELEV.TRAVEL*slide);
   /* the emergency lamp breathes, slow and red, from its corner of the cab;
      the dead main panel gives exactly TWO brief dying-white blinks as the
      doors fight their track — discrete events, never a strobe */
@@ -643,57 +650,92 @@ export function startTerminalCine(){
 let puffTex=null;
 function ensurePuffTex(){
   if(puffTex) return;
-  puffTex=makeCanvas(128,128,(g,w,h)=>{
+  /* THREE puffs, not one. A single sprite map repeated 150 times reads as
+     150 copies of the same blob however you tint it — the eye finds the
+     repeat immediately. And each one is built from soft lumps AND a coarse
+     grain pass: a smooth radial falloff is fog. Dust is particulate, and
+     what makes it read as dust is that its edges are dirty. */
+  puffTex=[0,1,2].map(v=>makeCanvas(128,128,(g,w,h)=>{
     g.clearRect(0,0,w,h);
-    /* several offset soft discs merge into one irregular puff */
-    for(let i=0;i<8;i++){
-      const a=Math.random()*Math.PI*2, rr=Math.random()*20;
-      const x=64+Math.cos(a)*rr, y=64+Math.sin(a)*rr, r=24+Math.random()*20;
+    const lumps=6+v*3;
+    for(let i=0;i<lumps;i++){
+      const a=Math.random()*Math.PI*2, rr=Math.random()*(16+v*7);
+      const x=64+Math.cos(a)*rr, y=64+Math.sin(a)*rr, r=20+Math.random()*(18+v*4);
       const gr=g.createRadialGradient(x,y,0,x,y,r);
-      gr.addColorStop(0,"rgba(255,255,255,0.32)");
-      gr.addColorStop(0.55,"rgba(255,255,255,0.15)");
+      gr.addColorStop(0,"rgba(255,255,255,0.30)");
+      gr.addColorStop(0.55,"rgba(255,255,255,0.14)");
       gr.addColorStop(1,"rgba(255,255,255,0)");
       g.fillStyle=gr;
       g.beginPath(); g.arc(x,y,r,0,Math.PI*2); g.fill();
     }
-  });
-  markShared(puffTex);                 // module-level, reused across every ending
+    /* the grain: motes punched through the body, thinning to nothing at
+       the rim so the sprite still has no edge of its own */
+    for(let i=0;i<340;i++){
+      const a=Math.random()*Math.PI*2, rr=Math.pow(Math.random(),0.6)*58;
+      const fall=1-rr/58;
+      g.fillStyle=`rgba(255,255,255,${(0.05+Math.random()*0.20)*fall*fall})`;
+      g.fillRect(64+Math.cos(a)*rr,64+Math.sin(a)*rr,1+Math.random()*2.5,1+Math.random()*2.5);
+    }
+  }));
+  markShared(...puffTex);              // module-level, reused across every ending
 }
-const PUFF_TINTS=[0x6a543c,0x54432e,0x4a5666,0x3a4756,0x5d4d3a,0x435264];
+/* carpet blues and subsoil browns, with two near-black entries in the mix.
+   Sprites are UNLIT, so every puff renders at full strength in a room this
+   dark and a cloud of uniformly mid-tone ones turns into a cotton ball
+   hanging over the desk. The darks are what give the mass its shadow side
+   once the billows start overlapping. */
+const PUFF_TINTS=[0x6a543c,0x54432e,0x4a5666,0x3a4756,0x5d4d3a,0x435264,
+                  0x7a6448,0x3a2e20,0x252d38];
 function makeDigFx(){
   ensurePuffTex();
   const g=new THREE.Group();
   scene.add(g);
   const puffs=[];
-  for(let i=0;i<150;i++){
-    const m=new THREE.SpriteMaterial({map:puffTex, color:PUFF_TINTS[i%PUFF_TINTS.length],
+  for(let i=0;i<210;i++){
+    const m=new THREE.SpriteMaterial({map:puffTex[i%3], color:PUFF_TINTS[i%PUFF_TINTS.length],
       transparent:true, opacity:0, depthWrite:false});
     const s=new THREE.Sprite(m);
     s.visible=false; g.add(s);
-    puffs.push({s,m,vx:0,vy:0,vz:0,life:0,max:1,scale0:1,grow:1,peak:0.6,rotV:0});
+    puffs.push({s,m,vx:0,vy:0,vz:0,life:0,max:1,scale0:1,grow:1,peak:0.6,rotV:0,fade:1});
   }
-  /* debris: little clods of earth & carpet backing, tumbling as they fly */
-  const mats=[0x5a3f24,0x42301b,0x37424e,0x2b3542].map(c=>new THREE.MeshBasicMaterial({color:c}));
+  /* debris: clods of earth and shreds of carpet backing, tumbling as they
+     fly. Two shapes — lumps and flat torn strips, which flutter */
+  const mats=[0x5a3f24,0x42301b,0x37424e,0x2b3542,0x6b5334].map(c=>new THREE.MeshBasicMaterial({color:c}));
   const chipGeo=new THREE.BoxGeometry(1,1,1);
   const chips=[];
-  for(let i=0;i<64;i++){
+  for(let i=0;i<88;i++){
     const m=new THREE.Mesh(chipGeo,mats[i%mats.length]);
     m.visible=false;
-    m.scale.set(rand(0.025,0.06),rand(0.02,0.045),rand(0.025,0.07));
+    const flat=i%3===0;                              // a third are carpet shreds
+    m.scale.set(flat? rand(0.05,0.11):rand(0.025,0.06),
+                flat? 0.006:rand(0.02,0.045),
+                flat? rand(0.04,0.10):rand(0.025,0.07));
     g.add(m);
-    chips.push({m,vx:0,vy:0,vz:0,life:0,spin:rand(-9,9)});
+    chips.push({m,vx:0,vy:0,vz:0,life:0,spin:rand(-9,9),flat,spin2:rand(-7,7)});
   }
-  return {g,puffs,chips,chipGeo,mats,accP:0,accG:0,accC:0,burstDone:false};
+  return {g,puffs,chips,chipGeo,mats,accP:0,accG:0,accC:0,accV:0,burstDone:false};
 }
-function spawnPuff(F,x,y,z,vx,vy,vz,scale0,grow,life,peak){
+function spawnPuff(F,x,y,z,vx,vy,vz,scale0,grow,life,peak,fade){
   const p=F.puffs.find(p=>p.life<=0);
   if(!p) return;
   p.life=p.max=life; p.scale0=scale0; p.grow=grow; p.peak=peak;
+  p.fade=fade||1;                                  // >1 = sinks away faster than it swelled
   p.vx=vx; p.vy=vy; p.vz=vz; p.rotV=rand(-0.7,0.7);
   p.m.rotation=Math.random()*Math.PI*2;
   p.s.position.set(x,y,z);
   p.s.scale.set(scale0,scale0,1);
   p.s.visible=true;
+}
+/* dust does not come off a dig one puff at a time — it comes off in
+   BILLOWS. Two or three at once, at different sizes and slightly out of
+   step, is the difference between a churn and a bead curtain. */
+function billow(F,n,x,y,z,vx,vy,vz,scale0,grow,life,peak){
+  for(let i=0;i<n;i++){
+    const k=0.7+Math.random()*0.7;
+    spawnPuff(F, x+rand(-0.22,0.22), y+rand(-0.08,0.14), z+rand(-0.22,0.22),
+      vx*k+rand(-0.25,0.25), vy*k, vz*k+rand(-0.25,0.25),
+      scale0*k, grow, life*(0.8+Math.random()*0.45), peak*(0.75+Math.random()*0.5));
+  }
 }
 function spawnChip(F,sp,up){
   const c=F.chips.find(c=>c.life<=0);
@@ -702,6 +744,7 @@ function spawnChip(F,sp,up){
   c.vx=Math.cos(a)*sp; c.vz=Math.sin(a)*sp; c.vy=up;
   c.life=rand(0.8,1.5);
   c.m.position.set(h.x+rand(-0.5,0.5),rand(0.15,0.5),h.z+rand(-0.5,0.5));
+  c.m.rotation.set(Math.random()*7,Math.random()*7,Math.random()*7);
   c.m.visible=true;
 }
 function updateDigFx(dt,t){
@@ -711,43 +754,69 @@ function updateDigFx(dt,t){
   const env=seg(t,TC_DIG+0.4,TC_SINK0)*(1-seg(t,TC_CLEAR0,TC_CLEAR1));
   const digging=t>=TC_DIG&&t<TC_SINK1-0.3;
   if(digging){
-    /* churn: fresh dust boiling up out of the work */
-    F.accP+=dt*30;
+    /* churn: fresh dust boiling up out of the work, in billows. The legs
+       are throwing it, so it comes in gusts rather than a steady stream */
+    const gust=0.72+0.55*Math.pow(Math.abs(Math.sin(t*4.1)),1.6)+0.25*hash(Math.floor(t*7));
+    F.accP+=dt*13*gust;
     while(F.accP>=1){
       F.accP-=1;
       const a=Math.random()*Math.PI*2, rr=Math.random()*0.9;
-      const dir=Math.random()*Math.PI*2, sp=rand(0.5,1.7);
-      spawnPuff(F, h.x+Math.cos(a)*rr, rand(0.15,0.8), h.z+Math.sin(a)*rr,
-        Math.cos(dir)*sp, rand(0.4,1.3), Math.sin(dir)*sp,
-        rand(0.7,1.2), rand(2.0,2.9), rand(1.2,2.0), rand(0.45,0.68));
+      const dir=Math.random()*Math.PI*2, sp=rand(0.5,1.9);
+      billow(F, 2+(Math.random()<0.45?1:0),
+        h.x+Math.cos(a)*rr, rand(0.15,0.8), h.z+Math.sin(a)*rr,
+        Math.cos(dir)*sp, rand(0.4,1.4), Math.sin(dir)*sp,
+        rand(0.7,1.2), rand(2.0,2.9), rand(1.2,2.0), rand(0.32,0.52));
     }
     /* the ground shroud: heavy dust rolling out along the carpet — this is
        the layer that swallows the floor (hole + rim included) at the sink */
-    F.accG+=dt*22;
+    F.accG+=dt*20;
     while(F.accG>=1){
       F.accG-=1;
       const a=Math.random()*Math.PI*2, rr=rand(0.3,3.0);
       const drift=a+rand(-0.6,0.6);
       spawnPuff(F, h.x+Math.cos(a)*rr, rand(0.2,0.55), h.z+Math.sin(a)*rr,
         Math.cos(drift)*rand(0.15,0.5), rand(0.02,0.12), Math.sin(drift)*rand(0.15,0.5),
-        rand(1.8,2.9), rand(1.4,1.8), rand(2.4,3.6), rand(0.68,0.85));
+        rand(1.8,2.9), rand(1.4,1.8), rand(2.4,3.6), rand(0.50,0.68));
+    }
+    /* the VEIL: the fine fraction that never settles. It climbs slowly, way
+       out past the shroud, and holds for six seconds at almost no opacity —
+       this is what gives the shot a volume for the aerial camera to look
+       down THROUGH, instead of a flat mat of dust on the floor. */
+    F.accV+=dt*6;
+    while(F.accV>=1){
+      F.accV-=1;
+      const a=Math.random()*Math.PI*2, rr=rand(0.6,2.6);
+      spawnPuff(F, h.x+Math.cos(a)*rr, rand(0.5,2.4), h.z+Math.sin(a)*rr,
+        Math.cos(a)*rand(0.05,0.35), rand(0.28,0.62), Math.sin(a)*rand(0.05,0.35),
+        rand(2.2,3.6), rand(2.2,3.2), rand(4.5,6.5), rand(0.12,0.22), 1.8);
     }
     /* debris spray while the legs work */
-    F.accC+=dt*22;
+    F.accC+=dt*26;
     while(F.accC>=1){ F.accC-=1; spawnChip(F,rand(1.4,4.2),rand(2.2,5.2)); }
   }
-  /* the breakthrough: one violent ring of dust and clods as the floor lets go */
+  /* the breakthrough: the floor lets go. A ring blown out along the carpet,
+     a column punched straight up out of the shaft it just opened, and every
+     clod it had left */
   if(t>=TC_SWAP&&!F.burstDone){
     F.burstDone=true;
-    for(let i=0;i<20;i++){
-      const a=i/20*Math.PI*2+rand(-0.15,0.15);
-      spawnPuff(F, h.x+Math.cos(a)*rand(0.8,2.0), rand(0.2,0.9), h.z+Math.sin(a)*rand(0.8,2.0),
-        Math.cos(a)*rand(0.9,1.8), rand(0.3,0.9), Math.sin(a)*rand(0.9,1.8),
-        rand(1.2,1.9), rand(1.8,2.4), rand(1.8,2.8), rand(0.55,0.8));
+    for(let i=0;i<24;i++){
+      const a=i/24*Math.PI*2+rand(-0.15,0.15);
+      billow(F, 2, h.x+Math.cos(a)*rand(0.8,2.0), rand(0.2,0.9), h.z+Math.sin(a)*rand(0.8,2.0),
+        Math.cos(a)*rand(1.1,2.2), rand(0.3,0.9), Math.sin(a)*rand(1.1,2.2),
+        rand(1.2,1.9), rand(1.8,2.4), rand(1.8,2.8), rand(0.42,0.62));
     }
-    for(let i=0;i<22;i++) spawnChip(F,rand(2.2,5.2),rand(3.0,6.0));
+    for(let i=0;i<14;i++){                        // the column out of the hole
+      const a=Math.random()*Math.PI*2, rr=Math.random()*h.r*0.8;
+      spawnPuff(F, h.x+Math.cos(a)*rr, rand(0.1,0.6), h.z+Math.sin(a)*rr,
+        Math.cos(a)*rand(0.1,0.6), rand(2.2,4.4), Math.sin(a)*rand(0.1,0.6),
+        rand(1.4,2.4), rand(2.4,3.4), rand(2.6,3.8), rand(0.32,0.50));
+    }
+    for(let i=0;i<30;i++) spawnChip(F,rand(2.2,5.2),rand(3.0,6.4));
   }
-  /* dust: drag, slow rise, growth, spin; in fast, out slow */
+  /* dust: drag, slow rise, growth, spin; in fast, out slow. The rise is a
+     buoyancy that DECAYS — a fresh puff is hot off the work and climbs,
+     an old one has cooled and just hangs, which is what stops the whole
+     cloud drifting away as one rigid body. */
   for(const p of F.puffs){
     if(p.life<=0) continue;
     p.life-=dt;
@@ -756,20 +825,26 @@ function updateDigFx(dt,t){
     const drag=Math.pow(0.42,dt);
     p.vx*=drag; p.vz*=drag; p.vy*=Math.pow(0.55,dt);
     p.s.position.x+=p.vx*dt;
-    p.s.position.y+=p.vy*dt+0.06*dt;             // dust wants up, gently
+    p.s.position.y+=p.vy*dt+0.09*(1-k)*dt;
     p.s.position.z+=p.vz*dt;
     const sc=p.scale0*(1+(p.grow-1)*k);
     p.s.scale.set(sc,sc,1);
     p.m.rotation+=p.rotV*dt;
-    p.m.opacity=p.peak*Math.min(1,k*5)*(1-k*k)*env;
+    /* fade 1 is the old 1−k²; higher holds the plateau longer and drops it
+       at the end, which is how the fine veil outlives the churn under it */
+    p.m.opacity=p.peak*Math.min(1,k*5)*Math.max(0,1-Math.pow(k,2*p.fade))*env;
   }
-  /* debris: gravity, tumble — and a little puff where each clod lands */
+  /* debris: gravity, tumble — and a little puff where each clod lands.
+     Flat shreds of carpet backing flutter instead of dropping: they lose
+     their fall speed and slew, which reads as WEIGHT on the lumps beside
+     them, and it costs one line. */
   for(const c of F.chips){
     if(c.life<=0) continue;
     c.life-=dt;
-    c.vy-=9.5*dt;
+    c.vy-=(c.flat? 3.6:9.5)*dt;
+    if(c.flat){ c.vx*=Math.pow(0.45,dt); c.vz*=Math.pow(0.45,dt); c.vy=Math.max(c.vy,-1.5); }
     c.m.position.x+=c.vx*dt; c.m.position.y+=c.vy*dt; c.m.position.z+=c.vz*dt;
-    c.m.rotation.x+=c.spin*dt; c.m.rotation.z+=c.spin*0.7*dt;
+    c.m.rotation.x+=c.spin*dt; c.m.rotation.z+=c.spin*0.7*dt; c.m.rotation.y+=c.spin2*dt;
     if(c.life<=0||c.m.position.y<0.03){
       if(c.m.position.y<0.03&&Math.random()<0.6)
         spawnPuff(F, c.m.position.x, 0.12, c.m.position.z,
@@ -880,7 +955,7 @@ function updateTerminal(dt){
     if(t-D.lastStatic>0.09){
       D.lastStatic=t;
       const a=Math.min(1,(t-TC_WARN)*1.1)*(0.82+0.18*hash(Math.floor(t*13)));
-      screen.warn(a);
+      screen.warn(a,t);
     }
   }
   /* ---- camera: onto the screen, up and out, hold, back into your eyes ---- */
@@ -912,7 +987,8 @@ function updateTerminal(dt){
   STATE.yaw=yaw; STATE.pitch=pitch;
   setCam(cx,cy,cz,yaw,pitch);
   if(t>=TC_END){
-    screen.warn(1);                    // the words stay on the glass for good
+    screen.warn(1,t);                  // the face stays on the glass for good…
+    LIB.weeping=true; LIB.weepT=t;     // …and updateLibrary keeps the tears running
     disposeDigFx();
     CINE.active=false; CINE.kind=null; D=null;
     ui.dread.style.opacity=0;
@@ -951,8 +1027,209 @@ function updateDescend(dt){
   ui.flash.style.opacity=seg(t,0,DE_FADE);
   if(t>=DE_END){
     CINE.active=false; CINE.kind=null; D=null;
+    /* the stair was going somewhere after all */
+    enterTheNest();
+  }
+}
+
+/* ================= THE NEST: waking under the world ================= */
+/* The black holds a beat, then lifts on rough rock and fungus-light. You
+   look back UP at the stair you rode down — its last flight sheathed in
+   fresh silk — then find your feet and the cave finds its name. */
+const NI_LIFT=1.2, NI_STAND=4.2, NI_LEVEL=6.4, NI_TITLE=7.4,
+      NI_TITLE_OFF=11.6, NI_END=12.4;
+export function startNestIntro(){
+  CINE.active=true; CINE.kind="nestIntro"; CINE.t=0;
+  ui.prompt.classList.remove("show");
+  D={fired:new Set(),
+     eye:{x:CAVE.spawn.x, z:CAVE.spawn.z},
+     yaw0:CAVE.spawnYaw};
+  /* hold the screen black; the first cue lifts it */
+  ui.flash.style.transition="none"; ui.flash.style.background="#000";
+  ui.flash.style.opacity=1;
+}
+function updateNestIntro(dt){
+  const t=CINE.t;
+  cue("lift",NI_LIFT,()=>{
+    ui.flash.style.transition="opacity 2.8s"; ui.flash.style.opacity=0;
+  });
+  cue("settle",2.0,()=>{ sfxStoneStep(0.5); });
+  cue("drip",3.1,()=>{ if(AU.cave&&AU.cave.drip) AU.cave.drip(); });
+  /* somewhere off in the dark, something small crosses loose stone */
+  cue("skit",5.6,()=>{ for(let i=0;i<5;i++)
+    setTimeout(()=>sfxHatchTap(0.22,-0.6),i*130); });
+  cue("title",NI_TITLE,()=>{
+    const el=document.getElementById("levelTitle");
+    if(el){ el.querySelector("#ltMain").textContent="THE NEST";
+      el.querySelector("#ltSub").textContent="level 8, wrong side out";
+      el.classList.add("show"); }
+  });
+  cue("titleOff",NI_TITLE_OFF,()=>{
+    const el=document.getElementById("levelTitle");
+    if(el) el.classList.remove("show");
+  });
+  /* ---- camera: on your knees at the stair's foot, head craned up at it ---- */
+  const up=seg(t,NI_LIFT,NI_STAND);
+  const cy=lerp(0.8,1.62,up);
+  /* the stair stub is behind the spawn (+z): look back and up at it first */
+  const backYaw=D.yaw0+Math.PI;
+  const level=seg(t,NI_STAND,NI_LEVEL);
+  const yaw=angLerp(backYaw, D.yaw0, level);
+  const pitch=lerp(1.15,-0.02,Math.max(up*0.35,level));  // high enough to catch the bore's mouth
+  /* a slow scan once upright */
+  const lp=seg(t,NI_LEVEL,NI_END-0.3);
+  const scanYaw=yaw+0.5*Math.sin(lp*Math.PI*2)*Math.sin(lp*Math.PI);
+  STATE.yaw=scanYaw; STATE.pitch=pitch;
+  setCam(D.eye.x, cy+Math.sin(t*6.5)*0.012*(1-up), D.eye.z, scanYaw, pitch);
+  if(t>=NI_END){
+    CINE.active=false; CINE.kind=null; D=null;
+    /* the tending resumes; the small ones take up their territories */
+    spider.active=true;
+    if(spider.mesh) spider.mesh.visible=true;
+    renderObjectives();
+  }
+}
+
+/* ================= THE NEST: the climb into the cold ================= */
+/* The chimney is real and yours to climb — this only takes over a few
+   turns up, where the pale light has already washed out the cave below:
+   the view drifts on upward while the white closes in, the footsteps keep
+   ringing on stone, and the updraft swallows everything. */
+const AS_FADE=2.3, AS_END=6.2;
+export function startAscentEnd(){
+  if(CINE.active) return;
+  CINE.active=true; CINE.kind="ascend"; CINE.t=0;
+  ui.prompt.classList.remove("show");
+  D={fired:new Set(), stepAcc:0.25,
+     eye:{x:camera.position.x, y:camera.position.y, z:camera.position.z},
+     yaw0:STATE.yaw, pitch0:STATE.pitch,
+     wind:startUpdraftWind()};
+  D.wind.swell(1,2);
+}
+function updateAscend(dt){
+  const t=CINE.t;
+  /* the climb carries on into the light: a slow spiral drift upward */
+  const drift=Math.min(t,AS_FADE+1.0);
+  const yaw=D.yaw0+drift*0.22;
+  const cx=D.eye.x-Math.sin(yaw)*drift*0.35;
+  const cz=D.eye.z-Math.cos(yaw)*drift*0.35;
+  const cy=D.eye.y+drift*0.55+Math.sin(t*7)*0.02;
+  const pitch=lerp(D.pitch0,0.35,seg(t,0,AS_FADE));   // eyes rising to the pale
+  setCam(cx,cy,cz,yaw,pitch);
+  D.stepAcc+=dt;
+  if(D.stepAcc>=0.46){ D.stepAcc=0; sfxStoneStep(0.7+Math.random()*0.2); }
+  /* not black this time — the cold pale of somewhere that is not this */
+  ui.flash.style.transition="none"; ui.flash.style.background="#cdd7dc";
+  ui.flash.style.opacity=seg(t,0,AS_FADE);
+  if(t>=AS_END){
+    if(D.wind) D.wind.stop(2);
+    CINE.active=false; CINE.kind=null; D=null;
     win();
     setTimeout(()=>{ ui.flash.style.transition="opacity 3s";
       ui.flash.style.opacity=0; },800);
   }
+}
+
+/* ================= death: you go down, and the dark comes in =================
+   Death used to be a red screen and a menu in the same frame, which read as a
+   UI event rather than as something that happened to a body. This is the same
+   camera language as every other cutscene, only it runs OUTSIDE CINE: the main
+   loop stops updating the world the instant STATE.dead is set, so the death
+   camera is driven from its own branch and nothing else in the scene moves —
+   which is exactly right. Whatever killed you is standing where it killed you,
+   and the camera falls to the floor and looks up at it while the iris closes.
+
+   Two causes, two shots:
+     "caught" — the hit, the collapse, the landing, the thing standing over you.
+     "fall"   — nothing to look at: the drop continues, spinning, into the dark. */
+export const DEATH={active:false, t:0};
+let DX=null;
+const DTH_HIT=0.22, DTH_LAND=1.28, DTH_CARD=2.8;
+
+export function startDeathCam(cause,onCard){
+  DEATH.active=true; DEATH.t=0;
+  const fall=cause==="fall";
+  /* who did it — the position is read LIVE each frame, so if a mesh is still
+     where it caught you the camera finds it however it was posed */
+  let killer=null;
+  if(!fall){
+    if(STATE.level===0&&monster.mesh) killer=monster.pos;
+    else if(spider.mesh) killer=spider.mesh.position;
+  }
+  DX={fall, killer, onCard, carded:false, landed:false,
+      x:camera.position.x, y:camera.position.y, z:camera.position.z,
+      yaw0:STATE.yaw, pitch0:STATE.pitch,
+      roll:(Math.random()<0.5?-1:1)*(fall?1:0.62),
+      spin:(Math.random()<0.5?-1:1)*rand(0.9,1.6)};
+  /* the hit itself: a dark red slap, not a white flash */
+  ui.flash.style.transition="none";
+  ui.flash.style.background=fall? "#05070a":"#4d0a06";
+  ui.flash.style.opacity=fall? 0.35:0.72;
+  setTimeout(()=>{ ui.flash.style.transition="opacity .85s"; ui.flash.style.opacity=0; },110);
+  /* the world drains and the iris opens wide, ready to close */
+  document.body.classList.add("dying");
+  ui.dread.style.opacity=fall? 0.3:0.7;
+  if(ui.deathfx){
+    ui.deathfx.style.setProperty("--r","170%");
+    ui.deathfx.style.opacity=1;
+  }
+}
+/* respawn (or any restart) hands the screen back */
+export function endDeathCam(){
+  DEATH.active=false; DX=null;
+  document.body.classList.remove("dying");
+  if(ui.deathfx){ ui.deathfx.style.opacity=0; ui.deathfx.style.setProperty("--r","170%"); }
+  ui.dread.style.opacity=0;
+}
+export function updateDeathCam(dt){
+  if(!DEATH.active||!DX) return;
+  DEATH.t+=dt;
+  const t=DEATH.t;
+  let x=DX.x, y=DX.y, z=DX.z, yaw=DX.yaw0, pitch=DX.pitch0, roll=0;
+  /* forward, in the basis the rest of the game uses */
+  const fx=-Math.sin(DX.yaw0), fz=-Math.cos(DX.yaw0);
+  if(DX.fall){
+    /* nothing caught you — the floor did not either. Keep going. */
+    const f=t*6+t*t*5;
+    y=DX.y-f;
+    x=DX.x+fx*Math.min(t,1.2)*0.7;
+    z=DX.z+fz*Math.min(t,1.2)*0.7;
+    yaw=DX.yaw0+DX.spin*t*0.55;
+    pitch=lerp(DX.pitch0,-1.05,seg(t,0,1.5));
+    roll=DX.roll*0.5*seg(t,0.2,2.2);
+    if(ui.deathfx) ui.deathfx.style.setProperty("--r",(170*(1-seg(t,0.3,2.3)))+"%");
+  } else {
+    /* the hit shoves you back off your feet… */
+    const kick=seg(t,0,DTH_HIT);
+    const back=0.42*kick+0.30*seg(t,DTH_HIT,DTH_LAND);
+    x=DX.x-fx*back; z=DX.z-fz*back;
+    /* …and then the legs go. A short bounce off the floor, then the sink. */
+    const down=seg(t,DTH_HIT,DTH_LAND);
+    y=lerp(DX.y,0.36,down)+0.10*kick*(1-kick)*4;
+    if(t>DTH_LAND){
+      const b=Math.max(0,1-(t-DTH_LAND)*3.4);
+      y=0.36+0.085*b*Math.abs(Math.sin((t-DTH_LAND)*11))-0.07*seg(t,DTH_LAND,DTH_CARD+1.2);
+    }
+    roll=DX.roll*ease(down)+DX.roll*0.16*seg(t,DTH_LAND,DTH_CARD+1.4);
+    /* the head turns to whatever is standing over you */
+    const turn=seg(t,0.12,DTH_LAND+0.35);
+    let kyaw=DX.yaw0, kpitch=0.42;
+    if(DX.killer){
+      const dx=DX.killer.x-x, dz=DX.killer.z-z;
+      const hd=Math.max(0.6,Math.hypot(dx,dz));
+      const ky=(DX.killer.y!==undefined? DX.killer.y:0)+1.35;
+      kyaw=Math.atan2(-dx,-dz);
+      kpitch=clamp(Math.atan2(ky-y,hd),0.05,1.32);
+    }
+    yaw=angLerp(DX.yaw0,kyaw,turn);
+    pitch=lerp(DX.pitch0,kpitch,turn);
+    if(ui.deathfx) ui.deathfx.style.setProperty("--r",(170*(1-seg(t,0.9,2.75)))+"%");
+    if(!DX.landed&&t>=DTH_LAND){ DX.landed=true; sfxBodyFall(); }
+  }
+  /* a dying body does not hold its head level */
+  const jit=hash(Math.floor(t*9)*0.37)*0.012*(1-seg(t,0,2.4));
+  camera.position.set(x,y,z);
+  camera.rotation.order="YXZ";
+  camera.rotation.y=yaw+jit; camera.rotation.x=pitch; camera.rotation.z=roll;
+  if(!DX.carded&&t>=DTH_CARD){ DX.carded=true; if(DX.onCard) DX.onCard(); }
 }

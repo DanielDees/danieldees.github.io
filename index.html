@@ -6,19 +6,25 @@
 <title>NOCLIP — Escape the Backrooms</title>
 <link rel="stylesheet" href="css/main.css">
 </head>
-<body>
+<body class="lvl0">
 <div id="game"></div>
 
 <div class="fxlayer" id="vignette"></div>
 <div class="fxlayer" id="dread"></div>
 <div class="fxlayer" id="grain"></div>
 <div class="fxlayer" id="staticfx"></div>
+<!-- the death iris: a hole in the black that closes over you as you go down.
+     driven from cutscene.js by writing --r (see #deathfx in main.css) -->
+<div class="fxlayer" id="deathfx"></div>
 <div class="fxlayer" id="flash"></div>
 
 <div id="hud">
   <div id="crosshair"></div>
   <div id="objectives" class="panel">
-    <h3>OBJECTIVES</h3>
+    <div id="objHead">
+      <span id="objFloor">LEVEL 0</span>
+      <span id="objPlace">THE BACKROOMS</span>
+    </div>
     <ul id="objList"></ul>
     <div id="stats"></div>
   </div>
@@ -28,6 +34,10 @@
   <div id="staminaWrap">
     <div id="stamLabel"><span><span id="stamName">STAMINA</span> <span class="lowtag">· EXHAUSTED</span></span><span id="stamPct">100%</span></div>
     <div id="stamBar"><div id="stamina"></div></div>
+  </div>
+  <div id="lanternWrap">
+    <div id="lantLabel"><span>LANTERN <span class="deadtag">· DEAD CELL</span></span><span>[F] LIGHT · [R] CRANK</span></div>
+    <div id="lantBar"><div id="lantern"></div></div>
   </div>
   <div id="keysHint">WASD MOVE · SHIFT SPRINT · SPACE JUMP · C HIDE · E USE</div>
   <div id="prompt"></div>
@@ -55,95 +65,258 @@
     <p style="margin-top:10px">Something else fell through, a long time ago. It is still here.
        Find what you need, restore the power, and locate the exit elevator — quietly.</p>
     <button class="bigbtn" id="btnStart">DESCEND</button>
+    <button class="bigbtn ghostbtn" id="btnHow1">FIELD NOTES · HOW TO PLAY</button>
     <p class="subtle blink">headphones recommended · click DESCEND to begin</p>
-    <p class="subtle" style="margin-top:8px;opacity:.55">v2.6.0</p>
+    <p class="subtle" style="margin-top:8px;opacity:.55">v3.1.0</p>
   </div>
 </div>
 
 <!-- ============ HOW TO PLAY ============ -->
 <div class="overlay hide" id="howOverlay">
-  <div class="sheet">
-    <h1 style="font-size:20px">HOW TO PLAY</h1>
-    <h2>FIELD NOTES — DO NOT LOSE</h2>
-    <h3>CONTROLS</h3>
-    <ul>
-      <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>MOUSE</kbd> look</li>
-      <li><kbd>SHIFT</kbd> sprint — drains stamina and makes <i>noise</i></li>
-      <li><kbd>SPACE</kbd> jump — sprinting mid-air drains stamina at half rate</li>
-      <li><kbd>C</kbd> crouch / hide — slow but silent</li>
-      <li><kbd>E</kbd> interact (pick up items, use panels &amp; doors)</li>
-      <li><kbd>H</kbd> this guide · <kbd>O</kbd> options · <kbd>ESC</kbd> pause</li>
-    </ul>
-    <h3>OBJECTIVES</h3>
-    <p>Complete them in order. Collect <b style="color:var(--yellow)">3 bottles of almond water</b>,
-       then find the <b style="color:var(--yellow)">fuse</b>, then restore power at the
-       <b style="color:var(--yellow)">breaker panel</b>. Only then will the exit elevator answer its call button.
-       Your progress is tracked in the top-left log.</p>
-    <h3>THE ENTITY</h3>
-    <p>It wakes when you start taking things. It mostly wanders — but it sees far down straight
-       corridors, and it hears sprinting from a long way off. When it notices you it will stop,
-       turn, and let out a cry before it commits to the chase: that pause is your head start.
-       Sometimes it stops and raps on the walls — that's it listening. The lights nearest to it
-       misbehave: distant flickering tells you exactly where it is. If the flickering reaches you
-       and you hear it breathing, it is close.</p>
-    <h3>HOW TO HIDE</h3>
-    <p>Break its line of sight — put walls and pillars between you — then hold <kbd>C</kbd> to crouch
-       and stay still. Crouched and unseen, you are nearly invisible: it will stalk to where it last
-       saw you, search, give up, and move on. Never try to outrun it in a straight hallway for long;
-       your stamina will fail before its patience does. Corner, crouch, wait, breathe.</p>
-    <h3>DEEPER FLOORS</h3>
-    <p>Level 0 is not the bottom. What works up here works down there — quiet, crouch, cover — but
-       deeper floors keep their own rules, and their own keepers. Some of them don't need to see you
-       at all. Watch the objectives log, listen before you take anything, and remember that furniture
-       you can fit under is furniture <i>it</i> can't.</p>
-    <button class="bigbtn" id="btnResume">RESUME</button>
+  <div class="sheet guide">
+    <h1>FIELD NOTES</h1>
+    <h2>HOW TO PLAY · DO NOT LOSE</h2>
+
+    <nav class="tabs" id="guideTabs">
+      <button class="tab on" data-pane="gControls">CONTROLS</button>
+      <button class="tab" data-pane="gSurvival">SURVIVAL</button>
+      <button class="tab" data-pane="gL0">LEVEL 0</button>
+      <button class="tab locked" data-pane="gL1" data-need="1">■ ■ ■</button>
+      <button class="tab locked" data-pane="gL2" data-need="2">■ ■ ■</button>
+    </nav>
+
+    <!-- ---- CONTROLS ---- -->
+    <section class="pane on" id="gControls">
+      <p class="lede">Everything is done with six keys. Nothing here is timed, and nothing
+         needs quick fingers — this is a game about <i>where you are</i> and <i>how loud you are</i>.</p>
+      <dl class="keys">
+        <dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt>
+          <dd>Move. <span class="q">Mouse looks around.</span></dd>
+        <dt><kbd>SHIFT</kbd></dt>
+          <dd>Sprint. <span class="q">Fast, drains stamina, and <b>loud</b> — the surest way to be found.</span></dd>
+        <dt><kbd>SPACE</kbd></dt>
+          <dd>Jump. <span class="q">Sprinting mid-air drains stamina at half rate.</span></dd>
+        <dt><kbd>C</kbd></dt>
+          <dd>Crouch / hide. <span class="q">Slow, but <b>silent</b>, and it fits under things. Hold it by
+              default — Options can make it a toggle.</span></dd>
+        <dt><kbd>E</kbd></dt>
+          <dd>Use. <span class="q">Pick things up, press buttons, open panels. Some things are a <b>hold</b>.</span></dd>
+        <dt><kbd>F</kbd> <kbd>R</kbd></dt>
+          <dd>Lantern on/off · hold to crank it. <span class="q">Only once you have found one.</span></dd>
+        <dt><kbd>ESC</kbd></dt>
+          <dd>Pause. <span class="q">These notes and the Options sheet live there. <kbd>O</kbd> jumps
+              straight to Options.</span></dd>
+      </dl>
+
+      <h3>READING THE SCREEN</h3>
+      <ul class="legend">
+        <li><b>Top left</b> — your objectives, in order. The <span class="ex-act">▸ lit row</span> is what
+            you are doing now; <span class="ex-done">✓ dim rows</span> are done. Counters fill as you go.</li>
+        <li><b>Bottom centre</b> — stamina. It turns <span class="ex-alert">red</span> when it fails and
+            <span class="ex-blue">blue</span> if you ever find something that makes it bottomless.</li>
+        <li><b>Bottom centre, smaller</b> — a lantern's remaining charge, when you carry one.</li>
+        <li><b>H I D D E N</b> — you are crouched and out of sight. While that shows, you are hard to find.</li>
+        <li><b>Flickering lights</b> — that is not decoration. Lights misbehave near whatever is hunting
+            this floor. Flicker in the distance tells you where it is; flicker around <i>you</i> means it is close.</li>
+      </ul>
+    </section>
+
+    <!-- ---- SURVIVAL ---- -->
+    <section class="pane" id="gSurvival">
+      <p class="lede">Every floor has a different keeper, and they all obey the same five rules.
+         Learn these once and they carry all the way down.</p>
+      <ol class="rules">
+        <li><b>Noise is the whole game.</b> Sprinting is heard from a long way off, walking from a
+            short way, crouching from nowhere at all. Anything you pick up, break or set alight makes
+            a noise at <i>that</i> spot — and something will come and look at it.</li>
+        <li><b>Break the line, then stop.</b> Put a wall, a shelf or a rock between you and it, then
+            crouch and <b>stay still</b>. Searching is a timer: it will hunt where it last knew you were,
+            fail, and wander off. Panicking through open ground restarts that timer.</li>
+        <li><b>You cannot win a footrace.</b> Stamina runs out before its patience does. Sprint to break
+            contact and reach cover — never to simply outdistance it.</li>
+        <li><b>Cover is floor-specific.</b> Every floor gives you one thing it cannot follow you into.
+            Find out what it is early, and know where the nearest one is at all times.</li>
+        <li><b>Listen more than you look.</b> Footfalls, breathing, scraping and skittering are all
+            positioned in stereo and fall off with distance. Headphones are worth more than any tactic
+            on this list.</li>
+      </ol>
+      <h3>IF IT CATCHES YOU</h3>
+      <p>You wake up again. What you keep depends on where you died — the death card tells you plainly.
+         Deaths are counted, never fatal to the run.</p>
+    </section>
+
+    <!-- ---- LEVEL 0 ---- -->
+    <section class="pane" id="gL0">
+      <h3>THE BACKROOMS</h3>
+      <p class="lede">Yellow rooms, damp carpet, and one thing that has been down here far longer
+         than you have.</p>
+      <h3>WHAT TO DO</h3>
+      <ol class="rules tight">
+        <li>Collect <b>3 bottles of almond water</b>.</li>
+        <li>Find the <b>fuse</b>.</li>
+        <li>Fit it at the <b>breaker panel</b> to restore power.</li>
+        <li>Call the <b>exit elevator</b> — it only answers once the power is back.</li>
+      </ol>
+      <h3>THE ENTITY</h3>
+      <p>It is asleep until you take the first thing. After that it wanders, and it sees a long way
+         down a straight corridor. When it notices you it <b>stops, turns and cries out</b> before it
+         commits — that pause is your head start, so use it to break sight, not to stare. Sometimes it
+         stops to <b>rap on a wall</b>: that is it listening. Every objective you clear makes it faster
+         and more restless, and eventually it starts <b>folding space</b> — crossing a whole stretch of
+         corridor in one step, with a puff of dark fog at each end.</p>
+      <h3>YOUR COVER</h3>
+      <p>Distance and corners. Crouched and unseen you are nearly invisible: it will stalk to where it
+         last saw you, search, give up and move on. Once the breaker is fixed your stamina goes
+         bottomless — that is the only reason the last run to the elevator is survivable.</p>
+    </section>
+
+    <!-- ---- THE END ---- -->
+    <section class="pane" id="gL1">
+      <p class="locknote">You have not been here yet. These pages fill themselves in when you arrive.</p>
+      <div class="lockbody">
+        <h3>THE END · THE INFINITE LIBRARY</h3>
+        <p class="lede">One vast room of stacks and reading tables, and a horse-sized spider that
+           pads between them. It is <b>blind</b>.</p>
+        <h3>WHAT TO DO</h3>
+        <ol class="rules tight">
+          <li>Find the <b>floppy disks</b> shelved throughout the room.</li>
+          <li>Feed every one of them to the <b>terminal</b> on the central desk.</li>
+        </ol>
+        <h3>THE LIBRARIAN</h3>
+        <p>It hunts by <b>sound</b>, and it keys on <b>motion</b> — standing perfectly still reads as safe
+           even upright, even while you turn to look. Every disk you pull off a shelf is a noise at that
+           shelf, and it comes to check. Take several quickly and it arrives faster and angrier. It does
+           not stay on the floor: when it loses you it climbs the walls and webs across the ceiling to
+           cut the room off, then <b>drops on you from above</b> — a long, telegraphed plunge you survive
+           only by moving out from under it. Crouching does not save you from a drop.</p>
+        <h3>YOUR COVER</h3>
+        <p>The <b>reading tables</b>. You fit under them crouched and it cannot reach you there; it will
+           circle, lose interest, and leave. About a minute and a half after your first disk the lights
+           burn down and the room wakes up properly — from then on, plan your route between tables.</p>
+      </div>
+    </section>
+
+    <!-- ---- THE NEST ---- -->
+    <section class="pane" id="gL2">
+      <p class="locknote">You have not been here yet. These pages fill themselves in when you arrive.</p>
+      <div class="lockbody">
+        <h3>THE NEST · THE CAVE BELOW</h3>
+        <p class="lede">Raw karst lit by blue fungus. You followed something home, and it has
+           children.</p>
+        <h3>WHAT TO DO</h3>
+        <ol class="rules tight">
+          <li>Take the <b>crank lantern</b> from the body beside the dead stair.</li>
+          <li>Burn all <b>four egg clutches</b> — <kbd>E</kbd> held for three seconds, standing still.</li>
+          <li>Climb the <b>fissure</b> the last burn opens.</li>
+        </ol>
+        <h3>THE LANTERN IS THE LEVEL</h3>
+        <p>Lit, it physically <b>drives the hatchlings back</b> in every direction — they are photophobic
+           and cannot even hear you through the glow. But its charge runs down, cranking it back up
+           (<kbd>R</kbd>) is loud and slows you to a walk, and a flame left burning in open cave is a
+           beacon the <b>matriarch</b> reads fluently. Light is safety from the small ones and a signal
+           to the big one. That trade is the whole game down here.</p>
+        <h3>THE BROOD &amp; THE MATRIARCH</h3>
+        <p>Hatchlings hold territories and hunt by sound. One that reaches you <b>latches on</b>: your
+           stamina bleeds and it screams your position to its mother until you shake it off (swing the
+           mouse hard) or burn it off with the lantern. The matriarch tends her clutches on a patrol.
+           Silk-laced ground near a nest carries your footfalls to her at twice the range; the stream
+           hides them; scree gives you away. Every burn sets off a <b>frenzy</b>, kills the local
+           fungus-light, and drops a <b>rockfall</b> that reshapes the tunnels.</p>
+        <h3>YOUR COVER</h3>
+        <p>The <b>squeezes</b> — tight crawls you pass crouched and she cannot follow you through at all.
+           They are this floor's reading tables. The stream is worth wading for the silence; the chasm
+           will kill you on its own if you fall in.</p>
+      </div>
+    </section>
+
+    <button class="bigbtn" id="btnResume">BACK</button>
   </div>
 </div>
 
-<!-- ============ SOUND MIXER ============ -->
+<!-- ============ OPTIONS ============ -->
 <div class="overlay hide" id="soundOverlay">
-  <div class="sheet" style="max-width:430px">
-    <h1 style="font-size:20px">OPTIONS</h1>
-    <h2>SOUND · SENSITIVITY · CONTROLS</h2>
-    <div class="mixrow"><label>MASTER</label><input type="range" id="volMaster" min="0" max="100" value="90"><output id="volMasterV">90</output></div>
-    <div class="mixrow"><label>MUSIC</label><input type="range" id="volMusic" min="0" max="100" value="75"><output id="volMusicV">75</output></div>
-    <div class="mixrow"><label>SOUND</label><input type="range" id="volSound" min="0" max="100" value="90"><output id="volSoundV">90</output></div>
-    <div class="mixrow"><label>MOUSE</label><input type="range" id="sensSlider" min="10" max="400" value="100"><output id="sensV">1.0x</output></div>
-    <div class="mixrow"><label>CROUCH</label><input type="checkbox" id="crouchToggle" style="width:auto;justify-self:start"><output id="crouchToggleV">HOLD</output></div>
-    <div class="mixrow"><label>GRAPHICS</label><input type="checkbox" id="qualityLow" style="width:auto;justify-self:start"><output id="qualityV">HIGH</output></div>
-    <p class="subtle">music = ambient drone &amp; distant tones · sound = footsteps, lights, the entity<br>mouse = look sensitivity, 0.1x–4x · crouch = hold [C], or check to make it a toggle<br>graphics = check for LOW on weak GPUs (caps resolution; antialiasing change applies after reload)</p>
+  <div class="sheet" style="max-width:520px">
+    <h1>OPTIONS</h1>
+    <h2>AUDIO · INPUT · DISPLAY</h2>
+
+    <h3>AUDIO</h3>
+    <div class="optrow">
+      <label for="volMaster">MASTER</label>
+      <input type="range" id="volMaster" min="0" max="100" value="90"><output id="volMasterV">90</output>
+      <p class="hint">Everything at once.</p>
+    </div>
+    <div class="optrow">
+      <label for="volMusic">MUSIC</label>
+      <input type="range" id="volMusic" min="0" max="100" value="75"><output id="volMusicV">75</output>
+      <p class="hint">The ambient drone and the distant tones underneath it.</p>
+    </div>
+    <div class="optrow">
+      <label for="volSound">SOUND</label>
+      <input type="range" id="volSound" min="0" max="100" value="90"><output id="volSoundV">90</output>
+      <p class="hint">Footsteps, lights, doors — and everything hunting you. Turning this
+        down makes the game <i>harder</i>.</p>
+    </div>
+
+    <h3>INPUT</h3>
+    <div class="optrow">
+      <label for="sensSlider">MOUSE</label>
+      <input type="range" id="sensSlider" min="10" max="400" value="100"><output id="sensV">1.0x</output>
+      <p class="hint">Look sensitivity, 0.1× to 4×.</p>
+    </div>
+    <div class="optrow">
+      <label for="crouchToggle">CROUCH</label>
+      <input type="checkbox" id="crouchToggle"><output id="crouchToggleV">HOLD</output>
+      <p class="hint">HOLD: crouched only while <kbd>C</kbd> is down. TOGGLE: <kbd>C</kbd> latches it
+        on and off — easier on long hides.</p>
+    </div>
+
+    <h3>DISPLAY</h3>
+    <div class="optrow">
+      <label for="qualityLow">GRAPHICS</label>
+      <input type="checkbox" id="qualityLow"><output id="qualityV">HIGH</output>
+      <p class="hint">Check for LOW on a weak GPU: caps the render resolution and drops
+        antialiasing. Resolution changes immediately; antialiasing applies after a reload.</p>
+    </div>
+
+    <p class="subtle">Settings are saved in this browser.</p>
     <button class="bigbtn" id="btnSoundClose">DONE</button>
   </div>
 </div>
 
 <!-- ============ PAUSE ============ -->
 <div class="overlay hide" id="pauseOverlay">
-  <div class="sheet" style="text-align:center;max-width:420px">
-    <h1 style="font-size:22px">PAUSED</h1>
+  <div class="sheet" style="text-align:center;max-width:440px">
+    <h1>PAUSED</h1>
     <h2>THE HUM CONTINUES WITHOUT YOU</h2>
+    <div id="pauseStats"></div>
     <button class="bigbtn" id="btnUnpause">RESUME</button>
-    <button class="bigbtn ghostbtn" id="btnHow2">HOW TO PLAY</button>
+    <button class="bigbtn ghostbtn" id="btnHow2">FIELD NOTES</button>
     <button class="bigbtn ghostbtn" id="btnSound2">OPTIONS</button>
   </div>
 </div>
 
 <!-- ============ DEATH ============ -->
 <div class="overlay hide" id="deathOverlay">
-  <div class="sheet" style="text-align:center;max-width:460px">
-    <h1>IT FOUND YOU</h1>
+  <div class="sheet death">
+    <div id="deathRule"></div>
+    <h1 id="deathTitle">IT FOUND YOU</h1>
     <h2 id="deathQuote">YOU SHOULDN'T HAVE LET IT SEE YOU</h2>
     <p id="deathBody">You wake at the place you first fell through. Your pockets are, somehow, still full.
        Your progress is kept. It has already forgotten you — for now.</p>
+    <div id="deathTip" class="tip"></div>
+    <div id="deathStats"></div>
     <button class="bigbtn" id="btnRespawn">GET UP</button>
   </div>
 </div>
 
 <!-- ============ WIN ============ -->
 <div class="overlay hide" id="winOverlay">
-  <div class="sheet" style="max-width:480px">
-    <h1 id="winTitle" style="font-size:24px;letter-spacing:.2em">GOING DOWN</h1>
+  <div class="sheet win">
+    <div id="winBadge" class="hide">RUN COMPLETE</div>
+    <h1 id="winTitle">GOING DOWN</h1>
     <h2 id="winSub">THE DOORS SAVED YOU. THE BRAKES DID NOT.</h2>
     <div id="winStats"></div>
+    <p id="winNote" class="subtle"></p>
     <button class="bigbtn" id="btnAgain">DESCEND AGAIN</button>
   </div>
 </div>

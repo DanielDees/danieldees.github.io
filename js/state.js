@@ -14,6 +14,11 @@ export const STATE={
   deaths:0, time:0,
   bob:0, moving:false,
   ambDim:1,                      // ambient-floor multiplier (the elevator crash drains it)
+  /* the one place the HUD is allowed to point at: {x,z} of a way OUT that
+     the level has already revealed to you in a cutscene (the library's hole,
+     the cave's fissure). Never a collectible — those you find yourself. */
+  guide:null,
+  deathCause:"caught",           // "caught" | "fall" — picks the death camera and the card
   /* ---- THE END progression ---- */
   discsCarried:0, discsDelivered:0, discsFound:0, discTotal:0,
   libT0:0,                       // STATE.time at the moment the library was entered
@@ -23,6 +28,12 @@ export const STATE={
   libWakeT:-1,                   // intro cutscene: seconds since the fixtures began waking (-1 = all awake)
   shakeAmp:0,                    // slow micro screen-shake (post-drop ambience)
   holeOpen:false,                // the librarian has dug the way down (final objective live)
+  /* ---- THE NEST progression ---- */
+  caveT0:0,                      // STATE.time at the moment the cave was entered
+  hasLantern:false,              // the dead wanderer's crank lantern (and journal)
+  lanternOn:false, lanternCharge:0.65, cranking:false,
+  clutchesLit:0,                 // egg clutches burned (of 4)
+  frenzyT:0,                     // >0: the brood is frenzied, the matriarch enraged
 };
 export const KEYS={};
 export const monster={
@@ -53,7 +64,8 @@ export const spider={
   seekRun:false,        // seek at run speed (disc/strong alert) vs walk (mild)
   browseT:0, pauseT:0, scratchT:6, sniffT:0, sniffsLeft:0, searchT:0, stalkT:0,
   mildCD:0, stepAcc:0, screechCD:0, scratchCD:0, sniffCD:0,
-  stuckT:0,             // anti-deadlock: seconds spent commanded-but-stationary
+  stuckT:0,             // anti-deadlock: seconds spent commanded-but-stationary WITH a path
+  idleT:0,              // …and the cave's opposite: commanded-but-stationary with NO path left
   /* ---- v2.3: it climbs ----
      a surface-locomotion layer above the floor AI: the spider can crawl the
      perimeter walls and web up to the ceiling to reposition, then drop. */

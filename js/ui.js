@@ -9,9 +9,12 @@ import { startGame, respawn } from "./lifecycle.js";
 /* ---------------- DOM refs ---------------- */
 export const ui={
   hud:$("hud"), objList:$("objList"), stats:$("stats"),
+  objBox:$("objectives"), objFloor:$("objFloor"), objPlace:$("objPlace"),
   stamWrap:$("staminaWrap"), stam:$("stamina"), stamPct:$("stamPct"), stamName:$("stamName"),
+  lantWrap:$("lanternWrap"), lant:$("lantern"),
   prompt:$("prompt"), hidden:$("hiddenTag"), toast:$("toast"),
   dread:$("dread"), flash:$("flash"), staticfx:$("staticfx"), vignette:$("vignette"),
+  deathfx:$("deathfx"),
   start:$("startOverlay"), how:$("howOverlay"), pause:$("pauseOverlay"),
   sound:$("soundOverlay"), death:$("deathOverlay"), win:$("winOverlay"),
 };
@@ -21,43 +24,134 @@ export function toast(msg,ms=3200){
   clearTimeout(toastTimer);
   toastTimer=setTimeout(()=>ui.toast.style.opacity=0,ms);
 }
-const OBJ_DEFS=[
-  ()=>`Collect almond water (${STATE.bottles}/3)`,
-  ()=>`Find a fuse for the breaker`,
-  ()=>`Restore power at the breaker panel`,
-  ()=>`Locate the exit elevator and escape`,
+
+/* ---------------- level chrome ----------------
+   the whole interface takes the colour of the floor you're standing on
+   (body.lvl0/1/2 → the --accent family in main.css) and the objectives log
+   says where you are, which nothing used to. */
+export const FLOORS=[
+  {floor:"LEVEL 0",  place:"THE BACKROOMS"},
+  {floor:"THE END",  place:"THE INFINITE LIBRARY"},
+  {floor:"THE NEST", place:"THE CAVE BELOW"},
 ];
-export function renderObjectives(){
-  ui.objList.innerHTML="";
-  const t=Math.floor(STATE.time);
-  const clock=`TIME ${String(Math.floor(t/60)).padStart(2,"0")}:${String(t%60).padStart(2,"0")}`;
-  if(STATE.level===1){
-    /* THE END: find the disks, feed the terminal */
-    const total=STATE.discTotal||"?";
-    const allFound=STATE.discTotal>0&&STATE.discsFound>=STATE.discTotal;
-    const allFed=STATE.discTotal>0&&STATE.discsDelivered>=STATE.discTotal;
+export function setLevelChrome(level){
+  const f=FLOORS[level]||FLOORS[0];
+  document.body.classList.remove("lvl0","lvl1","lvl2");
+  document.body.classList.add("lvl"+level);
+  if(ui.objFloor) ui.objFloor.textContent=f.floor;
+  if(ui.objPlace) ui.objPlace.textContent=f.place;
+  syncGuide();
+}
+
+/* ---------------- the objectives log ----------------
+   rows are a small data model, not markup: {txt, done, active, have, total}.
+   A counter draws as PIPS while the total is small enough to read at a
+   glance and as a METER once it isn't (the disk hunt runs to twenty-odd —
+   twenty-two pips in a HUD corner is a barcode, not a count). */
+const fmtClock=s=>{const t=Math.floor(s);
+  return `${String(Math.floor(t/60)).padStart(2,"0")}:${String(t%60).padStart(2,"0")}`;};
+
+const ARROWS=["↑","↗","→","↘","↓","↙","←","↖"];
+/* where a place is, relative to where you are looking. Forward is
+   (−sin yaw, −cos yaw) — the same basis player.js and the cutscenes use. */
+function bearing(x,z){
+  const dx=x-STATE.pos.x, dz=z-STATE.pos.z;
+  const dist=Math.hypot(dx,dz);
+  const ahead=-dx*Math.sin(STATE.yaw)-dz*Math.cos(STATE.yaw);
+  const right= dx*Math.cos(STATE.yaw)-dz*Math.sin(STATE.yaw);
+  const a=Math.atan2(right,ahead);
+  const i=((Math.round(a/(Math.PI/4))%8)+8)%8;
+  return {arrow:ARROWS[i], dist:Math.round(dist)};
+}
+function objRows(){
+  if(STATE.level===2){
+    const allLit=STATE.clutchesLit>=4;
     const rows=[
-     [`Find the floppy disks (${STATE.discsFound}/${total})`, allFound, !allFound],
-     [`Feed them to the librarian's terminal (${STATE.discsDelivered}/${total})`, allFed, allFound&&!allFed||STATE.discsCarried>0],
+      {txt:"Find a light", done:STATE.hasLantern, active:!STATE.hasLantern},
+      {txt:"Burn the brood", have:STATE.clutchesLit, total:4,
+       done:allLit, active:STATE.hasLantern&&!allLit},
+    ];
+    /* the fissure only exists once the cave has opened it — no spoilers */
+    if(allLit) rows.push({txt:"Climb the fissure", done:STATE.won, active:!STATE.won,
+                          guide:STATE.guide, guideName:"COLD AIR"});
+    return rows;
+  }
+  if(STATE.level===1){
+    const total=STATE.discTotal||0;
+    const allFound=total>0&&STATE.discsFound>=total;
+    const allFed=total>0&&STATE.discsDelivered>=total;
+    const rows=[
+      {txt:"Find the floppy disks", have:STATE.discsFound, total,
+       done:allFound, active:!allFound},
+      {txt:"Feed them to the terminal", have:STATE.discsDelivered, total,
+       done:allFed, active:(allFound&&!allFed)||STATE.discsCarried>0},
     ];
     /* the dig only exists once it has happened — no spoilers in the log */
-    if(STATE.holeOpen) rows.push([`Enter the hole`, STATE.won, !STATE.won]);
-    rows.forEach(([txt,done,active])=>{
-      const li=document.createElement("li");
-      li.textContent=txt;
-      li.className = done? "done" : active? "active" : "";
-      ui.objList.appendChild(li);
-    });
-    ui.stats.textContent=`${clock}  ·  DEATHS ${STATE.deaths}  ·  CARRYING ${STATE.discsCarried} 💾`;
-    return;
+    if(STATE.holeOpen) rows.push({txt:"Enter the hole", done:STATE.won, active:!STATE.won,
+                                  guide:STATE.guide, guideName:"THE HOLE"});
+    return rows;
   }
-  OBJ_DEFS.forEach((f,i)=>{
-    const li=document.createElement("li");
-    li.textContent=f();
-    li.className = i<STATE.objective? "done" : i===STATE.objective? "active" : "";
-    ui.objList.appendChild(li);
-  });
-  ui.stats.textContent=`${clock}  ·  DEATHS ${STATE.deaths}  ·  STAGE ${Math.min(STATE.objective+1,4)}/4`;
+  const L0=[
+    {txt:"Collect almond water", have:STATE.bottles, total:3},
+    {txt:"Find a fuse for the breaker"},
+    {txt:"Restore power at the breaker"},
+    {txt:"Call the exit elevator"},
+  ];
+  L0.forEach((r,i)=>{ r.done=i<STATE.objective; r.active=i===STATE.objective; });
+  return L0;
+}
+function counterHTML(have,total){
+  if(!total) return "";
+  if(total<=8){
+    let s="";
+    for(let i=0;i<total;i++) s+=`<i class="pip${i<have?" on":""}"></i>`;
+    return `${s}<span>${have}/${total}</span>`;
+  }
+  const p=Math.round(clamp(have/total,0,1)*100);
+  return `<span class="ometer"><i style="width:${p}%"></i></span><span>${have}/${total}</span>`;
+}
+let objSig="", activeSig="";
+export function renderObjectives(force=false){
+  const rows=objRows();
+  /* a live bearing changes constantly; keep it out of the redraw signature
+     and rewrite only that one row's text when nothing else moved */
+  const sig=STATE.level+"|"+rows.map(r=>
+    `${r.txt}:${r.done?1:0}${r.active?"a":""}:${r.have||0}/${r.total||0}`).join("|");
+  const act=rows.filter(r=>r.active).map(r=>r.txt).join("|");
+  if(sig!==objSig||force){
+    objSig=sig;
+    let html="";
+    for(const r of rows){
+      const cls=r.done?"done":r.active?"active":"";
+      const mark=r.done?"✓":r.active?"▸":"·";
+      html+=`<li class="${cls}"><span class="omark">${mark}</span>`+
+            `<span class="otext">${r.txt}</span>`+
+            `<span class="ocount">${counterHTML(r.have,r.total)}</span></li>`;
+      if(r.active&&r.guide) html+=`<li class="sub" data-guide="1"></li>`;
+    }
+    ui.objList.innerHTML=html;
+    /* a new objective just went live: the panel takes one breath */
+    if(act!==activeSig&&activeSig!==""){
+      ui.objBox.classList.remove("flash");
+      void ui.objBox.offsetWidth;            // restart the animation
+      ui.objBox.classList.add("flash");
+    }
+    activeSig=act;
+  }
+  /* the bearing row: a direction you can feel, refreshed every tick */
+  const sub=ui.objList.querySelector('li.sub[data-guide]');
+  if(sub){
+    const r=rows.find(x=>x.active&&x.guide);
+    if(r){ const b=bearing(r.guide.x,r.guide.z);
+      sub.innerHTML=`${r.guideName} <b>${b.arrow}</b> ${b.dist} m`; }
+  }
+  /* the status strip */
+  let chips="";
+  if(STATE.level===2&&STATE.frenzyT>0) chips+=`<span class="chip warn">FRENZY</span>`;
+  if(STATE.level===1&&STATE.discsCarried>0) chips+=`<span class="chip">CARRYING ${STATE.discsCarried}</span>`;
+  if(STATE.level===0&&STATE.powerOn) chips+=`<span class="chip">POWER ON</span>`;
+  const strip=`<span>${fmtClock(STATE.time)}</span><span>DEATHS ${STATE.deaths}</span>${chips}`;
+  if(ui.stats.innerHTML!==strip) ui.stats.innerHTML=strip;
 }
 
 export function lockPointer(){ renderer.domElement.requestPointerLock(); }
@@ -72,16 +166,56 @@ export function anyOverlayOpen(){
          !ui.sound.classList.contains("hide")||!ui.death.classList.contains("hide")||
          !ui.win.classList.contains("hide");
 }
-export function toggleHow(){
-  if(ui.how.classList.contains("hide")){
-    ui.pause.classList.add("hide"); ui.sound.classList.add("hide");
-    ui.how.classList.remove("hide");
+
+/* ---------------- the field notes ----------------
+   a tabbed guide: one screen of one topic beats five screens of prose, and
+   the floors you have not reached keep their pages sealed so the guide can
+   never spoil a level transition. */
+function syncGuide(){
+  document.querySelectorAll("#guideTabs .tab").forEach(t=>{
+    const need=t.dataset.need? +t.dataset.need : 0;
+    const reached=STATE.level>=need;
+    t.classList.toggle("locked",!reached);
+    if(need){
+      t.textContent = reached? (need===1?"THE END":"THE NEST") : "■ ■ ■";
+      const pane=$(t.dataset.pane);
+      if(pane) pane.classList.toggle("sealed",!reached);
+    }
+  });
+}
+function showPane(id){
+  document.querySelectorAll("#guideTabs .tab").forEach(t=>t.classList.toggle("on",t.dataset.pane===id));
+  document.querySelectorAll(".sheet.guide .pane").forEach(p=>p.classList.toggle("on",p.id===id));
+  const sheet=document.querySelector(".sheet.guide");
+  if(sheet) sheet.scrollTop=0;
+}
+{
+  const tabs=$("guideTabs");
+  if(tabs) tabs.addEventListener("click",e=>{
+    const t=e.target.closest(".tab");
+    if(t) showPane(t.dataset.pane);
+  });
+}
+let howFrom="game";                 // "start" | "pause" | "game"
+export function openHow(from="game"){
+  howFrom=from;
+  syncGuide(); showPane("gControls");
+  ui.pause.classList.add("hide"); ui.sound.classList.add("hide");
+  ui.how.classList.remove("hide");
+  if(from!=="start"){
     setPaused(true);
     if(document.pointerLockElement) document.exitPointerLock();
-  } else {
-    ui.how.classList.add("hide");
-    setPaused(false); lockPointer();
   }
+}
+export function closeHow(){
+  ui.how.classList.add("hide");
+  if(howFrom==="start") return;                       // the title screen is still behind it
+  if(howFrom==="pause"){ ui.pause.classList.remove("hide"); setPaused(true); return; }
+  setPaused(false); lockPointer();
+}
+export function toggleHow(){
+  if(ui.how.classList.contains("hide")) openHow(STATE.playing?"game":"start");
+  else closeHow();
 }
 let soundFromPause=false;
 export function toggleSound(fromPause=false){
@@ -98,9 +232,17 @@ export function toggleSound(fromPause=false){
   }
 }
 /* the single MENU [ESC] HUD button opens the pause sheet, which already
-   links out to HOW TO PLAY and SOUND */
+   links out to the field notes and Options */
 export function openPause(){
   ui.how.classList.add("hide"); ui.sound.classList.add("hide");
+  const st=$("pauseStats");
+  if(st){
+    const f=FLOORS[STATE.level]||FLOORS[0];
+    st.innerHTML=
+      `<div class="statrow"><span>FLOOR</span><span>${f.floor}</span></div>`+
+      `<div class="statrow"><span>TIME</span><span>${fmtClock(STATE.time)}</span></div>`+
+      `<div class="statrow"><span>TIMES CAUGHT</span><span>${STATE.deaths}</span></div>`;
+  }
   ui.pause.classList.remove("hide");
   setPaused(true);
   if(document.pointerLockElement) document.exitPointerLock();
@@ -110,14 +252,16 @@ export function openPause(){
    this whole module graph and brick the page */
 const wire=(id,fn)=>{const el=$(id); if(el) el.onclick=fn; else console.warn(`[ui] missing #${id}`);};
 wire("btnMenu",()=>openPause());
-wire("btnHow2",()=>{ui.pause.classList.add("hide");ui.how.classList.remove("hide");});
+wire("btnHow1",()=>openHow("start"));
+wire("btnHow2",()=>openHow("pause"));
 wire("btnSound2",()=>toggleSound(true));
 wire("btnSoundClose",()=>toggleSound(soundFromPause));
-wire("btnResume",()=>{ui.how.classList.add("hide");setPaused(false);lockPointer();});
+wire("btnResume",()=>closeHow());
 wire("btnUnpause",()=>{ui.pause.classList.add("hide");setPaused(false);lockPointer();});
 wire("btnStart",()=>{
   audioInit();
   ui.start.classList.add("hide");
+  ui.how.classList.add("hide");
   startGame();
 });
 wire("btnRespawn",()=>{
@@ -193,3 +337,4 @@ loadSettings();
     });
   }
 }
+syncGuide();
