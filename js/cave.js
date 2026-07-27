@@ -847,8 +847,14 @@ function puffGeo(r){
 }
 /* a mycelium cord: a thin tapering ribbon that follows the DISPLACED rock
    surface point by point — real geometry, not a decal (it undulates with
-   the relief it grows over). UVs run through the glowing bulb strip, so
-   the cords light up with the colony and blush violet with it. */
+   the relief it grows over).
+   IT IS SKINNED AS STIPE, NOT AS BULB. Mycelium is the same pale flesh
+   the stalk is made of, and the stem strip's emissive is what that wants:
+   near-dark, a few threads of glow running through it. Mapped into the
+   BULB strip — which is the pore skin, the brightest thing on the atlas —
+   a branching system stopped being a root and became a bolt of white
+   lightning painted across the rock, brighter than the mushrooms it was
+   supposed to be feeding. The glow belongs to the fruiting body. */
 function cordGeo(pts){
   const pos=[],nor=[],uv=[],idx=[];
   const N=pts.length;
@@ -862,7 +868,7 @@ function cordGeo(pts){
     sx*=w/sl; sy*=w/sl; sz*=w/sl;
     pos.push(p.x-sx,p.y-sy,p.z-sz, p.x+sx,p.y+sy,p.z+sz);
     nor.push(p.nx,p.ny,p.nz, p.nx,p.ny,p.nz);
-    uv.push(i*0.8, fv(F_BULB,0.12), i*0.8, fv(F_BULB,0.88));
+    uv.push(i*0.8, fv(F_STEM,0.25), i*0.8, fv(F_STEM,0.75));
     if(i<N-1){ const a=i*2; idx.push(a,a+1,a+3, a,a+3,a+2); }
   }
   const g=new THREE.BufferGeometry();
@@ -871,6 +877,140 @@ function cordGeo(pts){
   g.setAttribute("uv",new THREE.Float32BufferAttribute(uv,2));
   g.setIndex(idx);
   return g;
+}
+
+/* ---------------- rhizomorphs: the colony's ROOT SYSTEM ---------------
+   A mycelial cord is not a line, and a root system is not a starburst.
+   The first pass drew 2-4 unbranched ribbons of even weight leaving the
+   colony's CENTRE and running off in straight-ish sweeps — five strokes
+   from a point, growing out of nothing in particular. Three things are
+   what make a growth read as ROOT rather than as paint:
+
+     · it LEAVES A MUSHROOM. Cords start at the base of an actual
+       fruiting body — the stipe of a toadstool, the underside of a
+       bracket shelf — never at the group's average position.
+     · it FORKS, and every daughter is markedly thinner than its parent.
+       Equal-weight children are a fishbone. The hierarchy — trunk, two
+       or three primaries, their own branches, hair-fine tips — is the
+       whole silhouette; a cord that only tapers is still one line.
+     · it CLINGS. Every point is placed on the real displaced surface,
+       and a wall system that reaches the skirting LAYS OVER onto the
+       floor and keeps going: the ribbon rolls from standing in the wall
+       plane to lying flat, over about a third of a metre. Stopping dead
+       at the foot is what left the old cords looking stuck on.
+
+   One walker does both surfaces. `mode` flips from wall to floor when a
+   branch reaches the foot, and the heading it was carrying down the face
+   becomes the heading it carries out across the ground. Cost is held by
+   a per-colony segment BUDGET, and the whole system merges into the
+   colony's single mesh — twenty branches still cost zero extra draws. */
+function rhizoSystem(cfg){
+  const out=[];
+  let budget=cfg.budget;
+  const UPX=cfg.onWall? ((cfg.fdy!==0)?1:0) : 0;      // the wall-parallel axis
+  const UPZ=cfg.onWall? ((cfg.fdx!==0)?1:0) : 0;
+  const wnx=-cfg.fdx, wnz=-cfg.fdy;                   // wall normal, into the room
+
+  const emit=(br,pts)=>{
+    if(br.mode==="wall"){
+      const wx=cfg.ax+UPX*br.u, wz=cfg.az+UPZ*br.u;
+      const fy=floorYAt(wx,wz), y=Math.max(br.y,fy+0.03);
+      /* t: 1 well up the face, 0 at the foot. It rolls the ribbon's plane
+         from the wall's onto the floor's, and takes the stand-off out
+         with it, so the lay-over has no crease in it. */
+      const t=clamp((y-fy-0.04)/0.34,0,1);
+      const nx=wnx*t, nz=wnz*t, ny=1-t, nl=Math.hypot(nx,ny,nz)||1;
+      const F=wallField(wx,y,wz);
+      pts.push({x:wx+F.x+wnx*0.03*t, y:y, z:wz+F.z+wnz*0.03*t,
+                nx:nx/nl, ny:ny/nl, nz:nz/nl, w:br.w});
+    } else {
+      pts.push({x:br.x, y:floorYAt(br.x,br.z)+0.03, z:br.z, nx:0,ny:1,nz:0, w:br.w});
+    }
+  };
+  /* one step along the surface. A DRIFTING heading, never an independent
+     kick per step — that came out as neon lightning scribbled on the rock */
+  const step=(br)=>{
+    if(br.bias) br.head-=br.head*br.bias;        // a cord with somewhere to be
+    br.head+=(srand()-0.5)*br.wob; br.head*=0.94;
+    if(br.mode==="wall"){
+      br.u+=Math.sin(br.head)*br.step;
+      br.y-=Math.cos(br.head)*br.step;
+      const wx=cfg.ax+UPX*br.u, wz=cfg.az+UPZ*br.u;
+      if(br.y<=floorYAt(wx,wz)+0.05){                  // the foot: lay over and run on
+        br.mode="floor"; br.x=wx; br.z=wz;
+        br.head=Math.atan2(wnz,wnx)+br.head*0.7;       // out into the room, keeping its lean
+      }
+    } else {
+      br.x+=Math.cos(br.head)*br.step;
+      br.z+=Math.sin(br.head)*br.step;
+    }
+  };
+  const grow=(br,depth)=>{
+    const pts=[];
+    emit(br,pts);
+    for(let n=0;n<br.len&&budget>0;n++){
+      step(br); budget--;
+      br.w*=br.taper;
+      emit(br,pts);
+      if(depth<3&&n>0&&n<br.len-1&&budget>12&&srand()<br.fork){
+        /* the daughter leaves from exactly where the parent stands, so a
+           fork can never open a gap; the parent leans off it and thins */
+        const div=rand(0.45,1.15)*(srand()<0.5?-1:1);
+        const d=Object.assign({},br,{head:br.head+div, w:br.w*rand(0.50,0.68),
+          len:Math.max(3,Math.round(br.len*rand(0.45,0.70))),
+          step:br.step*rand(0.70,0.90), fork:br.fork*0.7, wob:br.wob*1.15});
+        const dp=grow(d,depth+1);
+        if(dp.length>1) out.push(dp);
+        br.head-=div*0.28; br.w*=0.86;
+      }
+    }
+    /* the tips run out as HAIRS — a branch that just stops has a cut end */
+    if(depth<3&&budget>9&&br.w<0.030){
+      const nh=2+(srand()<0.5?1:0);
+      for(let i=0;i<nh;i++){
+        if(budget<4) break;
+        const h=Object.assign({},br,{head:br.head+rand(-0.95,0.95),
+          w:Math.min(br.w,0.013), len:3, step:br.step*0.55, taper:0.86, fork:0});
+        const hp=grow(h,9);
+        if(hp.length>1) out.push(hp);
+      }
+    }
+    return pts;
+  };
+  /* SEVERAL primaries leave each body, not one. A single trunk that then
+     divides is a TREE — and a tree drawn on a wall is what the first pass
+     of this rewrite looked like. What leaves a stipe is a FAN of cords of
+     roughly equal order, which then branch. */
+  cfg.anchors.forEach((a,ai)=>{
+    const prim=3+Math.floor(srand()*2);
+    for(let k=0;k<prim;k++){
+      if(budget<10) return;
+      const br=cfg.onWall
+        ? {mode:"wall", u:a.u, y:a.y, head:rand(-0.85,0.85)}
+        : {mode:"floor", x:a.x, z:a.z, head:Math.random()*Math.PI*2};
+      /* SHORT steps and EARLY forks. Long strides and a late first fork
+         spend the whole budget on reach, and what comes out is three or
+         four lone wires wandering two metres off across the floor. What
+         a colony sits in is a MAT — densest at the stipe, thinning to
+         hairs inside a metre — so the branches are short and there are
+         many of them. */
+      br.step=rand(0.10,0.16); br.w=cfg.w0*rand(0.72,1); br.taper=0.960;
+      br.fork=0.30; br.wob=cfg.onWall?0.28:0.38; br.bias=0;
+      br.len=6+Math.floor(srand()*4);
+      /* the leader: one cord off the first body runs the WHOLE way to the
+         foot of the wall and lays over onto the floor. Grown first so it
+         gets the budget, biased toward straight down so it arrives, and
+         forking less than the rest so it stays legible as the trunk. */
+      if(cfg.onWall&&ai===0&&k===0){
+        br.step=rand(0.15,0.20);
+        br.len=Math.ceil((a.y-floorYAt(cfg.ax,cfg.az))/br.step)+5;
+        br.w=cfg.w0; br.bias=0.16; br.fork=0.14;
+      }
+      const pts=grow(br,0);
+      if(pts.length>1) out.push(pts);
+    }
+  });
+  return out;
 }
 
 /* ---------------- dripstone geometry: grown, not turned ----------------
@@ -2207,6 +2347,10 @@ export function buildCave(){
         emissive:0x081418, emissiveMap:FSKIN.emit, specular:0x2a4a50, shininess:30,
         side:THREE.DoubleSide});           // the mycelium cords are open ribbons
       const parts=[];
+      /* every fruiting body books the point its cords leave from: a root
+         system that starts at the group's average position starts inside
+         thin air between the mushrooms */
+      const anchors=[];
       let ax=p.x, az=p.z, hh=0.55, fdx=0, fdy=0, faceRot=0, onWall=false;
       const fy0=floorYAt(p.x,p.z);
       if(kind==="conk"){
@@ -2244,6 +2388,10 @@ export function buildCave(){
             m.rotation.set(rand(-0.14,0.14),Math.random()*Math.PI*2,rand(-0.14,0.14));
             m.scale.y=rand(0.6,0.85);
             parts.push(m);
+            /* cords leave from UNDER a shelf, where the bracket meets the
+               rock — `off` is already this run's offset along the face,
+               which is exactly the wall walker's u */
+            anchors.push({u:off+rand(-0.10,0.10), y:yy-rc*0.30});
             yy+=rc*rand(0.9,1.6)+0.08;
           }
         }
@@ -2274,6 +2422,7 @@ export function buildCave(){
           m.position.set(mx,floorYAt(mx,mz),mz);
           m.rotation.set(rand(-0.09,0.09),Math.random()*Math.PI*2,rand(-0.09,0.09));
           parts.push(m);
+          if(big||srand()<0.4) anchors.push({x:mx,z:mz});   // cords leave the stipe
         }
         hh=fy0+0.55;
       } else if(kind==="finger"){
@@ -2282,6 +2431,7 @@ export function buildCave(){
         for(let c=0;c<clumps;c++){
           const a0=Math.random()*Math.PI*2, rr=c===0?Math.random()*0.3:0.45+Math.random()*0.7;
           const cx2=p.x+Math.cos(a0)*rr, cz2=p.z+Math.sin(a0)*rr;
+          anchors.push({x:cx2,z:cz2});                      // one system per clump
           const n=5+Math.floor(Math.random()*5);
           for(let i=0;i<n;i++){
             const fa=Math.random()*Math.PI*2, fr=Math.random()*0.16;
@@ -2304,53 +2454,28 @@ export function buildCave(){
           m.position.set(mx, floorYAt(mx,mz)+r*0.72, mz);
           m.scale.y=0.85; m.rotation.y=Math.random()*Math.PI*2;
           parts.push(m);
+          if(srand()<0.5) anchors.push({x:mx,z:mz});
         }
         hh=fy0+0.35;
       }
-      /* mycelium cords crawling out of the colony — geometry, not paint:
-         thin tapering ribbons that ride the displaced surface they grow
-         over (wall cords run DOWN the face and pool at its foot; floor
-         cords wander outward through the litter) */
+      /* the root system: branching cords leaving the fruiting bodies
+         themselves and riding the displaced surface they grow over */
       {
-        const nCord=2+Math.floor(srand()*3);
-        for(let cI=0;cI<nCord;cI++){
-          const pts=[];
-          /* more, shorter segments and a DRIFTING heading rather than an
-             independent random turn per step — at 6 segments with a ±0.28
-             rad kick each, floor cords came out as neon lightning bolts
-             scribbled on the ground. Width is chosen once and tapers
-             monotonically; jittering it per point made them flicker in
-             thickness along their length. */
-          const segs=12+Math.floor(srand()*6);
-          const W0=rand(0.045,0.075);
-          if(onWall){
-            const uX=(fdy!==0)?1:0, uZ=(fdx!==0)?1:0;    // wall-parallel axis
-            let drift=(srand()<0.5?-1:1)*rand(0.10,0.30);
-            let u=rand(-0.4,0.4), yy=hh+rand(-0.3,0.2);
-            for(let i=0;i<=segs;i++){
-              const wx2=ax+uX*u, wz2=az+uZ*u;
-              const fyW=floorYAt(wx2,wz2);
-              const wy=Math.max(fyW+0.05, yy);
-              const F=wallField(wx2,wy,wz2);
-              pts.push({x:wx2+F.x-fdx*0.03, y:wy, z:wz2+F.z-fdy*0.03,
-                        nx:-fdx, ny:0, nz:-fdy,
-                        w:W0*(1-i/segs*0.72)});
-              u+=drift*rand(0.6,1.4)*0.55; drift+=(srand()-0.5)*0.07; drift*=0.9;
-              yy-=rand(0.25,0.6)*(hh-0.2)/segs;
-            }
-          } else {
-            let aa=Math.random()*Math.PI*2, rr=0.15, turn=0;
-            for(let i=0;i<=segs;i++){
-              const mx=ax+Math.cos(aa)*rr, mz=az+Math.sin(aa)*rr;
-              pts.push({x:mx, y:floorYAt(mx,mz)+0.03, z:mz,
-                        nx:0, ny:1, nz:0,
-                        w:W0*(1-i/segs*0.72)});
-              rr+=rand(0.10,0.18);
-              turn=turn*0.78+(srand()-0.5)*0.16; aa+=turn;   // a wander, not a zigzag
-            }
-          }
-          parts.push(new THREE.Mesh(cordGeo(pts)));
+        if(!anchors.length) anchors.push(onWall? {u:0,y:hh} : {x:ax,z:az});
+        /* two or three SYSTEMS, each off a different mushroom — one per
+           body would carpet the cell, and a colony's cords come off the
+           big ones. Trunks are heavier than the old single cords were,
+           because a trunk here is the thing that all the forks come out
+           of; the tips end up finer than anything the old pass drew. */
+        const pick=[];
+        const want=Math.min(anchors.length, 2+Math.floor(srand()*2));
+        while(pick.length<want){
+          const a=anchors[Math.floor(srand()*anchors.length)];
+          if(!pick.includes(a)) pick.push(a);
         }
+        const sys=rhizoSystem({anchors:pick, onWall, fdx, fdy, ax, az,
+                               w0:rand(0.050,0.072), budget:onWall?190:150});
+        for(const pts of sys) parts.push(new THREE.Mesh(cordGeo(pts)));
       }
       g.add(mergeStatic(parts,glowMat));
       for(const m of parts) m.geometry.dispose();

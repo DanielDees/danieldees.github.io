@@ -1361,6 +1361,44 @@ function setPath3(wx,wz){
     s.path=out;
   }
 }
+/* ---- what a NOISE tells it ------------------------------------------
+   THE GAINS MULTIPLY, AND FIVE OF THEM MULTIPLY TO TELEPATHY. Each one is
+   defensible on its own — a sprint is louder than a walk, scree roars, a
+   silk-laced nest floor carries a footfall straight to her, a burning
+   clutch has her listening for you — and the code multiplied all five
+   together. Measured in a built cave: standing on a nest floor and simply
+   WALKING put the strong (sprint-at-you) radius at 22.4m and the mild one
+   at 33.7m, and one clutch alight took those to 35.9m and 53.8m. The cave
+   is 188m across, 22% of its walkable cells are silk — and they are the
+   22% the level REQUIRES you to stand on, four times, to win. So from a
+   third of the map away, through solid rock, with no line of sight and no
+   hatchling on your shoulder, she knew where you were and came. That is
+   the "it just knows" the level shipped with.
+   The product is CAPPED. One number, and it is the loudest the cave is
+   ever allowed to be: 17.3m sprinting to you, 26.0m walking. Every plain
+   case is well under it and unchanged (stone 9.0/13.5, scree 15.0/22.5) —
+   the cap only bites where the stack was compounding.
+
+   And what hearing gives you is a PLACE, NOT A PIN. Even inside the
+   radius the old code copied STATE.pos exactly, so she did not walk
+   toward the noise, she walked onto your head — which is the other half
+   of what reads as telepathy. `heardSpot` scatters the mark by an error
+   that grows with range, held steady for a second or so at a time so it
+   drifts with you rather than jittering per frame. She arrives NEAR you
+   and starts sniffing, which is what `investigate` was always for. The
+   two channels that legitimately have you pinned keep the pin: sight
+   (`chase`), and a child of hers screaming from your shoulder. */
+const GAIN_CAP=1.7;
+function heardSpot(s,d){
+  if(s.hearT<=0){
+    s.hearT=rand(0.9,1.6);
+    s.hearA=Math.random()*Math.PI*2;
+    s.hearF=Math.random();
+  }
+  const err=clamp(d*0.16,0,3.0)*s.hearF;
+  return new THREE.Vector3(STATE.pos.x+Math.cos(s.hearA)*err, 0,
+                           STATE.pos.z+Math.sin(s.hearA)*err);
+}
 function caveCanSee(){
   if(inSqueeze()) return false;                    // the crawl hides you whole
   const d=spider.pos.distanceTo(STATE.pos);
@@ -1438,6 +1476,7 @@ export function updateSpiderCave(dt){
   const frenzy=STATE.frenzyT>0;
   const allBurned=STATE.clutchesLit>=4;
   s.repath-=dt; s.mildCD-=dt; s.screechCD-=dt; s.scratchCD-=dt; s.sniffCD-=dt;
+  s.hearT=(s.hearT||0)-dt;
 
   /* sniff fits (same voice as upstairs) */
   if(s.sniffsLeft>0){
@@ -1468,7 +1507,7 @@ export function updateSpiderCave(dt){
   } else if(STATE.cranking){
     /* the ratchet grind carries clean through stone */
     if(d<18){
-      s.lastKnown=STATE.pos.clone();
+      s.lastKnown=heardSpot(s,d);
       if(s.state!=="chase"&&s.state!=="frenzy"){ s.state="seek"; s.seekRun=d<10; s.repath=Math.min(s.repath,0.5); }
     }
   } else if(STATE.moving&&!STATE.crouch){
@@ -1477,17 +1516,17 @@ export function updateSpiderCave(dt){
     const silk=silkGainAt(STATE.pos.x,STATE.pos.z);
     const dull=silk>1? 1:0.8;                     // open cave: duller than the library
     const sense=frenzy? 1.6 : allBurned? 1.25 : 1;
-    const strongR=10.2*moveGain*surfGain*silk*dull*sense;
-    const mildR=15.3*moveGain*surfGain*silk*dull*sense;
+    const gain=Math.min(moveGain*surfGain*silk*dull*sense, GAIN_CAP);
+    const strongR=10.2*gain, mildR=15.3*gain;
     if(d<strongR){
-      s.lastKnown=STATE.pos.clone();
+      s.lastKnown=heardSpot(s,d);
       if(s.state!=="chase"&&s.state!=="frenzy"){
         if(s.state!=="seek"||!s.seekRun) s.repath=0;
         s.state="seek"; s.seekRun=true;
       }
     } else if(d<mildR&&s.mildCD<=0&&(s.state==="tend"||s.state==="tending"||s.state==="rampage")){
       s.mildCD=2;
-      s.lastKnown=STATE.pos.clone();
+      s.lastKnown=heardSpot(s,d);
       s.state="seek"; s.seekRun=false; s.repath=0;
     }
   }
@@ -1498,7 +1537,7 @@ export function updateSpiderCave(dt){
     if(s.glowT>5&&s.glowCD<=0&&d<40&&losCells3(s.pos.x,s.pos.z,STATE.pos.x,STATE.pos.z)
        &&s.state!=="chase"&&s.state!=="frenzy"){
       s.glowCD=3;
-      s.lastKnown=STATE.pos.clone();
+      s.lastKnown=heardSpot(s,d);          // a glow at range is a bearing, not a pin
       s.state="seek"; s.seekRun=d<16; s.repath=0;
     }
   } else s.glowT=0;
@@ -1781,7 +1820,7 @@ export function resetSpiderCave(farFromX,farFromZ,minDist=30){
   s.lastKnown=null; s.target=null; s.mildCD=0; s.screechCD=0; s.stepAcc=0;
   s.sniffsLeft=0; s.scratchCD=0; s.sniffCD=0; s.stuckT=0;
   s.roomLast=null; s.roomN=0; s.roamTgt=null; s.roamT=0;
-  s.glowT=0; s.glowCD=0; s.burnSeen=CAVE.lastBurn? CAVE.lastBurn.at : null;
+  s.glowT=0; s.glowCD=0; s.hearT=0; s.burnSeen=CAVE.lastBurn? CAVE.lastBurn.at : null;
   s.huntT=rand(8,14);
   if(s.mesh){
     s.mesh.position.set(p.x,floorYAt(p.x,p.z),p.z); s.mesh.quaternion.identity();
