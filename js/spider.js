@@ -1186,7 +1186,11 @@ export function updateSpider(dt){
      the red press of it is kept faint (−70%): a tint, not a blindfold */
   const prox=clamp(1-d/20,0,1);
   ui.dread.style.opacity = (s.state==="chase"||s.state==="stalk")? (0.09+prox*0.18):prox*0.135;
-  if(AU.ctx&&AU.spiderBedGain){
+  /* the bed is silent while dead for the same reason level 0's is: the catch
+     above calls die(), which ramps it out, and a write later in the SAME
+     frame is the last one it ever gets — main.js has stopped the world by
+     the next one. See the note in monster.js's continuous-audio block. */
+  if(AU.ctx&&AU.spiderBedGain&&!STATE.dead){
     const t=AU.ctx.currentTime;
     AU.spiderBedGain.gain.setTargetAtTime(clamp(1-d/16,0,1)*0.16*(0.4+sp01*0.6), t, 0.2);
     if(AU.spiderBedPan) AU.spiderBedPan.pan.setTargetAtTime(panTo(s.pos.x,s.pos.z), t, 0.15);

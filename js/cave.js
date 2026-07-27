@@ -2909,6 +2909,14 @@ export function updateCave(dt){
   const tN=performance.now()/1000;
   /* falling into the dark under the bridge is its own ending */
   if(STATE.y<-9&&!STATE.dead) die("fall");
+  /* and once you are dead this function must not run another line. die()
+     calls hushCave() to close the fires and the stream — but main.js still
+     has updateCave queued behind updateSpiderCave in the very frame she
+     catches you, and the fall death kills two lines above this one. Either
+     way the rest of the pass re-raised every gain hushCave had just let go,
+     and since the world stops updating the moment STATE.dead is set, those
+     writes were final: the loops droned on under the death card. */
+  if(STATE.dead) return;
   /* rockfall shake, wearing off */
   if(CAVE.shakeT>0){
     CAVE.shakeT-=dt;
