@@ -7,6 +7,37 @@ import { texWall, texCarpet, texCarpetPile, texStains, texCeil, texCeilBump, tex
 import { $ } from "./utils.js";
 import { readSettings } from "./settings.js";
 
+/* every lit pixel walked all thirty pool lights, though each reaches 11m and
+   the unbound ones are dark. Past its distance a light's falloff is exactly
+   zero and a black one adds nothing, so skipping them changes no pixel and
+   roughly halves the lighting cost. three unrolls this loop, which cannot
+   branch round a light, so it is kept a loop (nothing here casts shadows,
+   the only other thing the block did), and three's own irradiance function
+   is written out in it: called inside a real loop, its early return makes
+   the D3D compiler warn on every shader. */
+{
+  const c=THREE.ShaderChunk.lights_fragment_begin;
+  const a=c.indexOf("\t#pragma unroll_loop_start\n\tfor ( int i = 0; i < NUM_POINT_LIGHTS; i ++ ) {");
+  const b=a<0? -1 : c.indexOf("\t#pragma unroll_loop_end",a);
+  if(b>0) THREE.ShaderChunk.lights_fragment_begin=c.slice(0,a)+
+`	for ( int i = 0; i < NUM_POINT_LIGHTS; i ++ ) {
+		pointLight = pointLights[ i ];
+		vec3 lv = pointLight.position - geometry.position;
+		float ld = length( lv );
+		if ( ( pointLight.distance <= 0.0 || ld <= pointLight.distance ) && pointLight.color != vec3( 0.0 ) ) {
+		#if defined( PHYSICALLY_CORRECT_LIGHTS )
+			getPointDirectLightIrradiance( pointLight, geometry, directLight );
+		#else
+			directLight.direction = normalize( lv );
+			directLight.color = pointLight.color * ( ( pointLight.distance > 0.0 && pointLight.decay > 0.0 )
+				? pow( saturate( -ld / pointLight.distance + 1.0 ), pointLight.decay ) : 1.0 );
+			directLight.visible = ( directLight.color != vec3( 0.0 ) );
+		#endif
+			RE_Direct( directLight, geometry, material, reflectedLight );
+		}
+	}
+`+c.slice(b+"\t#pragma unroll_loop_end".length);
+}
 export const FOG_COLOR = 0x050402;       // ~98% black, a whisper of yellow: full darkness, never backlit
 export const scene = new THREE.Scene();
 /* linear fog: explicit start/end so the transition band is tunable.
@@ -84,11 +115,15 @@ const ANISO=Math.min(_lowQ?4:8, renderer.capabilities.getMaxAnisotropy());
 for(const t of[texWall,texCarpetPile,texCeil,texCeilBump,texCeilStains,texCeilFoam,texMoldGrain]) t.anisotropy=ANISO;
 const _MAT_MAPS=["map","alphaMap","aoMap","bumpMap","displacementMap","emissiveMap",
   "envMap","lightMap","metalnessMap","normalMap","roughnessMap","specularMap","gradientMap"];
+/* the material itself is NOT disposed. Disposing releases its shader
+   program, three destroys a program with its last material, and so every
+   rebuild recompiled every shader — 35–60ms apiece, one after another, which
+   was most of a respawn. Left to the garbage collector, the program stays
+   linked and the rebuilt level's materials pick it straight back up. */
 function disposeMaterial(m,done){
   if(!m||SHARED.has(m)||done.has(m)) return;
   done.add(m);
   for(const k of _MAT_MAPS){ const t=m[k]; if(t&&!SHARED.has(t)&&!done.has(t)){ done.add(t); t.dispose(); } }
-  m.dispose();
 }
 function disposeNode(o,done){
   const g=o.geometry;
@@ -453,12 +488,6 @@ export function buildLevel(){
   texCeil.repeat.set(W,H); texCeilBump.repeat.set(W,H);
   const floor=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),carpetMaterial());
   floor.rotation.x=-Math.PI/2; scene.add(floor);
-  /* stain overlay tiles at a non-integer rate so it never aligns with the carpet */
-  texStains.repeat.set(5.13,4.71);
-  const stains=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),
-    new THREE.MeshPhongMaterial({map:texStains, transparent:true, depthWrite:false,
-      specular:0x000000, shininess:1}));
-  stains.rotation.x=-Math.PI/2; stains.position.y=0.015; scene.add(stains);
   /* ---- where the troffers go ----
      Decided BEFORE the ceiling is built, because each one needs an opening cut
      for it. ~30% of fixture slots stay dark. A truly independent per-slot roll
@@ -486,11 +515,6 @@ export function buildLevel(){
      the carpet stains) so they never line up with the tile grid. It takes the
      same openings — a full sheet 12mm under the ceiling would hang across
      every fixture's mouth as a translucent film. */
-  texCeilStains.repeat.set(4.07,3.77);
-  const ceilStains=new THREE.Mesh(ceilingGeometry(SZ,openings),
-    new THREE.MeshPhongMaterial({map:texCeilStains, transparent:true, depthWrite:false,
-      specular:0x000000, shininess:1}));
-  ceilStains.position.y=WALL_H-0.012; scene.add(ceilStains);
 
   /* ---- slime-mold at the baseboards ----
      Each colony is a UNIQUE procedural growth on a paired wall+floor
@@ -504,14 +528,6 @@ export function buildLevel(){
      edge: it then continues onto the co-planar neighbour wall, or wraps
      around a convex/concave corner — the texture is sliced at the fold so
      it reads as one organism bending around the geometry. */
-  /* slime is wet: a tight dull glint where a lamp catches it, on every
-     colony crown the grain raises */
-  const moldMat=t=>{
-    const m=new THREE.MeshPhongMaterial({map:t, bumpMap:texMoldGrain, bumpScale:0.004,
-      transparent:true, depthWrite:false, specular:0x1c2216, shininess:38});
-    m.onBeforeCompile=moldCompile;
-    return m;
-  };
   const E=CELL/2;
   const moldFaces=[];
   for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
@@ -617,8 +633,6 @@ export function buildLevel(){
      Reuses the shuffled face lottery; the 3×3 spacing rule keeps leaks
      scattered rather than clustered. Mold and drips may share a wall —
      one lives at the baseboard, the other at the ceiling. */
-  const dripMat=t=>new THREE.MeshPhongMaterial({map:t,
-    transparent:true, depthWrite:false, specular:0x000000, shininess:1});
   const dripCells=new Set();
   let dQuota=Math.max(40,Math.round(moldFaces.length*0.20));   // 4× the original count
   for(const fc of moldFaces){
@@ -668,7 +682,7 @@ export function buildLevel(){
     lights.push(makeLightRecord(f.glowMat,f.tubeMat,x,y,p,{warm,louvMat:f.louvMat}));
     spill.push({p,mat:f.tubeMat,warm});
   }
-  scene.add(spillMesh(spill));
+  const sp=spillMesh(spill); sp.renderOrder=LAYER_SPILL; scene.add(sp);
 }
 /* ---- the carpet ----
    The original map, and over it the PILE (texCarpetPile) at its own 0.5m
@@ -679,6 +693,13 @@ export function buildLevel(){
    the mip chain has averaged it out. Matte, deliberately: a sheen on carpet
    is what turns it into sealed concrete. */
 const PILE_REP=16;                           // per carpet tile (8m) → 0.5m of pile
+/* the water stains, floor and ceiling, repeat at non-integer rates across the
+   level so they never line up with the carpet's tile or the ceiling grid. They
+   were transparent sheets laid over both surfaces, which shaded every floor and
+   ceiling pixel twice — about half the frame once the lighting was trimmed —
+   so each is blended into its surface's own shader instead: the same mix, and
+   under a stain the ceiling's faint sheen is covered as the sheet covered it. */
+const STAIN_REP=[5.13,4.71], CSTAIN_REP=[4.07,3.77];
 function carpetMaterial(){
   const m=new THREE.MeshPhongMaterial({map:texCarpet, bumpMap:texCarpetPile, bumpScale:0.0035,
     specular:0x000000, shininess:1});
@@ -686,14 +707,17 @@ function carpetMaterial(){
     sh.uniforms.uPile={value:texCarpetPile};
     sh.uniforms.uPileRep={value:PILE_REP};
     sh.uniforms.uPileMean={value:texCarpetPile.mean};
+    sh.uniforms.uStains={value:texStains};
+    sh.uniforms.uStainRep={value:new THREE.Vector2(STAIN_REP[0]/(W/2),STAIN_REP[1]/(H/2))};
     sh.vertexShader=sh.vertexShader
       .replace("#include <common>","#include <common>\nuniform float uPileRep;\nvarying vec2 vPileUv;")
       .replace("#include <uv_vertex>","#include <uv_vertex>\n  vPileUv=vUv*uPileRep;");
     sh.fragmentShader=sh.fragmentShader
-      .replace("#include <common>","#include <common>\nuniform sampler2D uPile;\nuniform float uPileMean;\nvarying vec2 vPileUv;")
+      .replace("#include <common>","#include <common>\nuniform sampler2D uPile;\nuniform float uPileMean;\nuniform sampler2D uStains;\nuniform vec2 uStainRep;\nvarying vec2 vPileUv;")
       .replace("#include <bumpmap_pars_fragment>",THREE.ShaderChunk.bumpmap_pars_fragment.replace(/vUv/g,"vPileUv"))
       .replace("#include <map_fragment>",
-        "#include <map_fragment>\n  diffuseColor.rgb*=mix(1.0,texture2D(uPile,vPileUv).r/uPileMean,0.42);");
+        "#include <map_fragment>\n  diffuseColor.rgb*=mix(1.0,texture2D(uPile,vPileUv).r/uPileMean,0.42);\n"+
+        "  { vec4 st=texture2D(uStains,vUv*uStainRep); diffuseColor.rgb=mix(diffuseColor.rgb,st.rgb,st.a); }");
   };
   return m;
 }
@@ -716,12 +740,19 @@ function ceilingMaterial(){
   m.onBeforeCompile=sh=>{
     sh.uniforms.uFoam={value:texCeilFoam};
     sh.uniforms.uFoamMean={value:texCeilFoam.mean};
+    sh.uniforms.uStains={value:texCeilStains};
+    sh.uniforms.uStainRep={value:new THREE.Vector2(CSTAIN_REP[0]/W,CSTAIN_REP[1]/H)};
     sh.fragmentShader=sh.fragmentShader
       .replace("#include <common>",`#include <common>
 uniform sampler2D uFoam;
 uniform float uFoamMean;
+uniform sampler2D uStains;
+uniform vec2 uStainRep;
 vec2 foamUv;
-float foamK;`)
+float foamK;
+float stainA;`)
+      .replace("#include <lights_fragment_end>",
+        "#include <lights_fragment_end>\n  reflectedLight.directSpecular*=1.0-stainA;")
       .replace("#include <bumpmap_pars_fragment>",bumpChunk(`
   vec2 dSTdx=dFdx(vUv), dSTdy=dFdy(vUv);
   float Hll=bumpScale*texture2D(bumpMap,vUv).x;
@@ -740,9 +771,74 @@ float foamK;`)
     foamK=smoothstep(${FOAM_REV.toFixed(3)},${(FOAM_REV+0.01).toFixed(3)},de);
   }
   #include <map_fragment>
-  diffuseColor.rgb*=mix(1.0,texture2D(uFoam,foamUv).r/uFoamMean,0.3*foamK);`);
+  diffuseColor.rgb*=mix(1.0,texture2D(uFoam,foamUv).r/uFoamMean,0.3*foamK);
+  { vec4 cs=texture2D(uStains,vUv*uStainRep); stainA=cs.a; diffuseColor.rgb=mix(diffuseColor.rgb,cs.rgb,stainA); }`);
   };
   return m;
+}
+/* slime is wet: a tight dull glint where a lamp catches it, on every colony
+   crown the grain raises */
+function moldMat(t){
+  const m=new THREE.MeshPhongMaterial({map:t, bumpMap:texMoldGrain, bumpScale:0.004,
+    transparent:true, depthWrite:false, specular:0x1c2216, shininess:38});
+  m.onBeforeCompile=moldCompile;
+  return m;
+}
+const dripMat=t=>new THREE.MeshPhongMaterial({map:t,
+  transparent:true, depthWrite:false, specular:0x000000, shininess:1});
+/* transparent layers that lie ON a surface draw before everything that
+   floats in front of one: the ceiling spill, then the decals, then (at 0,
+   depth-sorted) the entity's aura, glass and the rest. The merged decals and
+   the spill both sit at the origin, so a depth sort alone would put them in
+   front of or behind the aura depending on where you stood. */
+const LAYER_SPILL=-2, LAYER_DECAL=-1;
+/* ---- the decals, packed ----
+   Every colony and leak grows on its own canvas, and drawn that way each was
+   its own material: ~300 draws a frame, each re-uploading the whole 30-light
+   uniform block — half the frame, CPU and GPU — and ~300 texture uploads at
+   build. Once the elevator has carved its wall they are packed into shared
+   atlas pages, each canvas ringed by copies of its own edge pixels (which is
+   what ClampToEdge gave it on its own), and merged into one mesh a page. */
+const ATLAS=2048, APAD=2;
+export function mergeDecals(){
+  const kinds={mold:[], drip:[]};
+  for(const m of wallDecals) kinds[m.material.onBeforeCompile===moldCompile? "mold":"drip"].push(m);
+  for(const[kind,list]of Object.entries(kinds)){
+    list.sort((a,b)=>b.material.map.image.height-a.material.map.image.height);
+    /* lay out first, so each page is only as tall as what went on it */
+    const pages=[]; let pg=null, x=0, y=0, rowH=0;
+    const newPage=()=>{ pg={items:[], h:0}; pages.push(pg); x=0; y=0; rowH=0; };
+    newPage();
+    for(const m of list){
+      const src=m.material.map.image, w=src.width, h=src.height;
+      if(x+w+2*APAD>ATLAS){ x=0; y+=rowH; rowH=0; }
+      if(y+h+2*APAD>ATLAS) newPage();
+      pg.items.push({m,src,w,h,X:x+APAD,Y:y+APAD});
+      x+=w+2*APAD; rowH=Math.max(rowH,h+2*APAD); pg.h=Math.max(pg.h,y+rowH);
+    }
+    for(const p of pages){
+      if(!p.items.length) continue;
+      const c=document.createElement("canvas"); c.width=ATLAS; c.height=p.h;
+      const g=c.getContext("2d"); g.imageSmoothingEnabled=false;
+      for(const{m,src,w,h,X,Y}of p.items){
+        g.drawImage(src,X,Y);
+        g.drawImage(src,0,0,1,h,X-APAD,Y,APAD,h);   g.drawImage(src,w-1,0,1,h,X+w,Y,APAD,h);
+        g.drawImage(src,0,0,w,1,X,Y-APAD,w,APAD);   g.drawImage(src,0,h-1,w,1,X,Y+h,w,APAD);
+        g.drawImage(src,0,0,1,1,X-APAD,Y-APAD,APAD,APAD);   g.drawImage(src,w-1,0,1,1,X+w,Y-APAD,APAD,APAD);
+        g.drawImage(src,0,h-1,1,1,X-APAD,Y+h,APAD,APAD);    g.drawImage(src,w-1,h-1,1,1,X+w,Y+h,APAD,APAD);
+        /* v runs up the canvas (flipY), in the decal and in the page alike */
+        const uv=m.geometry.attributes.uv;
+        for(let i=0;i<uv.count;i++) uv.setXY(i,(X+uv.getX(i)*w)/ATLAS, 1-(Y+(1-uv.getY(i))*h)/p.h);
+      }
+      const t=new THREE.CanvasTexture(c);
+      t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearFilter; t.generateMipmaps=false;
+      const merged=mergeStatic(p.items.map(it=>it.m), kind==="mold"? moldMat(t):dripMat(t));
+      merged.renderOrder=LAYER_DECAL;
+      scene.add(merged);
+    }
+    for(const m of list){ scene.remove(m); m.geometry.dispose(); m.material.map.dispose(); m.material.dispose(); }
+  }
+  wallDecals.length=0;
 }
 /* ---- the mold's grain ----
    Coverage (the colony canvas's alpha) plus texMoldGrain's R must clear 1

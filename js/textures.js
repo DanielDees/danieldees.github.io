@@ -6,6 +6,27 @@ export function makeCanvas(w,h,fn){const c=document.createElement("canvas");c.wi
   const t=new THREE.CanvasTexture(c);t.wrapS=t.wrapT=THREE.RepeatWrapping;return t;}
 
 
+/* signed per-pixel grain without reading the canvas back: the positive half
+   is ADDED (lighter) and the negative half taken away (difference, exact while
+   every pixel is brighter than the grain is deep). Reading a 2048² GPU canvas
+   back to walk it pixel by pixel was nine-tenths of the wallpaper's startup
+   cost. The grain is one 512² block of white noise laid edge to edge — noise
+   has no feature to repeat. `amp` is the full spread per channel. */
+function addGrain(g,w,h,amp){
+  const T=Math.min(512,w), mk=()=>{ const c=document.createElement("canvas"); c.width=c.height=T; return c; };
+  const pc=mk(), nc=mk(), pi=pc.getContext("2d").createImageData(T,T), ni=nc.getContext("2d").createImageData(T,T);
+  const P=pi.data, N=ni.data;
+  for(let i=0;i<P.length;i+=4){
+    const n=Math.random()-0.5;
+    for(let c=0;c<3;c++){ const v=Math.round(n*amp[c]); P[i+c]=v>0?v:0; N[i+c]=v<0?-v:0; }
+    P[i+3]=N[i+3]=255;
+  }
+  pc.getContext("2d").putImageData(pi,0,0); nc.getContext("2d").putImageData(ni,0,0);
+  g.save();
+  g.globalCompositeOperation="lighter";    g.fillStyle=g.createPattern(pc,"repeat"); g.fillRect(0,0,w,h);
+  g.globalCompositeOperation="difference"; g.fillStyle=g.createPattern(nc,"repeat"); g.fillRect(0,0,w,h);
+  g.restore();
+}
 /* ================= LEVEL 0 — the yellow backrooms =================
    These three maps were rebuilt once before with drops, seams, batch tones,
    berber flecks, tide rings and printed grime, and every one of those came
@@ -108,10 +129,8 @@ export const texWall = makeCanvas(LOW_TEX?1024:2048, LOW_TEX?1024:2048, (g,w,h)=
   const dust=g.createLinearGradient(0,WA,0,WA+26*K);
   dust.addColorStop(0,"rgba(62,52,24,0.22)");dust.addColorStop(1,"rgba(62,52,24,0)");
   g.fillStyle=dust;g.fillRect(0,WA,w,26*K);
-  /* the paper's tooth: a per-pixel pass, finer than any drawn mark */
-  const img=g.getImageData(0,0,w,h), d=img.data;
-  for(let i=0;i<d.length;i+=4){ const n=(Math.random()-0.5)*9; d[i]+=n; d[i+1]+=n; d[i+2]+=n*0.6; }
-  g.putImageData(img,0,0);
+  /* the paper's tooth: a per-pixel grain, finer than any drawn mark */
+  addGrain(g,w,h,[9,9,5.4]);
 });
 /* ---- the carpet ----
    Also back to the original — flat mustard, a fine speckle, eleven soft
@@ -376,28 +395,66 @@ export const texCeilBump = makeCanvas(1024,1024,(g,w,h)=>{
   });
   ceilJoints(g,w,(x,y)=>{ g.fillStyle="rgba(255,255,255,0.9)";g.fillRect(x-CAP/2-1,y-CAP/2-1,CAP+2,CAP+2); });
 });
+/* a soft round dab — alpha falling linearly to the rim, which is exactly what
+   a radial gradient to transparent gives — laid straight into a float field
+   and wrapped at its edges. Tens of thousands of them through canvas
+   gradients cost a third of a second at startup. `max` lays a cone instead
+   (the lighten blend). */
+function dab(F,w,h,x,y,r,v,a,max){
+  const ir=1/r, x0=Math.floor(x-r), x1=Math.ceil(x+r), y0=Math.floor(y-r), y1=Math.ceil(y+r);
+  for(let py=y0;py<y1;py++){
+    const dy=py+0.5-y, row=(((py%h)+h)%h)*w;
+    for(let px=x0;px<x1;px++){
+      const dx=px+0.5-x, d=Math.sqrt(dx*dx+dy*dy);
+      if(d>=r) continue;
+      const k=row+(((px%w)+w)%w), f=1-d*ir;
+      if(max){ const q=v*f; if(q>F[k]) F[k]=q; }
+      else F[k]+=(v-F[k])*a*f;
+    }
+  }
+}
+/* one canvas stroke() of round-capped polylines, into the field: coverage is
+   the UNION of the segments (a path does not darken where it crosses itself),
+   anti-aliased over a pixel, and the colour is laid at `al` times that */
+const _cov=[], _hit=[];
+function strokeField(F,w,h,lines,lw,v,al){
+  const n=w*h, C=_cov[n]||(_cov[n]=new Float32Array(n)), H=_hit[n]||(_hit[n]=new Int32Array(n));
+  let nh=0; const r=lw/2;
+  for(const L of lines)for(let k=0;k+3<L.length;k+=2){
+    const ax=L[k], ay=L[k+1], bx=L[k+2], by=L[k+3], ex=bx-ax, ey=by-ay, ee=ex*ex+ey*ey||1e-9;
+    const x0=Math.floor(Math.min(ax,bx)-r-1), x1=Math.ceil(Math.max(ax,bx)+r+1);
+    const y0=Math.floor(Math.min(ay,by)-r-1), y1=Math.ceil(Math.max(ay,by)+r+1);
+    for(let py=y0;py<y1;py++){
+      const cy=py+0.5, row=(((py%h)+h)%h)*w;
+      for(let px=x0;px<x1;px++){
+        const cx=px+0.5, t=Math.max(0,Math.min(1,((cx-ax)*ex+(cy-ay)*ey)/ee));
+        const dx=cx-ax-ex*t, dy=cy-ay-ey*t, c=r+0.5-Math.sqrt(dx*dx+dy*dy);
+        if(c<=0) continue;
+        const q=row+(((px%w)+w)%w), cv=c>1?1:c;
+        if(C[q]===0) H[nh++]=q;
+        if(cv>C[q]) C[q]=cv;
+      }
+    }
+  }
+  for(let i=0;i<nh;i++){ const q=H[i]; F[q]+=(v-F[q])*al*C[q]; C[q]=0; }
+}
+const fieldToCanvas=(g,F,w,h)=>{
+  const img=g.createImageData(w,h), d=img.data;
+  for(let i=0,j=0;i<F.length;i++,j+=4){ d[j]=d[j+1]=d[j+2]=F[i]; d[j+3]=255; }
+  g.putImageData(img,0,0);
+};
 /* ---- the tile's FOAM ----
    What a mineral-fibre tile is at arm's length, which 256 px/m cannot hold:
    an orange-peel mat full of pits and short WORM fissures running every
    way. One 1m tile of it at 1 px/mm, laid by the ceiling shader (scene.js)
    over each tile at its own quarter-turn and offset, so no two neighbours
    match — the tee hides the cut. Grey height, used as both tone and bump.
-   Drawn in 1024 units; features within reach of an edge are drawn wrapped. */
+   Laid out in 1024 units into a float field (`dab`, `strokeField`), which
+   wraps at its edges; the canvas only receives the result. */
+let foamMean=0.55;
 export const texCeilFoam = makeCanvas(LOW_TEX?512:1024, LOW_TEX?512:1024, (g,w,h)=>{
-  const U=1024;
-  g.fillStyle="#9c9c9c";g.fillRect(0,0,w,h);
-  g.save(); g.scale(w/U,h/U);
-  const wrap=(x,y,r,fn)=>{
-    for(const ox of[-U,0,U])for(const oy of[-U,0,U]){
-      const X=x+ox, Y=y+oy;
-      if(X>-r&&X<U+r&&Y>-r&&Y<U+r) fn(X,Y);
-    }
-  };
-  const soft=(x,y,r,v,a)=>wrap(x,y,r,(X,Y)=>{
-    const gr=g.createRadialGradient(X,Y,0,X,Y,r);
-    gr.addColorStop(0,`rgba(${v},${v},${v},${a})`);gr.addColorStop(1,`rgba(${v},${v},${v},0)`);
-    g.fillStyle=gr;g.beginPath();g.arc(X,Y,r,0,7);g.fill();
-  });
+  const U=1024, s=w/U, F=new Float32Array(w*h).fill(156);
+  const soft=(x,y,r,v,a)=>dab(F,w,h,x*s,y*s,r*s,v,a);
   /* the mat: lumpy at the centimetre scale before anything is cut into it */
   for(let i=0;i<2400;i++){
     const up=Math.random()<0.5;
@@ -408,26 +465,13 @@ export const texCeilFoam = makeCanvas(LOW_TEX?512:1024, LOW_TEX?512:1024, (g,w,h
   const worms=[];
   for(let i=0;i<2800;i++){
     let x=Math.random()*U, y=Math.random()*U, a=Math.random()*Math.PI*2;
-    const n=3+(Math.random()*3|0), l=(6+Math.random()*22)/n, pts=[x,y];
-    for(let s=0;s<n;s++){ a+=(Math.random()-0.5)*1.2; x+=Math.cos(a)*l; y+=Math.sin(a)*l; pts.push(x,y); }
+    const n=3+(Math.random()*3|0), l=(6+Math.random()*22)/n, pts=[x*s,y*s];
+    for(let k=0;k<n;k++){ a+=(Math.random()-0.5)*1.2; x+=Math.cos(a)*l; y+=Math.sin(a)*l; pts.push(x*s,y*s); }
     worms.push({pts, wd:1.0+Math.random()*1.5});
   }
-  g.lineCap="round"; g.lineJoin="round";
-  for(const[mul,v,al]of[[2.4,118,0.22],[1,54,0.62]]){
-    for(let b=0;b<3;b++){
-      g.strokeStyle=`rgba(${v},${v},${v},${al})`;
-      g.lineWidth=(1.0+b*0.6)*mul;
-      g.beginPath();
-      for(const{pts,wd}of worms){
-        if(Math.min(2,((wd-1.0)/0.5)|0)!==b) continue;
-        for(const ox of[-U,0,U])for(const oy of[-U,0,U]){
-          if(pts[0]+ox<-40||pts[0]+ox>U+40||pts[1]+oy<-40||pts[1]+oy>U+40) continue;
-          for(let k=0;k<pts.length;k+=2) k? g.lineTo(pts[k]+ox,pts[k+1]+oy) : g.moveTo(pts[k]+ox,pts[k+1]+oy);
-        }
-      }
-      g.stroke();
-    }
-  }
+  for(const[mul,v,al]of[[2.4,118,0.22],[1,54,0.62]])
+    for(let b=0;b<3;b++)
+      strokeField(F,w,h,worms.filter(q=>Math.min(2,((q.wd-1.0)/0.5)|0)===b).map(q=>q.pts),(1.0+b*0.6)*mul*s,v,al);
   /* the pits: a soft dished rim, then the hole */
   for(let i=0;i<11000;i++){
     const r=0.6+Math.pow(Math.random(),2.2)*1.9;
@@ -436,22 +480,19 @@ export const texCeilFoam = makeCanvas(LOW_TEX?512:1024, LOW_TEX?512:1024, (g,w,h
   /* the pinholes: fewer, deeper */
   for(let i=0;i<700;i++) soft(Math.random()*U,Math.random()*U,2.6+Math.random()*2.2,24,0.85);
   /* loose wool on the face catching the light */
-  g.strokeStyle="rgba(214,214,214,0.28)"; g.lineWidth=0.7; g.beginPath();
+  const wool=[];
   for(let i=0;i<3200;i++){
     const x=Math.random()*U, y=Math.random()*U, a=Math.random()*Math.PI, l=1.5+Math.random()*3.5;
-    g.moveTo(x,y); g.lineTo(x+Math.cos(a)*l,y+Math.sin(a)*l);
+    wool.push([x*s,y*s,(x+Math.cos(a)*l)*s,(y+Math.sin(a)*l)*s]);
   }
-  g.stroke();
-  g.restore();
-  const img=g.getImageData(0,0,w,h), d=img.data;
-  for(let i=0;i<d.length;i+=4){ const n=(Math.random()-0.5)*12; d[i]+=n; d[i+1]=d[i]; d[i+2]=d[i]; }
-  g.putImageData(img,0,0);
+  strokeField(F,w,h,wool,0.7*s,214,0.28);
+  { let t=0; for(let i=0;i<F.length;i++) t+=Math.min(255,Math.max(0,Math.round(F[i]))); foamMean=t/F.length/255; }
+  fieldToCanvas(g,F,w,h);
+  addGrain(g,w,h,[12,12,12]);
 });
-texCeilFoam.mean=(()=>{
-  const c=texCeilFoam.image, d=c.getContext("2d").getImageData(0,0,c.width,c.height).data;
-  let t=0; for(let i=0;i<d.length;i+=4) t+=d[i];
-  return t/(d.length/4)/255;
-})();
+/* the grain is zero-mean, so the field it went onto is the map's mean — no
+   read-back */
+texCeilFoam.mean=foamMean;
 /* ---- the filament: the one asset every electric light in the game shares ----
    Level 0's troffers and THE END's hanging strips run the same tubes, so
    they get the same map. CylinderGeometry's v axis runs end-to-end, so this
@@ -696,20 +737,8 @@ const DECAL_K=1.5;
    grain. One 0.7m tile world-mapped over every decal: the colony shapes stay
    the canvases', and nothing is added per decal. */
 export const texMoldGrain = makeCanvas(LOW_TEX?256:512, LOW_TEX?256:512, (g,w,h)=>{
-  const U=512;
-  g.fillStyle="#000";g.fillRect(0,0,w,h);
-  g.save(); g.scale(w/U,h/U);
-  g.globalCompositeOperation="lighten";
-  const cone=(x,y,r,p)=>{
-    const v=Math.round(p*255);
-    for(const ox of[-U,0,U])for(const oy of[-U,0,U]){
-      const X=x+ox, Y=y+oy;
-      if(X<-r||X>U+r||Y<-r||Y>U+r) continue;
-      const gr=g.createRadialGradient(X,Y,0,X,Y,r);
-      gr.addColorStop(0,`rgb(${v},${v},${v})`);gr.addColorStop(1,"rgb(0,0,0)");
-      g.fillStyle=gr;g.beginPath();g.arc(X,Y,r,0,7);g.fill();
-    }
-  };
+  const U=512, s=w/U, F=new Float32Array(w*h);
+  const cone=(x,y,r,p)=>dab(F,w,h,x*s,y*s,r*s,Math.round(p*255),0,true);
   for(let i=0;i<120;i++) cone(Math.random()*U,Math.random()*U,10+Math.random()*22,0.12+Math.random()*0.16);
   for(let i=0;i<240;i++){
     const x=Math.random()*U, y=Math.random()*U, r=4+Math.random()*4.5;
@@ -721,12 +750,11 @@ export const texMoldGrain = makeCanvas(LOW_TEX?256:512, LOW_TEX?256:512, (g,w,h)
   }
   for(let i=0;i<1300;i++) cone(Math.random()*U,Math.random()*U,2+Math.random()*2.4,0.40+Math.random()*0.55);
   for(let i=0;i<4200;i++) cone(Math.random()*U,Math.random()*U,0.9+Math.random()*1.3,0.30+Math.random()*0.55);
-  g.restore();
-  const img=g.getImageData(0,0,w,h), d=img.data;
-  for(let i=0;i<d.length;i+=4){
-    d[i]=Math.max(d[i],Math.random()*40);
-    d[i+1]=150+(Math.random()-0.5)*150;
-    d[i+2]=d[i];
+  const img=g.createImageData(w,h), d=img.data;
+  for(let i=0,j=0;i<F.length;i++,j+=4){
+    d[j]=Math.max(F[i],Math.random()*40);
+    d[j+1]=150+(Math.random()-0.5)*150;
+    d[j+2]=d[j]; d[j+3]=255;
   }
   g.putImageData(img,0,0);
 });

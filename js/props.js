@@ -3,7 +3,7 @@ import { rand } from "./utils.js";
 import { W, H, CELL, WALL_H as WALL_H0, cellToWorld, randomOpenCell, isWall, losCells } from "./map.js";
 import { makeCanvas, texWall, scaleBoxUV, makeCrackTexture, envMetal, makeSpillTexture, texGalv } from "./textures.js";
 import { STATE } from "./state.js";
-import { scene, renderer, wallMeshes, removeDecalsOnWall, mergeWallMeshes, freezeStaticScene,
+import { scene, renderer, wallMeshes, removeDecalsOnWall, mergeWallMeshes, mergeDecals, freezeStaticScene,
          markShared, mergeStatic } from "./scene.js";
 
 export let interactables=[];    // {kind, mesh, label, taken}
@@ -1438,6 +1438,17 @@ export function makeElevator(p,facing,opts={}){
   const emerg=new THREE.Mesh(new THREE.SphereGeometry(0.05,10,8),emergMat);
   emerg.scale.z=0.75; emerg.position.set(0,OPEN_H-0.24,-DEPTH+0.12); g.add(emerg);
   g.userData.emergMat=emergMat; g.userData.emerg=emerg;
+  /* the ride's red emergency light and the brake sparks' glow live in the
+     scene from the build, dark: made when the ride started they changed the
+     light count and recompiled every shader in view — a one-second freeze on
+     the call button */
+  if(live){
+    const eml=new THREE.PointLight(0xff2515,0,5,2);
+    eml.position.copy(emerg.position); eml.position.z+=0.25; eml.position.y-=0.08;
+    g.add(eml); g.userData.emergLight=eml;
+    const spk=new THREE.PointLight(0xff9540,0,3.5,2);
+    spk.position.set(0,1.3,-0.35); g.add(spk); g.userData.sparkLight=spk;
+  }
   {
     const gd=[];
     const gb=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.14,0.05));
@@ -1683,6 +1694,7 @@ export function placeProps(){
   /* the elevator carve is done — collapse the surviving wall boxes into one
      mesh, then freeze every static object so it stops paying per-frame matrix
      cost (entities are added after this returns) */
+  mergeDecals();
   mergeWallMeshes();
   freezeStaticScene();
 }

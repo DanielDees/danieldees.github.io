@@ -2,7 +2,7 @@
 import { $ } from "./utils.js";
 import { STATE, monster, spider } from "./state.js";
 import { W, H, cellToWorld, farOpenWorldPoint } from "./map.js";
-import { scene, lights, buildLevel, clearLevelScene, setLevelEnvironment } from "./scene.js";
+import { scene, camera, renderer, lights, buildLevel, clearLevelScene, setLevelEnvironment } from "./scene.js";
 import { placeProps, interactables, exitDoor, clearInteractables } from "./props.js";
 import { makeMonster, wakeMonster, escalateMonster, clearMonsterFx } from "./monster.js";
 import { buildLibrary, LIB } from "./library.js";
@@ -15,9 +15,51 @@ import { AU, sfxDeath, startLibraryAmbience, startCaveAmbience } from "./audio.j
 import { ui, toast, renderObjectives, setPaused, lockPointer, setLevelChrome, FLOORS } from "./ui.js";
 import { igniteClutch, hushCave } from "./cave.js";
 
-export function startGame(){
+/* ---- level 0 is made while the start screen is up ----
+   Its build is ~0.2s, but its first frame compiled ~20 shader programs one
+   after another (35–60ms each) and uploaded its textures: DESCEND froze for
+   about two seconds. So it is built behind the start screen and held OFF the
+   scene (the menu draws over an empty one), and its programs and textures are
+   warmed a root at a time between frames. The light count is part of every
+   program, so each root is compiled with dark stand-ins for the level's
+   lights that are not in it. startGame takes whatever is ready. */
+let pre=null;
+export function prewarmLevel0(){
+  if(pre||STATE.playing) return;
   buildLevel(); placeProps();
-  monster.mesh=makeMonster(); scene.add(monster.mesh);
+  const mon=makeMonster();
+  const objs=scene.children.filter(o=>!o.userData.persist);
+  for(const o of objs) scene.remove(o);
+  pre={objs, mon, stop:false};
+  const nLights=o=>{ let n=0; o.traverse(c=>{ if(c.isLight) n++; }); return n; };
+  const total=objs.reduce((n,o)=>n+nLights(o),0);
+  const stand=[]; for(let i=0;i<total;i++) stand.push(new THREE.PointLight(0,0));
+  const queue=[...objs,mon], done=new Set();
+  const warm=o=>{
+    const n=total-nLights(o);
+    for(let i=0;i<n;i++) scene.add(stand[i]);
+    scene.add(o); renderer.compile(scene,camera); scene.remove(o);
+    for(let i=0;i<n;i++) scene.remove(stand[i]);
+    o.traverse(c=>{
+      const ms=c.material? (Array.isArray(c.material)? c.material:[c.material]) : [];
+      for(const m of ms) for(const k of ["map","bumpMap","alphaMap","emissiveMap","specularMap"]){
+        const t=m[k];
+        if(t && !done.has(t) && !t.isCubeTexture && t.image instanceof HTMLCanvasElement){ done.add(t); renderer.initTexture(t); }
+      }
+    });
+  };
+  const step=()=>{
+    if(pre.stop) return;
+    const t0=performance.now();
+    while(queue.length && performance.now()-t0<10) warm(queue.shift());
+    if(queue.length) setTimeout(step,0);
+  };
+  setTimeout(step,0);
+}
+export function startGame(){
+  if(pre){ pre.stop=true; for(const o of pre.objs) scene.add(o); monster.mesh=pre.mon; pre=null; }
+  else { buildLevel(); placeProps(); monster.mesh=makeMonster(); }
+  scene.add(monster.mesh);
   const s=cellToWorld(W>>1,H>>1);
   STATE.pos.set(s.x,0,s.z);
   STATE.playing=true;

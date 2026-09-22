@@ -272,9 +272,7 @@ export function startElevatorCine(item){
   /* the emergency lamp gets a REAL point source parked at the fixture —
      the same dim, distance-falloff red as the crashed cab in THE END —
      instead of recoloring the bright ceiling panel into a screen wash */
-  const eml=new THREE.PointLight(0xff2515,0,5,2);
-  eml.position.copy(u.emerg.position); eml.position.z+=0.25; eml.position.y-=0.08;
-  g.add(eml); D.emergLight=eml;
+  D.emergLight=u.emergLight;
   /* the entity is wherever its AI left it — vanish it until the script
      conjures it sprinting down the corridor */
   monster.mesh.visible=false;
@@ -297,9 +295,7 @@ function makeSparks(g){
     m.visible=false; g.add(m);
     pool.push({m,vx:0,vy:0,vz:0,life:0,max:1});
   }
-  const light=new THREE.PointLight(0xff9540,0,3.5,2);
-  light.position.set(0,1.3,-0.35); g.add(light);
-  return {pool,light,acc:0};
+  return {pool,light:g.userData.sparkLight,acc:0};
 }
 function updateSparks(dt,t){
   const S=D.sparks; if(!S) return;
