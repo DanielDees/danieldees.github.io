@@ -89,6 +89,8 @@ function disposeMaterial(m,done){
 function disposeNode(o,done){
   const g=o.geometry;
   if(g&&!SHARED.has(g)&&!done.has(g)){ done.add(g); g.dispose(); }
+  /* a skeleton owns a float texture of its bone matrices */
+  if(o.isSkinnedMesh&&o.skeleton&&!done.has(o.skeleton)){ done.add(o.skeleton); if(o.skeleton.dispose) o.skeleton.dispose(); }
   const m=o.material;
   if(Array.isArray(m)) for(const mm of m) disposeMaterial(mm,done);
   else if(m) disposeMaterial(m,done);

@@ -16,7 +16,7 @@ import { AU, panTo, sfxAlert, sfxStinger, sfxClunk, sfxPowerOn,
          sfxComputerBoot, sfxComputerStatic, sfxSpiderShriek, sfxSpiderTap,
          sfxSpiderScratch, sfxSpiderDig, sfxHoleRumble, sfxStoneStep } from "./audio.js";
 import { ui, renderObjectives } from "./ui.js";
-import { monsterRushTo } from "./monster.js";
+import { monsterRushTo, poseMonster } from "./monster.js";
 import { exitDoor, ELEV } from "./props.js";
 import { win, enterTheEnd, enterTheNest } from "./lifecycle.js";
 import { LIB, losCells2, revealHole } from "./library.js";
@@ -264,13 +264,11 @@ function runMonster(dt){
     const step=Math.min(D.monRun.speed*dt,rem);
     m.pos.x+=rx/rem*step; m.pos.z+=rz/rem*step;
   }
-  /* sprint cycle (mirrors updateMonster's walk animation) */
-  m.anim+=dt*(1.5+D.monRun.speed*1.6);
-  const sw=Math.sin(m.anim)*0.7;
-  u.armL.rotation.x=sw;       u.armR.rotation.x=-sw;
-  u.legL.rotation.x=-sw*0.85; u.legR.rotation.x=sw*0.85;
-  u.head.rotation.y=(hash(Math.floor(CINE.t*16))-0.5)*0.7;   // frantic jolts
-  m.mesh.position.set(m.pos.x,Math.abs(Math.sin(m.anim))*0.07,m.pos.z);
+  /* the same body the AI drives, flat out */
+  poseMonster(dt,rem>0.05? D.monRun.speed:0,"chase");
+  const hr=u.B.head.userData.rest;
+  u.B.head.rotation.set(hr[0],(hash(Math.floor(CINE.t*16))-0.5)*0.7,hr[2]);   // frantic jolts
+  m.mesh.position.set(m.pos.x,0,m.pos.z);
   m.mesh.rotation.y=m.faceAng;
   /* fear channels track its approach until the doors seal */
   const d=Math.hypot(m.pos.x-D.cabEye.x,m.pos.z-D.cabEye.z);
@@ -1151,12 +1149,13 @@ export function startDeathCam(cause,onCard){
   const fall=cause==="fall";
   /* who did it — the position is read LIVE each frame, so if a mesh is still
      where it caught you the camera finds it however it was posed */
-  let killer=null;
+  let killer=null, lookH=1.35;
   if(!fall){
-    if(STATE.level===0&&monster.mesh) killer=monster.pos;
+    /* the wire thing is bent over you: look up into the knot, not its hips */
+    if(STATE.level===0&&monster.mesh){ killer=monster.pos; lookH=2.55; }
     else if(spider.mesh) killer=spider.mesh.position;
   }
-  DX={fall, killer, onCard, carded:false, landed:false,
+  DX={fall, killer, lookH, onCard, carded:false, landed:false,
       x:camera.position.x, y:camera.position.y, z:camera.position.z,
       yaw0:STATE.yaw, pitch0:STATE.pitch,
       roll:(Math.random()<0.5?-1:1)*(fall?1:0.62),
@@ -1217,7 +1216,7 @@ export function updateDeathCam(dt){
     if(DX.killer){
       const dx=DX.killer.x-x, dz=DX.killer.z-z;
       const hd=Math.max(0.6,Math.hypot(dx,dz));
-      const ky=(DX.killer.y!==undefined? DX.killer.y:0)+1.35;
+      const ky=(DX.killer.y!==undefined? DX.killer.y:0)+DX.lookH;
       kyaw=Math.atan2(-dx,-dz);
       kpitch=clamp(Math.atan2(ky-y,hd),0.05,1.32);
     }

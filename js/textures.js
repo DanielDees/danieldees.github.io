@@ -2573,21 +2573,24 @@ export function makeFungusSkin(){
 }
 
 /* ================= the spider — shared by THE END and THE NEST =================
-   Chitin is not plastic. It is layered and waxy, banded where the cuticle
-   hardened in stages, darker along the sclerotised seams, and pitted with
-   the sockets every bristle grows out of. The old mesh was flat-coloured
-   Phong on smooth primitives, which is exactly how you get a black balloon
-   on copper pipes; these three maps are most of the fix.
+   Chitin is not plastic. It is layered and waxy, darker along the sclerotised
+   seams, pitted with the sockets every bristle grows out of, and HAIRED — a
+   short pile over everything that runs one way, like a pelt.
    UV contract (the mesh builds to match):
      · abdomen / carapace are LATHES rotated onto the body axis, so u runs
-       around the body with u=0.5 on the DORSAL midline, and v runs
-       front → rear.
-     · limbs are cylinders, so v runs along the segment and u around it. */
+       around the body with u=0.5 on the DORSAL midline (u=0/1 is the belly),
+       and v runs front → rear. A stroke along v is a line running nose to
+       tail; a stroke along u is a RING.
+     · the legs and palps are SWEEPS: v runs down the whole limb in metres
+       (one repeat per 1.5m) and u around it, with u=0 on the dorsal side.
+       Annulation lives in vertex colour, not here — a band printed into a
+       map that repeats every 1.5m lands at the same place on every segment
+       whatever its length. */
 const chitinSpeck=(g,w,h,n,al)=>{
   for(let i=0;i<n;i++){
-    const v=Math.random();
+    const v=Math.random(), x=Math.random()*w, y=Math.random()*h, r=0.5+Math.random()*0.9;
     g.fillStyle=`rgba(${v<0.5?6:70},${v<0.5?5:66},${v<0.5?4:60},${al*(0.4+Math.random())})`;
-    g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*1.6,1+Math.random()*1.6);
+    g.beginPath();g.arc(x,y,r,0,7);g.fill();
   }
 };
 /* bristle sockets: a dark pit with a pale rim, the texture that makes a
@@ -2601,111 +2604,188 @@ const chitinPores=(g,w,h,n)=>{
     g.beginPath();g.arc(x-r*0.35,y-r*0.4,r*0.5,0,7);g.fill();
   }
 };
-/* the abdomen: near-black cuticle carrying a folium — the pale jagged
-   heart-marking down the dorsal midline that every orb-weaver wears. */
-export const texSpiderAbd = makeCanvas(256,256,(g,w,h)=>{
-  g.fillStyle="#0e0c08";g.fillRect(0,0,w,h);
-  /* ventral half (u at the edges) is darker and duller than the back */
-  for(const x0 of[0,w*0.82]){
-    const gr=g.createLinearGradient(x0,0,x0+w*0.18,0);
-    const a=x0? "rgba(0,0,0,0)":"rgba(0,0,0,0.5)";
-    gr.addColorStop(0,x0?"rgba(0,0,0,0)":"rgba(0,0,0,0.5)");
-    gr.addColorStop(1,x0?"rgba(0,0,0,0.5)":"rgba(0,0,0,0)");
-    g.fillStyle=gr;g.fillRect(x0,0,w*0.18,h);
+/* the pile: short strokes all laid the same way (along v, nose to tail) —
+   what makes a dark surface read as hair rather than as rubber */
+const chitinPile=(g,w,h,n,len,al)=>{
+  g.lineCap="round";
+  for(let i=0;i<n;i++){
+    const x=Math.random()*w, y=Math.random()*h, l=len*(0.5+Math.random());
+    const lt=Math.random()<0.55;
+    g.strokeStyle=lt? `rgba(90,88,84,${al*(0.5+Math.random())})` : `rgba(2,2,1,${al*1.4*(0.5+Math.random())})`;
+    g.lineWidth=0.6+Math.random()*0.8;
+    g.beginPath();g.moveTo(x,y);g.lineTo(x+(Math.random()-0.5)*2,y+l);g.stroke();
   }
-  /* the folium: a chain of chevrons narrowing toward the spinnerets */
+};
+/* a soft blotch drawn wrapped in u, so the seam of the lathe never shows */
+const wrapBlot=(g,w,x,y,r,rgba)=>{
+  for(const ox of[-w,0,w]){
+    const gr=g.createRadialGradient(x+ox,y,0.5,x+ox,y,r);
+    gr.addColorStop(0,rgba);gr.addColorStop(1,"rgba(0,0,0,0)");
+    g.fillStyle=gr;g.beginPath();g.arc(x+ox,y,r,0,7);g.fill();
+  }
+};
+/* the abdomen: near-black cuticle under a folium — the pale jagged
+   heart-marking down the dorsal midline — with the belly's anatomy on the
+   ventral side where it belongs: book-lung covers and the epigastric
+   furrow at the front, the spinneret field darkening at the tail. */
+export const texSpiderAbd = makeCanvas(512,512,(g,w,h)=>{
+  g.fillStyle="#100d0a";g.fillRect(0,0,w,h);
+  /* metre-scale mottle first: an even field is a product swatch */
+  for(let i=0;i<46;i++){
+    const lt=Math.random()<0.5;
+    wrapBlot(g,w,Math.random()*w,Math.random()*h,30+Math.random()*60,
+      lt? `rgba(64,58,50,${0.05+Math.random()*0.06})` : `rgba(0,0,0,${0.10+Math.random()*0.12})`);
+  }
+  /* the belly (u at the edges) is darker and duller than the back */
+  for(const x0 of[0,w*0.8]){
+    const gr=g.createLinearGradient(x0,0,x0+w*0.2,0);
+    gr.addColorStop(0,x0?"rgba(0,0,0,0)":"rgba(0,0,0,0.55)");
+    gr.addColorStop(1,x0?"rgba(0,0,0,0.55)":"rgba(0,0,0,0)");
+    g.fillStyle=gr;g.fillRect(x0,0,w*0.2,h);
+  }
   const cx=w*0.5;
-  for(let i=0;i<13;i++){
-    const t=i/12, y=h*(0.10+t*0.76);
-    const half=w*(0.20*Math.sin(Math.PI*(0.15+t*0.8))+0.035);
-    g.fillStyle=`rgba(${96-t*30|0},${90-t*28|0},${78-t*24|0},${0.16+0.10*Math.sin(t*Math.PI)})`;
-    g.beginPath();
-    g.moveTo(cx-half,y);
-    g.lineTo(cx,y-h*0.035);
-    g.lineTo(cx+half,y);
-    g.lineTo(cx,y+h*0.045);
-    g.closePath();g.fill();
-    /* the dark rim that makes the marking read at a distance */
-    g.strokeStyle=`rgba(6,5,3,${0.24+Math.random()*0.14})`;g.lineWidth=1.4;g.stroke();
-  }
-  /* paired muscle dimples flanking the midline */
-  for(let i=0;i<4;i++){
-    const y=h*(0.18+i*0.17);
-    for(const sx of[-1,1]){
-      const x=cx+sx*w*0.085;
-      const gr=g.createRadialGradient(x,y,0.5,x,y,7);
-      gr.addColorStop(0,"rgba(2,2,1,0.55)");gr.addColorStop(1,"rgba(0,0,0,0)");
-      g.fillStyle=gr;g.beginPath();g.arc(x,y,7,0,7);g.fill();
+  /* flank stripes: faint dark obliques sweeping back and down */
+  for(let i=0;i<7;i++){
+    const y=h*(0.16+i*0.11);
+    for(const s of[-1,1]){
+      g.strokeStyle=`rgba(2,2,1,${0.20+Math.random()*0.1})`;g.lineWidth=5+Math.random()*4;g.lineCap="round";
+      g.beginPath();g.moveTo(cx+s*w*0.13,y);
+      g.quadraticCurveTo(cx+s*w*0.20,y+h*0.03,cx+s*w*0.27,y+h*0.075);g.stroke();
     }
   }
+  /* the cardiac mark: a dark lance down the front of the back */
+  const cg=g.createLinearGradient(cx-w*0.03,0,cx+w*0.03,0);
+  cg.addColorStop(0,"rgba(0,0,0,0)");cg.addColorStop(0.5,"rgba(0,0,0,0.45)");cg.addColorStop(1,"rgba(0,0,0,0)");
+  g.fillStyle=cg;
+  g.beginPath();g.moveTo(cx,h*0.05);g.quadraticCurveTo(cx+w*0.035,h*0.2,cx,h*0.38);
+  g.quadraticCurveTo(cx-w*0.035,h*0.2,cx,h*0.05);g.fill();
+  /* the folium: a chain of chevrons narrowing toward the spinnerets */
+  for(let i=0;i<13;i++){
+    const t=i/12, y=h*(0.12+t*0.74);
+    const half=w*(0.13*Math.sin(Math.PI*(0.15+t*0.8))+0.025);
+    g.fillStyle=`rgba(${104-t*30|0},${98-t*28|0},${86-t*24|0},${0.13+0.09*Math.sin(t*Math.PI)})`;
+    g.beginPath();
+    g.moveTo(cx-half,y);
+    g.quadraticCurveTo(cx-half*0.45,y-h*0.012,cx,y-h*0.03);
+    g.quadraticCurveTo(cx+half*0.45,y-h*0.012,cx+half,y);
+    g.quadraticCurveTo(cx+half*0.4,y+h*0.018,cx,y+h*0.04);
+    g.quadraticCurveTo(cx-half*0.4,y+h*0.018,cx-half,y);
+    g.fill();
+    g.strokeStyle=`rgba(6,5,3,${0.26+Math.random()*0.14})`;g.lineWidth=2;g.stroke();
+  }
+  /* paired sigilla — the muscle attachment dimples flanking the midline */
+  for(let i=0;i<4;i++){
+    const y=h*(0.20+i*0.15);
+    for(const s of[-1,1]) wrapBlot(g,w,cx+s*w*(0.055+i*0.004),y,9,"rgba(1,1,0,0.6)");
+  }
+  /* the belly: book-lung covers either side of the ventral midline (u=0),
+     the epigastric furrow across behind them, the spinneret field at the tail */
+  for(const x of[w*0.075,w*0.925]){
+    g.save();g.translate(x,h*0.17);g.scale(1,1.6);
+    const gr=g.createRadialGradient(0,0,1,0,0,16);
+    gr.addColorStop(0,"rgba(92,84,70,0.32)");gr.addColorStop(1,"rgba(92,84,70,0)");
+    g.fillStyle=gr;g.beginPath();g.arc(0,0,16,0,7);g.fill();g.restore();
+  }
+  g.strokeStyle="rgba(0,0,0,0.6)";g.lineWidth=3;
+  for(const ox of[0,w]){
+    g.beginPath();g.moveTo(ox-w*0.16,h*0.25);g.quadraticCurveTo(ox,h*0.21,ox+w*0.16,h*0.25);g.stroke();
+  }
+  const tg=g.createLinearGradient(0,h*0.86,0,h);
+  tg.addColorStop(0,"rgba(0,0,0,0)");tg.addColorStop(1,"rgba(0,0,0,0.5)");
+  g.fillStyle=tg;g.fillRect(0,h*0.86,w,h*0.14);
   /* a broad waxy sheen along the dorsal ridge */
   const sh=g.createLinearGradient(cx-w*0.14,0,cx+w*0.14,0);
   sh.addColorStop(0,"rgba(112,108,100,0)");
-  sh.addColorStop(0.5,"rgba(112,108,100,0.08)");
+  sh.addColorStop(0.5,"rgba(112,108,100,0.07)");
   sh.addColorStop(1,"rgba(112,108,100,0)");
   g.fillStyle=sh;g.fillRect(cx-w*0.14,0,w*0.28,h);
-  chitinSpeck(g,w,h,2600,0.12);
-  chitinPores(g,w,h,220);
+  chitinPile(g,w,h,5200,7,0.10);
+  chitinSpeck(g,w,h,2400,0.10);
+  chitinPores(g,w,h,260);
 });
-/* the carapace: hard, glossy, with striae fanning back from the fovea and
-   a darker cephalic region where the eyes sit */
-export const texSpiderCarapace = makeCanvas(256,128,(g,w,h)=>{
-  /* ORIENTATION MATTERS HERE. This dresses a lathe: u wraps around the
-     body, v runs front→rear. So a horizontal stroke (constant v) becomes a
-     RING — the first pass drew its striae that way and the carapace read
-     as a cut tree stump. Striae must run along v, i.e. VERTICAL strokes on
-     this canvas, which come out as lines radiating from the midline the
-     way a real carapace's do. */
-  g.fillStyle="#100c07";g.fillRect(0,0,w,h);
-  for(let i=0;i<54;i++){                 // striae, running front→rear
-    const x=Math.random()*w;
-    const y0=h*(0.18+Math.random()*0.30), y1=h*(0.62+Math.random()*0.36);
-    g.strokeStyle=`rgba(${74+Math.random()*34|0},${68+Math.random()*28|0},${56+Math.random()*22|0},${0.05+Math.random()*0.08})`;
-    g.lineWidth=0.6+Math.random()*1.1;
-    g.beginPath();g.moveTo(x,y0);
-    g.quadraticCurveTo(x+(Math.random()-0.5)*7,(y0+y1)/2, x+(Math.random()-0.5)*13, y1);
-    g.stroke();
-  }
-  /* the fovea: a small dark pit on the dorsal midline (u=0.5), NOT a ring —
-     it stays a compact blob so it never wraps the body */
+/* the carapace: hard and glossy, striae fanning back from the fovea, a pale
+   median band and pale margins — the wolf-spider livery — and a darker
+   cephalic region where the eyes sit */
+export const texSpiderCarapace = makeCanvas(512,256,(g,w,h)=>{
+  /* ORIENTATION MATTERS HERE. u wraps the body, v runs front→rear, so a
+     horizontal stroke is a RING — striae drawn that way turn the carapace
+     into a cut tree stump. Striae are VERTICAL strokes on this canvas. */
+  g.fillStyle="#110d09";g.fillRect(0,0,w,h);
+  for(let i=0;i<30;i++)
+    wrapBlot(g,w,Math.random()*w,Math.random()*h,18+Math.random()*34,
+      Math.random()<0.5? `rgba(60,54,46,${0.05+Math.random()*0.05})` : `rgba(0,0,0,${0.12+Math.random()*0.1})`);
   const cx=w*0.5;
-  const fg=g.createRadialGradient(cx,h*0.62,1,cx,h*0.62,13);
-  fg.addColorStop(0,"rgba(0,0,0,0.65)");fg.addColorStop(1,"rgba(0,0,0,0)");
-  g.fillStyle=fg;g.beginPath();g.arc(cx,h*0.62,13,0,7);g.fill();
-  /* the cephalic shield, darker, where the eyes are set — a gradient in v
-     is legitimate: it darkens the front of the head, which is the point */
-  const cg=g.createLinearGradient(0,0,0,h*0.34);
-  cg.addColorStop(0,"rgba(0,0,0,0.5)");cg.addColorStop(1,"rgba(0,0,0,0)");
-  g.fillStyle=cg;g.fillRect(0,0,w,h*0.34);
-  chitinSpeck(g,w,h,1400,0.09);
-  chitinPores(g,w,h,150);
-});
-/* the limbs: banded cuticle. v runs along the segment, so the bands are
-   rows; the dark rings land where the joints flex. */
-export const texSpiderLimb = makeCanvas(64,256,(g,w,h)=>{
-  g.fillStyle="#100d09";g.fillRect(0,0,w,h);
-  for(let i=0;i<7;i++){                  // the bands
-    const y=h*(0.05+i*0.135), th=h*(0.028+Math.random()*0.05);
-    g.fillStyle=`rgba(3,2,1,${0.44+Math.random()*0.30})`;
-    g.fillRect(0,y,w,th);
-    g.fillStyle=`rgba(${58+Math.random()*18|0},${56+Math.random()*16|0},${52+Math.random()*14|0},${0.045+Math.random()*0.05})`;
-    g.fillRect(0,y+th,w,th*0.6);         // the pale edge below each band
+  /* median band down the thorax, and a pale margin where the shell rolls under */
+  const mb=g.createLinearGradient(cx-w*0.05,0,cx+w*0.05,0);
+  mb.addColorStop(0,"rgba(90,84,72,0)");mb.addColorStop(0.5,"rgba(90,84,72,0.13)");mb.addColorStop(1,"rgba(90,84,72,0)");
+  g.fillStyle=mb;g.fillRect(cx-w*0.05,h*0.34,w*0.1,h*0.62);
+  for(const x of[w*0.27,w*0.73]){
+    const gr=g.createLinearGradient(x-w*0.04,0,x+w*0.04,0);
+    gr.addColorStop(0,"rgba(84,78,68,0)");gr.addColorStop(0.5,"rgba(84,78,68,0.10)");gr.addColorStop(1,"rgba(84,78,68,0)");
+    g.fillStyle=gr;g.fillRect(x-w*0.04,h*0.12,w*0.08,h*0.84);
   }
-  for(let i=0;i<26;i++){                 // longitudinal fibres
+  for(let i=0;i<120;i++){                // striae, running front→rear
     const x=Math.random()*w;
-    g.strokeStyle=`rgba(${62+Math.random()*24|0},${60+Math.random()*20|0},${56+Math.random()*16|0},${0.05+Math.random()*0.07})`;
-    g.lineWidth=0.6+Math.random();
-    g.beginPath();g.moveTo(x,0);
-    for(let y=12;y<=h;y+=12) g.lineTo(x+Math.sin(y*0.05+i)*1.4,y);
+    const y0=h*(0.22+Math.random()*0.28), y1=h*(0.64+Math.random()*0.34);
+    g.strokeStyle=Math.random()<0.5
+      ? `rgba(${74+Math.random()*30|0},${68+Math.random()*26|0},${58+Math.random()*20|0},${0.04+Math.random()*0.07})`
+      : `rgba(0,0,0,${0.12+Math.random()*0.12})`;
+    g.lineWidth=0.8+Math.random()*1.4;
+    g.beginPath();g.moveTo(x,y0);
+    g.quadraticCurveTo(x+(Math.random()-0.5)*9,(y0+y1)/2, x+(Math.random()-0.5)*16, y1);
     g.stroke();
   }
-  /* a specular ridge down one side so a cylinder reads as round even flat-lit */
+  /* the fovea: a compact dark pit on the dorsal midline, never a ring */
+  wrapBlot(g,w,cx,h*0.6,15,"rgba(0,0,0,0.7)");
+  /* the cephalic shield darkens toward the eyes */
+  const cg=g.createLinearGradient(0,0,0,h*0.36);
+  cg.addColorStop(0,"rgba(0,0,0,0.55)");cg.addColorStop(1,"rgba(0,0,0,0)");
+  g.fillStyle=cg;g.fillRect(0,0,w,h*0.36);
+  chitinPile(g,w,h,1600,5,0.07);
+  chitinSpeck(g,w,h,1500,0.09);
+  chitinPores(g,w,h,200);
+});
+/* the limbs: the pile running down the leg, a pair of faint pale lines
+   along the dorsal side (u≈0.1 / 0.9 either side of the top), and the
+   sockets of every hair that has been rubbed off */
+export const texSpiderLimb = makeCanvas(128,512,(g,w,h)=>{
+  g.fillStyle="#0e0d0b";g.fillRect(0,0,w,h);
+  for(let i=0;i<20;i++)
+    wrapBlot(g,w,Math.random()*w,Math.random()*h,10+Math.random()*24,
+      Math.random()<0.5? "rgba(58,52,44,0.06)" : "rgba(0,0,0,0.14)");
+  for(const x of[w*0.1,w*0.9]){
+    const gr=g.createLinearGradient(x-5,0,x+5,0);
+    gr.addColorStop(0,"rgba(92,86,76,0)");gr.addColorStop(0.5,"rgba(92,86,76,0.10)");gr.addColorStop(1,"rgba(92,86,76,0)");
+    g.fillStyle=gr;g.fillRect(x-5,0,10,h);
+  }
+  chitinPile(g,w,h,2600,16,0.12);
+  /* a specular ridge down one side so a tube reads as round even flat-lit */
   const sh=g.createLinearGradient(w*0.18,0,w*0.5,0);
   sh.addColorStop(0,"rgba(84,82,78,0)");
-  sh.addColorStop(1,"rgba(84,82,78,0.055)");
+  sh.addColorStop(1,"rgba(84,82,78,0.05)");
   g.fillStyle=sh;g.fillRect(w*0.18,0,w*0.32,h);
-  chitinSpeck(g,w,h,700,0.12);
-  chitinPores(g,w,h,90);
+  chitinSpeck(g,w,h,900,0.12);
+  chitinPores(g,w,h,110);
+});
+/* the velvet: not a colour map — a field of strand cross-sections for the
+   abdomen's shell fur. Each dot peaks at its strand's LENGTH and falls to
+   zero at its edge, so a shell at height h keeps only what is taller than h
+   and every strand thins toward its tip. Drawn wrapped both ways (it tiles). */
+export const texSpiderFur = makeCanvas(512,512,(g,w,h)=>{
+  g.fillStyle="#000";g.fillRect(0,0,w,h);
+  g.globalCompositeOperation="lighten";
+  for(let i=0;i<12000;i++){
+    const x=Math.random()*w, y=Math.random()*h, r=1.8+Math.random()*1.8;
+    const v=Math.round(255*(0.3+0.7*Math.pow(Math.random(),0.7)));
+    for(const ox of[-w,0,w]) for(const oy of[-h,0,h]){
+      const X=x+ox, Y=y+oy;
+      if(X<-r||X>w+r||Y<-r||Y>h+r) continue;
+      const gr=g.createRadialGradient(X,Y,0,X,Y,r);
+      gr.addColorStop(0,`rgb(${v},${v},${v})`);gr.addColorStop(1,"rgb(0,0,0)");
+      g.fillStyle=gr;g.beginPath();g.arc(X,Y,r,0,7);g.fill();
+    }
+  }
+  g.globalCompositeOperation="source-over";
 });
 
 /* ---- THE NEST: the brood ----------------------------------------------

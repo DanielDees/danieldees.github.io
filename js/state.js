@@ -43,6 +43,7 @@ export const monster={
   lastSeen:null, searchT:0, alertT:0, pauseT:0, knockT:4, knockMove:null,
   curSpeed:0, faceAng:0, anim:0, groanT:6,
   twitchT:5, twitchDur:0, twitchSeed:0,
+  knockAnim:0,          // >0: the arm is up, rapping on the wall it walked to
   teleT:20,             // countdown to the next space-fold (see monster.js)
   rush:false,           // hunt at full chase speed (final-objective sprint)
   holdAt30:false,       // breaker cinematic: arm the 30m freeze ring
