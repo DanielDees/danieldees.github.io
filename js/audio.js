@@ -229,12 +229,24 @@ export function sfxClunk(){
   const g=C.createGain();env(g,t,0.005,0.3,0.35);o.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+0.5);
 }
 export function sfxPowerOn(){
+  /* the mains coming up under load: a sub thump as the transformers take it,
+     then the hum spinning up to line frequency and settling into the walls */
   if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
-  const o=C.createOscillator();o.type="sawtooth";o.frequency.setValueAtTime(60,t);
-  o.frequency.exponentialRampToValueAtTime(240,t+1.2);
-  const g=C.createGain();env(g,t,0.4,0.2,1.4);
-  const f=C.createBiquadFilter();f.type="lowpass";f.frequency.value=800;
-  o.connect(f);f.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+2);
+  const sub=C.createOscillator();sub.type="sine";sub.frequency.setValueAtTime(46,t);
+  sub.frequency.exponentialRampToValueAtTime(24,t+0.5);
+  const sg=C.createGain();env(sg,t,0.01,0.34,0.6);
+  sub.connect(sg);sg.connect(AU.sfx);sub.start(t);sub.stop(t+0.7);
+  const lp=C.createBiquadFilter();lp.type="lowpass";lp.frequency.value=700;
+  const out=C.createGain();out.gain.setValueAtTime(0.0001,t);
+  out.gain.linearRampToValueAtTime(0.16,t+0.9);out.gain.setValueAtTime(0.16,t+1.6);
+  out.gain.exponentialRampToValueAtTime(0.0001,t+4.2);
+  lp.connect(out);out.connect(AU.sfx);
+  [[1,"sine",0.9],[2,"sine",0.5],[3,"sawtooth",0.12],[5,"sine",0.08]].forEach(([k,type,v])=>{
+    const o=C.createOscillator();o.type=type;
+    o.frequency.setValueAtTime(18*k,t);o.frequency.exponentialRampToValueAtTime(60*k,t+1.1);
+    const g=C.createGain();g.gain.value=v;
+    o.connect(g);g.connect(lp);o.start(t);o.stop(t+4.3);
+  });
 }
 export function sfxAlert(pan=0){ // the entity notices you: short guttural rising cry
   if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
@@ -401,30 +413,90 @@ export function sfxBoxOpen(){
   o.connect(bp);bp.connect(g);g.connect(AU.sfx);
   o.start(t+0.06);o.stop(t+0.7);wob.start(t);wob.stop(t+0.7);
 }
-export function sfxBoxClose(){
-  /* the door claps shut: flat metal slap + latch snap */
-  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
-  noiseAt(t,0.07,1400,0.14,"bandpass",1.2);
-  const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(150,t);
-  o.frequency.exponentialRampToValueAtTime(70,t+0.1);
-  const g=C.createGain();env(g,t,0.004,0.16,0.14);
-  o.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+0.25);
-  noiseAt(t+0.09,0.025,2600,0.07,"highpass");
+/* dense random clicks under a highpass: the sound of current finding a gap */
+function crackle(t,dur,peak,density){
+  const C=AU.ctx;
+  const len=Math.floor(C.sampleRate*dur), buf=C.createBuffer(1,len,C.sampleRate);
+  const d=buf.getChannelData(0);
+  let v=0;
+  for(let i=0;i<len;i++){
+    const e=1-i/len;
+    v = Math.random()<density*e*e ? (Math.random()*2-1) : v*0.72;
+    d[i]=v;
+  }
+  const src=C.createBufferSource(); src.buffer=buf;
+  const f=C.createBiquadFilter(); f.type="highpass"; f.frequency.value=1500;
+  const g=C.createGain(); g.gain.value=peak;
+  src.connect(f); f.connect(g); g.connect(AU.sfx); src.start(t);
 }
-export function sfxFuseHum(dur=1.1){
-  /* the conjured fuse: a faint shimmering hum that rises as it drifts in */
+export function sfxLatchTurn(){
+  /* a quarter-turn cam latch: a dry scrape as it turns, then the cam
+     dropping off its keeper */
   if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
-  [[330,0.045],[336,0.035],[1320,0.012]].forEach(([f,v])=>{
-    const o=C.createOscillator();o.type="sine";
-    o.frequency.setValueAtTime(f,t);
-    o.frequency.linearRampToValueAtTime(f*1.33,t+dur);
-    const trem=C.createOscillator();trem.frequency.value=8;
-    const tg=C.createGain();tg.gain.value=v*0.4;
-    const g=C.createGain();env(g,t,dur*0.35,v,dur*0.65);
-    trem.connect(tg);tg.connect(g.gain);
-    o.connect(g);g.connect(AU.sfx);
-    o.start(t);o.stop(t+dur+0.2);trem.start(t);trem.stop(t+dur+0.2);
-  });
+  noiseAt(t,0.10,1700,0.06,"bandpass",2.5);
+  noiseAt(t+0.11,0.022,3400,0.16,"highpass");
+  const o=C.createOscillator();o.type="triangle";o.frequency.value=1240;
+  const g=C.createGain();env(g,t+0.11,0.002,0.05,0.09);
+  o.connect(g);g.connect(AU.sfx);o.start(t+0.11);o.stop(t+0.3);
+}
+/* the blades dragging into the spring jaws, the jaws snapping home at
+   SEAT_AT, and the little arc as the circuit makes */
+export const FUSE_SEAT_AT=0.16;
+export function sfxFuseSeat(){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime, s=t+FUSE_SEAT_AT;
+  const scr=C.createBufferSource(), len=Math.floor(C.sampleRate*FUSE_SEAT_AT);
+  const buf=C.createBuffer(1,len,C.sampleRate), d=buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*(i/len);
+  scr.buffer=buf;
+  const bp=C.createBiquadFilter();bp.type="bandpass";bp.Q.value=3;
+  bp.frequency.setValueAtTime(1400,t);bp.frequency.linearRampToValueAtTime(2600,s);
+  const sg=C.createGain();sg.gain.value=0.09;
+  scr.connect(bp);bp.connect(sg);sg.connect(AU.sfx);scr.start(t);
+  noiseAt(s,0.03,2600,0.22,"highpass");
+  const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(180,s);
+  o.frequency.exponentialRampToValueAtTime(80,s+0.08);
+  const g=C.createGain();env(g,s,0.002,0.2,0.12);
+  o.connect(g);g.connect(AU.sfx);o.start(s);o.stop(s+0.2);
+  crackle(s+0.01,0.16,0.16,0.10);
+}
+export function sfxLeverStrain(){
+  /* the main switch's spring loading up under a hand: a low groan of steel */
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  const o=C.createOscillator();o.type="sawtooth";o.frequency.setValueAtTime(70,t);
+  o.frequency.linearRampToValueAtTime(96,t+0.3);
+  const lp=C.createBiquadFilter();lp.type="bandpass";lp.frequency.value=380;lp.Q.value=5;
+  const g=C.createGain();env(g,t,0.2,0.07,0.15);
+  o.connect(lp);lp.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+0.45);
+  noiseAt(t,0.3,520,0.05,"bandpass",4);
+}
+export function sfxMainThrow(){
+  /* the main contacts closing on a dead building: the handle's clunk, the
+     arc cracking across the gap, the buzz of it drawing, and the handle
+     hitting its stop a beat later */
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  noiseAt(t,0.2,480,0.55,"lowpass");
+  const o=C.createOscillator();o.type="square";o.frequency.setValueAtTime(58,t);
+  o.frequency.exponentialRampToValueAtTime(34,t+0.3);
+  const g=C.createGain();env(g,t,0.003,0.3,0.34);
+  o.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+0.4);
+  noiseAt(t,0.06,5200,0.28,"highpass");
+  crackle(t,0.42,0.34,0.07);
+  const bz=C.createOscillator();bz.type="sawtooth";bz.frequency.value=120;
+  const bb=C.createBiquadFilter();bb.type="bandpass";bb.frequency.value=950;bb.Q.value=2;
+  const bg=C.createGain();env(bg,t,0.004,0.13,0.5);
+  bz.connect(bb);bb.connect(bg);bg.connect(AU.sfx);bz.start(t);bz.stop(t+0.6);
+  noiseAt(t+0.13,0.025,2600,0.12,"highpass");
+}
+export function sfxBreakerClick(pan=0){
+  /* one circuit breaker snapping itself back on */
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  noiseAt(t,0.014,3200,0.10,"highpass");
+  const o=C.createOscillator();o.type="triangle";o.frequency.value=2100+Math.random()*500;
+  const g=C.createGain();env(g,t,0.001,0.035,0.03);
+  const p=C.createStereoPanner?C.createStereoPanner():null;
+  o.connect(g);
+  if(p){p.pan.value=pan;g.connect(p);p.connect(AU.sfx);} else g.connect(AU.sfx);
+  o.start(t);o.stop(t+0.06);
 }
 export function sfxElevButton(){
   /* call button: dry plastic click + a short confirmation beep */

@@ -14,6 +14,7 @@ export const STATE={
   deaths:0, time:0,
   bob:0, moving:false,
   ambDim:1,                      // ambient-floor multiplier (the elevator crash drains it)
+  surge:null,                    // level 0: the breaker's power-on wave {x,z,t,maxR}
   /* the one place the HUD is allowed to point at: {x,z} of a way OUT that
      the level has already revealed to you in a cutscene (the library's hole,
      the cave's fissure). Never a collectible — those you find yourself. */

@@ -146,7 +146,7 @@ export function respawn(){
   monster.curSpeed=0; monster.rush=false; monster.held=false; monster.holdAt30=false;
   monster.wakeT=0; monster.knockMove=null;
   STATE.bottles=0; STATE.hasFuse=false; STATE.powerOn=false; STATE.objective=0;
-  STATE.time=0; STATE.ambDim=1; STATE.shakeAmp=0;
+  STATE.time=0; STATE.ambDim=1; STATE.shakeAmp=0; STATE.surge=null;
   buildLevel(); placeProps();
   monster.mesh=makeMonster(); scene.add(monster.mesh);
   const s=cellToWorld(W>>1,H>>1);
@@ -165,11 +165,7 @@ export function debugSkipToElevator(){
   for(const it of interactables){
     if(it.taken) continue;
     if(it.kind==="bottle"||it.kind==="fuse"){ it.taken=true; scene.remove(it.mesh); }
-    else if(it.kind==="breaker"){
-      it.taken=true;
-      it.mesh.userData.lamp.material.color.set(0x39d24a);
-      it.mesh.userData.lever.position.y=0.1;
-    }
+    else if(it.kind==="breaker"){ it.taken=true; it.mesh.userData.setPowered(); }
   }
   STATE.bottles=3; STATE.hasFuse=true; STATE.powerOn=true; STATE.objective=3;
   exitDoor.userData.sign.material.color.set(0xffffff);

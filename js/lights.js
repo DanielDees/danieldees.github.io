@@ -8,7 +8,10 @@ import { lights, lightPool, hemi, LIGHT_BIND_RADIUS, LIGHT_FADE_START } from "./
 import { AU, panTo, sfxFlickTick } from "./audio.js";
 import { WALL_H } from "./map.js";
 
-const FLICKER_PATTERNS=5; // 0 strobe · 1 stutter · 2 brown-out sag · 3 blink-off · 4 dying sputter
+const FLICKER_PATTERNS=5;
+/* the breaker's power-on: SURGE_DIP of brown-out as the load comes on, then
+   a ring rolling out from the board at SURGE_V, each tube striking as it passes */
+const SURGE_DIP=0.4, SURGE_V=24, SURGE_T=0.8; // 0 strobe · 1 stutter · 2 brown-out sag · 3 blink-off · 4 dying sputter
 function panelValue(L,t){
   if(L.mode==="steady") return 0.92+Math.sin(t*1.7+L.phase)*0.06;
   if(L.warm){
@@ -58,6 +61,15 @@ export function updateLights(dt,t){
     for(const L of lights)
       if(!L.shocked && Math.hypot(L.world.x-sh.x,L.world.z-sh.z)<=R){ L.shocked=true; L.shockT=3.5; }
     if(R>sh.maxR+25) monster.shock=null;   // ring has cleared the far corner
+  }
+  const sg=STATE.level===0? STATE.surge : null;
+  if(sg){
+    if(!sg.init){ sg.init=true; for(const L of lights){ L.surged=false; L.surgeT=0; } }
+    sg.t+=dt;
+    const R=Math.max(0,sg.t-SURGE_DIP)*SURGE_V;
+    for(const L of lights)
+      if(!L.surged && Math.hypot(L.world.x-sg.x,L.world.z-sg.z)<=R){ L.surged=true; L.surgeT=SURGE_T; }
+    if(R>sg.maxR) STATE.surge=null;
   }
   const escD = 1 + 0.10*monster.escalation;   // disruption AOE & hue deepen +10% per objective
   /* whichever thing haunts the current level is the disruption source —
@@ -130,6 +142,14 @@ export function updateLights(dt,t){
     }
     /* THE NEST: a burned brood chamber's fungus dies back (cave.js ramps mul2) */
     if(STATE.level===2&&L.mul2!==undefined) v*=L.mul2;
+    if(sg && !L.surged) v*= sg.t<0.1? 1-sg.t*8 : 0.04+hash(Math.floor(t*18)+L.seed)*0.06;
+    if(L.surgeT>0){
+      /* the tube strikes: a stutter, a flash over full, then down to its new level */
+      L.surgeT-=dt;
+      const e=SURGE_T-L.surgeT;
+      v = e<0.22? (hash(Math.floor(t*26)+L.seed)>0.45? 1.2:0.06)
+                : v*lerp(1.3,1,clamp((e-0.22)/(SURGE_T-0.22),0,1));
+    }
     if(L.shockT>0){
       /* the wake shockwave passing through: a hard strobe on impact, then
          held dim and DEEP — dimness drags the hue past orange into red,
