@@ -1,7 +1,7 @@
 /* ---------------- three.js scene & level geometry ---------------- */
 import { rand, clamp } from "./utils.js";
 import { W, H, CELL, WALL_H, grid, genMap, cellToWorld, isWall } from "./map.js";
-import { texWall, texCarpet, texStains, texCeil, texCeilBump, texCeilStains,
+import { texWall, texCarpet, texCarpetPile, texStains, texCeil, texCeilBump, texCeilStains, texCeilFoam, texMoldGrain,
          makeMoldTextures, makeDripTextures, sliceTexture, makeSpillTexture,
          makeTubeTexture, texGalv, texReflector, texLouvre, scaleBoxUV } from "./textures.js";
 import { $ } from "./utils.js";
@@ -77,11 +77,11 @@ for(const o of scene.children) o.userData.persist=true;
 export const SHARED=new Set();
 export function markShared(...res){ for(const r of res) if(r) SHARED.add(r); return res[0]; }
 // level-0 tileable textures (repeat is mutated per build, and they're reused)
-markShared(texWall,texCarpet,texStains,texCeil,texCeilBump,texCeilStains);
+markShared(texWall,texCarpet,texCarpetPile,texStains,texCeil,texCeilBump,texCeilStains,texCeilFoam,texMoldGrain);
 /* the walls and ceiling are mostly seen at a grazing angle, which is
    exactly where an isotropic mip chain smears a 1024² map into mud */
 const ANISO=Math.min(_lowQ?4:8, renderer.capabilities.getMaxAnisotropy());
-for(const t of[texWall,texCeil,texCeilBump,texCeilStains]) t.anisotropy=ANISO;
+for(const t of[texWall,texCarpetPile,texCeil,texCeilBump,texCeilStains,texCeilFoam,texMoldGrain]) t.anisotropy=ANISO;
 const _MAT_MAPS=["map","alphaMap","aoMap","bumpMap","displacementMap","emissiveMap",
   "envMap","lightMap","metalnessMap","normalMap","roughnessMap","specularMap","gradientMap"];
 function disposeMaterial(m,done){
@@ -118,7 +118,8 @@ export function clearLevelScene(){
    stops their per-frame matrix work. */
 function concatGeos(geos){
   let vc=0, ic=0;
-  for(const g of geos){ vc+=g.attributes.position.count; ic+=g.index.count; }
+  /* extrusions and lathes arrive non-indexed; they index themselves in order */
+  for(const g of geos){ vc+=g.attributes.position.count; ic+=g.index? g.index.count : g.attributes.position.count; }
   const pos=new Float32Array(vc*3), nor=new Float32Array(vc*3), uv=new Float32Array(vc*2);
   const idx=(vc>65535? new Uint32Array(ic):new Uint16Array(ic));
   let vo=0, io=0;
@@ -126,9 +127,10 @@ function concatGeos(geos){
     pos.set(g.attributes.position.array, vo*3);
     nor.set(g.attributes.normal.array, vo*3);
     uv.set(g.attributes.uv.array, vo*2);
-    const gi=g.index.array;
-    for(let i=0;i<gi.length;i++) idx[io+i]=gi[i]+vo;
-    vo+=g.attributes.position.count; io+=gi.length;
+    const n=g.attributes.position.count;
+    if(g.index){ const gi=g.index.array; for(let i=0;i<gi.length;i++) idx[io+i]=gi[i]+vo; io+=gi.length; }
+    else { for(let i=0;i<n;i++) idx[io+i]=vo+i; io+=n; }
+    vo+=n;
   }
   const geo=new THREE.BufferGeometry();
   geo.setAttribute("position",new THREE.BufferAttribute(pos,3));
@@ -449,8 +451,7 @@ export function buildLevel(){
      classic drop-tile size. The carpet keeps its original 8m tile. */
   texCarpet.repeat.set(W/2,H/2);
   texCeil.repeat.set(W,H); texCeilBump.repeat.set(W,H);
-  const floor=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),
-    new THREE.MeshPhongMaterial({map:texCarpet, specular:0x000000, shininess:1}));
+  const floor=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),carpetMaterial());
   floor.rotation.x=-Math.PI/2; scene.add(floor);
   /* stain overlay tiles at a non-integer rate so it never aligns with the carpet */
   texStains.repeat.set(5.13,4.71);
@@ -479,11 +480,7 @@ export function buildLevel(){
     slots.push({x,y,p,warm:Math.random()<0.10});
     openings.set(y*W+x,{x:p.x,z:p.z,w:FW+2*OPEN_C,d:FD+2*OPEN_C});
   }
-  const ceil=new THREE.Mesh(ceilingGeometry(SZ,openings),
-    /* 0.008, down from 0.012: with the tile face carrying real fibre relief
-       now, the old scale turned the fissures into raised veins */
-    new THREE.MeshPhongMaterial({map:texCeil, bumpMap:texCeilBump, bumpScale:0.008,
-      specular:0x050503, shininess:2}));
+  const ceil=new THREE.Mesh(ceilingGeometry(SZ,openings),ceilingMaterial());
   ceil.position.y=WALL_H; scene.add(ceil);
   /* rare water stains: overlay tiled at a non-integer rate (same trick as
      the carpet stains) so they never line up with the tile grid. It takes the
@@ -507,9 +504,14 @@ export function buildLevel(){
      edge: it then continues onto the co-planar neighbour wall, or wraps
      around a convex/concave corner — the texture is sliced at the fold so
      it reads as one organism bending around the geometry. */
-  /* slime is wet: a tight dull glint where a lamp catches it */
-  const moldMat=t=>new THREE.MeshPhongMaterial({map:t,
-    transparent:true, depthWrite:false, specular:0x1c2216, shininess:38});
+  /* slime is wet: a tight dull glint where a lamp catches it, on every
+     colony crown the grain raises */
+  const moldMat=t=>{
+    const m=new THREE.MeshPhongMaterial({map:t, bumpMap:texMoldGrain, bumpScale:0.004,
+      transparent:true, depthWrite:false, specular:0x1c2216, shininess:38});
+    m.onBeforeCompile=moldCompile;
+    return m;
+  };
   const E=CELL/2;
   const moldFaces=[];
   for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
@@ -667,6 +669,118 @@ export function buildLevel(){
     spill.push({p,mat:f.tubeMat,warm});
   }
   scene.add(spillMesh(spill));
+}
+/* ---- the carpet ----
+   The original map, and over it the PILE (texCarpetPile) at its own 0.5m
+   repeat: multiplied into the colour and used as the bump map, both at that
+   fine scale, so the tufts shade as tufts under a lamp. three's maps all
+   share the colour map's UVs, so the bump chunk is rewritten to sample the
+   pile's own coordinates. Divided by its mean, the pile is a no-op wherever
+   the mip chain has averaged it out. Matte, deliberately: a sheen on carpet
+   is what turns it into sealed concrete. */
+const PILE_REP=16;                           // per carpet tile (8m) → 0.5m of pile
+function carpetMaterial(){
+  const m=new THREE.MeshPhongMaterial({map:texCarpet, bumpMap:texCarpetPile, bumpScale:0.0035,
+    specular:0x000000, shininess:1});
+  m.onBeforeCompile=sh=>{
+    sh.uniforms.uPile={value:texCarpetPile};
+    sh.uniforms.uPileRep={value:PILE_REP};
+    sh.uniforms.uPileMean={value:texCarpetPile.mean};
+    sh.vertexShader=sh.vertexShader
+      .replace("#include <common>","#include <common>\nuniform float uPileRep;\nvarying vec2 vPileUv;")
+      .replace("#include <uv_vertex>","#include <uv_vertex>\n  vPileUv=vUv*uPileRep;");
+    sh.fragmentShader=sh.fragmentShader
+      .replace("#include <common>","#include <common>\nuniform sampler2D uPile;\nuniform float uPileMean;\nvarying vec2 vPileUv;")
+      .replace("#include <bumpmap_pars_fragment>",THREE.ShaderChunk.bumpmap_pars_fragment.replace(/vUv/g,"vPileUv"))
+      .replace("#include <map_fragment>",
+        "#include <map_fragment>\n  diffuseColor.rgb*=mix(1.0,texture2D(uPile,vPileUv).r/uPileMean,0.42);");
+  };
+  return m;
+}
+/* three's bump chunk with the height's derivative supplied by the caller:
+   the stock one can only read bumpMap at the colour map's UVs */
+const bumpChunk=dH=>{
+  const c=THREE.ShaderChunk.bumpmap_pars_fragment;
+  const a=c.indexOf("vec2 dHdxy_fwd()"), b=c.indexOf("vec3 perturbNormalArb");
+  return c.slice(0,a)+"vec2 dHdxy_fwd(){\n"+dH+"\n}\n"+c.slice(b);
+};
+/* ---- the ceiling ----
+   texCeil/texCeilBump carry the grid and each tile's tone; texCeilFoam is
+   the face at 1 px/mm. Every 1m tile takes the foam at its own quarter-turn
+   and offset (hashed off its index) so no two tiles match, and it is masked
+   off the tee, which is steel and which hides the cut between tiles. */
+const FOAM_REV=0.034;                        // tee + reveal half-width, in tiles
+function ceilingMaterial(){
+  const m=new THREE.MeshPhongMaterial({map:texCeil, bumpMap:texCeilBump, bumpScale:0.008,
+    specular:0x050503, shininess:2});
+  m.onBeforeCompile=sh=>{
+    sh.uniforms.uFoam={value:texCeilFoam};
+    sh.uniforms.uFoamMean={value:texCeilFoam.mean};
+    sh.fragmentShader=sh.fragmentShader
+      .replace("#include <common>",`#include <common>
+uniform sampler2D uFoam;
+uniform float uFoamMean;
+vec2 foamUv;
+float foamK;`)
+      .replace("#include <bumpmap_pars_fragment>",bumpChunk(`
+  vec2 dSTdx=dFdx(vUv), dSTdy=dFdy(vUv);
+  float Hll=bumpScale*texture2D(bumpMap,vUv).x;
+  float dBx=bumpScale*texture2D(bumpMap,vUv+dSTdx).x-Hll;
+  float dBy=bumpScale*texture2D(bumpMap,vUv+dSTdy).x-Hll;
+  vec2 fx=dFdx(foamUv), fy=dFdy(foamUv);
+  float F=texture2D(uFoam,foamUv).r, fb=0.008*foamK;
+  return vec2(dBx+fb*(texture2D(uFoam,foamUv+fx).r-F), dBy+fb*(texture2D(uFoam,foamUv+fy).r-F));`))
+      .replace("#include <map_fragment>",`{
+    vec2 t=vUv*4.0, id=floor(t), l=fract(t);
+    float hs=fract(sin(dot(id,vec2(12.9898,78.233)))*43758.5453);
+    float k=floor(hs*4.0);
+    vec2 r=k<1.0? l : k<2.0? vec2(1.0-l.y,l.x) : k<3.0? 1.0-l : vec2(l.y,1.0-l.x);
+    foamUv=r+vec2(fract(hs*7.13),fract(hs*3.71));
+    float de=min(min(l.x,1.0-l.x),min(l.y,1.0-l.y));
+    foamK=smoothstep(${FOAM_REV.toFixed(3)},${(FOAM_REV+0.01).toFixed(3)},de);
+  }
+  #include <map_fragment>
+  diffuseColor.rgb*=mix(1.0,texture2D(uFoam,foamUv).r/uFoamMean,0.3*foamK);`);
+  };
+  return m;
+}
+/* ---- the mold's grain ----
+   Coverage (the colony canvas's alpha) plus texMoldGrain's R must clear 1
+   for a point to show, so the soft field comes out as round colonies that
+   swell and merge toward the core, over a faint stain of the soft field
+   itself. Grain is world-mapped (0.7m a repeat) off whichever axis the decal
+   faces, so a colony runs on unbroken across a wrap. It fades back to the
+   plain field once a grain texel is smaller than a few pixels — thresholded
+   there it only shimmers. */
+const MOLD_REP=1/0.7;
+function moldCompile(sh){
+  sh.uniforms.uMold={value:texMoldGrain};
+  sh.vertexShader=sh.vertexShader
+    .replace("#include <common>","#include <common>\nvarying vec2 vMoldP;")
+    .replace("#include <project_vertex>",`#include <project_vertex>
+  {
+    vec3 wn=abs(mat3(modelMatrix)*objectNormal);
+    vec3 wp=(modelMatrix*vec4(transformed,1.0)).xyz;
+    vMoldP=(wn.y>0.5? wp.xz : wn.x>0.5? wp.zy : wp.xy)*${MOLD_REP.toFixed(4)};
+  }`);
+  sh.fragmentShader=sh.fragmentShader
+    .replace("#include <common>","#include <common>\nuniform sampler2D uMold;\nvarying vec2 vMoldP;\nfloat moldH;")
+    .replace("#include <bumpmap_pars_fragment>",bumpChunk("  return bumpScale*vec2(dFdx(moldH),dFdy(moldH));"))
+    .replace("#include <map_fragment>",`#include <map_fragment>
+  {
+    vec4 D=texture2D(uMold,vMoldP);
+    float C=diffuseColor.a;
+    float e=D.r*0.92+C*1.25-1.0+(D.g-0.59)*0.1;   // the grain roughs up every edge
+    float dots=smoothstep(-0.04,0.05,e);
+    vec2 fw=fwidth(vMoldP)*512.0;
+    float far=smoothstep(2.5,6.0,sqrt(fw.x*fw.y));   // geometric mean: anisotropic filtering holds the grazing axis
+    float body=smoothstep(0.0,0.45,e);
+    vec3 rim=diffuseColor.rgb*mix(1.35,mix(1.15,0.45,D.r),body)*(0.8+0.4*D.g);
+    rim=mix(rim,vec3(dot(rim,vec3(0.3,0.5,0.2)))*vec3(1.0,1.0,0.8),0.45);
+    diffuseColor.rgb=mix(diffuseColor.rgb,mix(diffuseColor.rgb,rim,dots),1.0-far);
+    diffuseColor.a=mix(max(dots*mix(0.78,1.0,C)*mix(0.82,1.0,D.r),C*0.62),C,far);
+    moldH=dots*(0.35+0.65*D.r)*(1.0-far);
+  }`);
 }
 /* ---- the ceiling spill ----
    Every lit troffer's glow on the tiles around it, as ONE mesh: a quad per

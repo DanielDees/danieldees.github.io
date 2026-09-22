@@ -1,8 +1,9 @@
 /* ---------------- props ---------------- */
 import { rand } from "./utils.js";
 import { W, H, CELL, WALL_H as WALL_H0, cellToWorld, randomOpenCell, isWall, losCells } from "./map.js";
-import { makeCanvas, texWall, scaleBoxUV, makeCrackTexture, envMetal } from "./textures.js";
-import { scene, wallMeshes, removeDecalsOnWall, mergeWallMeshes, freezeStaticScene,
+import { makeCanvas, texWall, scaleBoxUV, makeCrackTexture, envMetal, makeSpillTexture } from "./textures.js";
+import { STATE } from "./state.js";
+import { scene, renderer, wallMeshes, removeDecalsOnWall, mergeWallMeshes, freezeStaticScene,
          markShared, mergeStatic } from "./scene.js";
 
 export let interactables=[];    // {kind, mesh, label, taken}
@@ -212,14 +213,15 @@ const texCard=makeCanvas(160,180,(g,w,h)=>{
    mid for the cab lining, dark for the trim. Tiled at a fixed world scale
    (scaleBoxUV) at 0.5m, so a 2.5m door leaf and a 20mm bezel wear the same
    steel at the same grain size. */
-const texElevSteel=makeCanvas(512,512,(g,w,h)=>{
+const texElevSteel=makeCanvas(1024,1024,(g,w,h)=>{
   g.fillStyle="#c2c7ca";g.fillRect(0,0,w,h);
   /* the tone of the sheet drifts across its width — soft, wrapped, and far
      broader than any one grain line. There used to be two dozen round
      fingerprint smudges in here too, and a map that repeats every half
-     metre turned them into POLKA DOTS on every door in the building. */
-  for(let i=0;i<10;i++){
-    const x=Math.random()*w, ww=30+Math.random()*120, a=0.03+Math.random()*0.05;
+     metre turned them into POLKA DOTS on every door in the building; the
+     doors' own wear is a fitted overlay now (texLeafWear). */
+  for(let i=0;i<12;i++){
+    const x=Math.random()*w, ww=60+Math.random()*240, a=0.03+Math.random()*0.05;
     const c=Math.random()<0.5?"120,126,130":"238,242,244";
     for(const ox of[-w,0,w]){
       const gr=g.createLinearGradient(x+ox-ww/2,0,x+ox+ww/2,0);
@@ -227,55 +229,144 @@ const texElevSteel=makeCanvas(512,512,(g,w,h)=>{
       g.fillStyle=gr;g.fillRect(x+ox-ww/2,0,ww,h);
     }
   }
-  for(let i=0;i<9600;i++){                       // the satin: vertical, always
+  /* the satin, vertical always: long, fine, many — it is also this map's
+     job to be the BUMP, and grooves running down the sheet are what smear a
+     lamp's highlight sideways across it the way brushed steel does */
+  for(let i=0;i<38000;i++){
     const v=Math.random();
-    g.fillStyle=`rgba(${v<0.5?150:238},${v<0.5?156:243},${v<0.5?160:246},${0.04+Math.random()*0.13})`;
-    g.fillRect(Math.random()*w,Math.random()*h,1,20+Math.random()*140);
+    g.fillStyle=`rgba(${v<0.5?150:238},${v<0.5?156:243},${v<0.5?160:246},${0.035+Math.random()*0.11})`;
+    const y=Math.random()*h, l=40+Math.random()*280;
+    g.fillRect(Math.random()*w,y,1,l);
+    if(y+l>h) g.fillRect(Math.random()*w,y+l-h-l,1,l);
   }
-  for(let i=0;i<140;i++){                        // the longer draw marks
+  for(let i=0;i<260;i++){                        // the longer draw marks
     const x=Math.random()*w;
-    g.fillStyle=`rgba(${Math.random()<0.5?128:250},${Math.random()<0.5?134:252},${Math.random()<0.5?138:254},${0.05+Math.random()*0.08})`;
-    g.fillRect(x,0,1+Math.random(),h);
+    g.fillStyle=`rgba(${Math.random()<0.5?128:250},${Math.random()<0.5?134:252},${Math.random()<0.5?138:254},${0.04+Math.random()*0.07})`;
+    g.fillRect(x,0,1+Math.random()*1.4,h);
   }
-  for(let i=0;i<260;i++){                        // micro-scratches, every angle
-    const x=Math.random()*w,y=Math.random()*h,a=Math.random()*7,l=4+Math.random()*26;
-    g.strokeStyle=`rgba(${Math.random()<0.5?110:252},${Math.random()<0.5?116:254},${Math.random()<0.5?120:255},${0.08+Math.random()*0.16})`;
-    g.lineWidth=0.7;
+  for(let i=0;i<700;i++){                        // micro-scratches, every angle
+    const x=Math.random()*w,y=Math.random()*h,a=Math.random()*7,l=6+Math.random()*50;
+    g.strokeStyle=`rgba(${Math.random()<0.5?110:252},${Math.random()<0.5?116:254},${Math.random()<0.5?120:255},${0.06+Math.random()*0.14})`;
+    g.lineWidth=0.6+Math.random()*0.5;
     g.beginPath();g.moveTo(x,y);g.lineTo(x+Math.cos(a)*l,y+Math.sin(a)*l);g.stroke();
   }
 });
 texElevSteel.wrapS=texElevSteel.wrapT=THREE.RepeatWrapping;
 texElevSteel.anisotropy=8;
-/* the cab floor: resilient sheet, and what reads on one is the METRE-scale
-   blotch of a poured/rolled sheet, not the speckle — the carpet had to
-   learn the same thing twice. Tiled at 1m. */
-const texElevFloor=makeCanvas(256,256,(g,w,h)=>{
-  g.fillStyle="#3a3d42";g.fillRect(0,0,w,h);
+/* the wear a pair of doors actually carries, which a tiling map can't: palm
+   smudges at hand height by the meeting edge (u=0 is that edge), a cloth's
+   wipe, dust settled toward the foot and black scuffs off shoes and carts
+   along the kick. Fitted once per leaf, mirrored for the left one. */
+const texLeafWear=makeCanvas(256,640,(g,w,h)=>{
+  g.clearRect(0,0,w,h);
+  const soft=(x,y,rx,ry,rot,rgba)=>{
+    g.save();g.translate(x,y);g.rotate(rot);g.scale(1,ry/rx);
+    const gr=g.createRadialGradient(0,0,0,0,0,rx);
+    gr.addColorStop(0,rgba);gr.addColorStop(1,"rgba(0,0,0,0)");
+    g.fillStyle=gr;g.beginPath();g.arc(0,0,rx,0,7);g.fill();g.restore();
+  };
+  for(let i=0;i<26;i++){                          // hands, at the edge people push
+    const y=h*(0.40+Math.random()*0.26), x=Math.pow(Math.random(),1.8)*w*0.34;
+    soft(x,y,6+Math.random()*16,10+Math.random()*20,(Math.random()-0.5)*0.6,
+      `rgba(62,58,50,${0.06+Math.random()*0.10})`);
+  }
+  for(let k=0;k<2;k++){                           // a cloth dragged across, once
+    const y0=h*(0.25+Math.random()*0.4);
+    g.strokeStyle=`rgba(210,214,216,${0.05+Math.random()*0.04})`;g.lineWidth=18+Math.random()*16;g.lineCap="round";
+    g.beginPath();g.moveTo(w*0.1,y0);g.quadraticCurveTo(w*0.5,y0-40-Math.random()*50,w*0.92,y0+10);g.stroke();
+  }
+  const foot=g.createLinearGradient(0,h*0.84,0,h);
+  foot.addColorStop(0,"rgba(46,40,30,0)");foot.addColorStop(1,"rgba(46,40,30,0.22)");
+  g.fillStyle=foot;g.fillRect(0,h*0.84,w,h*0.16);
+  g.lineCap="round";
+  for(let i=0;i<22;i++){                           // black scuffs along the kick
+    const x=Math.random()*w, y=h*(0.905+Math.random()*0.08), l=10+Math.random()*44;
+    const gr=g.createLinearGradient(x-l/2,0,x+l/2,0), a=0.08+Math.random()*0.16;
+    gr.addColorStop(0,"rgba(12,12,12,0)");gr.addColorStop(0.5,`rgba(12,12,12,${a})`);gr.addColorStop(1,"rgba(12,12,12,0)");
+    g.strokeStyle=gr;g.lineWidth=1.2+Math.random()*2.6;
+    g.beginPath();g.moveTo(x-l/2,y);g.lineTo(x+l/2,y+(Math.random()-0.5)*4);g.stroke();
+  }
+  const top=g.createLinearGradient(0,0,0,h*0.08);  // dust along the head
+  top.addColorStop(0,"rgba(80,74,60,0.14)");top.addColorStop(1,"rgba(80,74,60,0)");
+  g.fillStyle=top;g.fillRect(0,0,w,h*0.08);
+});
+/* the hall position indicator's figure: the car is here, on this floor */
+const texHallDigit=makeCanvas(96,72,(g,w,h)=>{
+  g.fillStyle="#070605";g.fillRect(0,0,w,h);
+  const seg=(x,y,sw,sh)=>{ g.fillRect(x,y,sw,sh); };
+  g.fillStyle="#ff9d2e";
+  const X=34,Y=10,T=5,L=24,H2=24;                    // a 7-segment 0: six of seven lit
+  seg(X+T,Y,L,T); seg(X+T,Y+2*H2+T,L,T);
+  seg(X,Y+T,T,H2); seg(X+L+T,Y+T,T,H2);
+  seg(X,Y+H2+2*T,T,H2-T); seg(X+L+T,Y+H2+2*T,T,H2-T);
+  g.fillStyle="rgba(255,157,46,0.08)";              // the dead segment still ghosts
+  seg(X+T,Y+H2+T,L,T);
+});
+/* the EXIT legend: stencil letters, a chevron either side, a border — lit
+   from behind, so the whole face is drawn as what the diffuser shows */
+const texExitFace=makeCanvas(384,144,(g,w,h)=>{
+  g.fillStyle="#0c100c";g.fillRect(0,0,w,h);
+  g.strokeStyle="rgba(57,210,74,0.55)";g.lineWidth=3;g.strokeRect(9,9,w-18,h-18);
+  g.fillStyle="#39d24a";g.font="bold 84px Arial Narrow, Arial";g.textAlign="center";g.textBaseline="middle";
+  g.fillText("EXIT",w/2,h/2+4);
+  for(const s of[-1,1]){
+    g.beginPath();
+    const cx=w/2+s*148, cy=h/2;
+    g.moveTo(cx-s*14,cy-22);g.lineTo(cx+s*8,cy);g.lineTo(cx-s*14,cy+22);g.lineTo(cx-s*6,cy+22);g.lineTo(cx+s*16,cy);g.lineTo(cx-s*6,cy-22);
+    g.closePath();g.fill();
+  }
+  for(let i=0;i<380;i++){                          // the grime of a diffuser nobody cleans
+    g.fillStyle=`rgba(${18+Math.random()*30|0},${22+Math.random()*30|0},${18+Math.random()*26|0},${0.06+Math.random()*0.22})`;
+    g.beginPath();g.arc(Math.random()*w,Math.random()*h,0.6+Math.random()*1.8,0,7);g.fill();
+  }
+  const dead=g.createLinearGradient(0,0,0,h);       // and the tube behind it, sagging
+  dead.addColorStop(0,"rgba(0,0,0,0.30)");dead.addColorStop(0.5,"rgba(0,0,0,0)");dead.addColorStop(1,"rgba(0,0,0,0.40)");
+  g.fillStyle=dead;g.fillRect(0,0,w,h);
+});
+const texExitGlow=makeSpillTexture(0.62,0.5,0.0);
+/* the cab floor: studded rubber, the floor every service car in the world
+   stands on. The studs are the one regular pattern allowed down here — they
+   are moulded, and this is a cab, not the carpet — and the map doubles as
+   the bump so each one catches the car light on its crown. Under them,
+   the METRE-scale blotch of a sheet that has been walked on for decades.
+   Tiled at 1m: sixteen studs a metre. */
+const texElevFloor=makeCanvas(512,512,(g,w,h)=>{
+  g.fillStyle="#2c2e32";g.fillRect(0,0,w,h);
   const wrap=fn=>{ for(const ox of[0,-w,w])for(const oy of[0,-h,h]) fn(ox,oy); };
   for(let i=0;i<30;i++){                         // the blotch
-    const x=Math.random()*w,y=Math.random()*h,r=30+Math.random()*90;
+    const x=Math.random()*w,y=Math.random()*h,r=60+Math.random()*180;
     const lite=Math.random()<0.5;
     wrap((ox,oy)=>{
       const gr=g.createRadialGradient(x+ox,y+oy,r*0.1,x+ox,y+oy,r);
-      gr.addColorStop(0,lite?`rgba(94,99,106,${0.08+Math.random()*0.09})`
-                           :`rgba(22,24,28,${0.08+Math.random()*0.09})`);
+      gr.addColorStop(0,lite?`rgba(84,88,94,${0.08+Math.random()*0.08})`
+                           :`rgba(14,15,18,${0.08+Math.random()*0.10})`);
       gr.addColorStop(1,"rgba(0,0,0,0)");
       g.fillStyle=gr;g.beginPath();g.arc(x+ox,y+oy,r,0,7);g.fill();
     });
   }
-  for(let i=0;i<3000;i++){                       // then the chip, over five tones
-    const v=Math.random();
-    g.fillStyle=v<0.25?"rgba(18,20,24,0.5)":v<0.5?"rgba(120,124,130,0.4)":
-                v<0.7?"rgba(78,72,60,0.35)":v<0.88?"rgba(56,60,66,0.4)":"rgba(150,152,150,0.28)";
-    g.fillRect(Math.random()*w,Math.random()*h,1.6,1.6);
+  const P=w/16;
+  for(let j=0;j<16;j++)for(let i=0;i<16;i++){     // the studs: a crown, a shadowed foot
+    const x=(i+0.5+(j%2)*0.5)*P, y=(j+0.5)*P;
+    wrap((ox,oy)=>{
+      const X=x+ox, Y=y+oy; if(X<-P||X>w+P||Y<-P||Y>h+P) return;
+      const gr=g.createRadialGradient(X-2,Y-2,1,X,Y,P*0.36);
+      gr.addColorStop(0,"rgba(122,126,132,0.9)");gr.addColorStop(0.7,"rgba(70,73,78,0.9)");
+      gr.addColorStop(0.86,"rgba(18,19,22,0.8)");gr.addColorStop(1,"rgba(18,19,22,0)");
+      g.fillStyle=gr;g.beginPath();g.arc(X,Y,P*0.36,0,7);g.fill();
+    });
   }
-  for(let i=0;i<44;i++){                         // scuffed by whatever was rolled in
-    const x=Math.random()*w,y=Math.random()*h,a=Math.random()*7,l=10+Math.random()*50;
-    g.strokeStyle=`rgba(${Math.random()<0.5?26:142},${Math.random()<0.5?28:146},${Math.random()<0.5?32:150},${0.06+Math.random()*0.14})`;
-    g.lineWidth=1+Math.random()*2;
+  for(let i=0;i<5000;i++){                       // grit ground into it
+    const v=Math.random();
+    g.fillStyle=v<0.5?"rgba(10,10,12,0.35)":"rgba(120,116,104,0.18)";
+    g.beginPath();g.arc(Math.random()*w,Math.random()*h,0.5+Math.random()*0.9,0,7);g.fill();
+  }
+  g.lineCap="round";
+  for(let i=0;i<40;i++){                         // scuffed by whatever was rolled in
+    const x=Math.random()*w,y=Math.random()*h,a=Math.random()*7,l=20+Math.random()*100;
+    g.strokeStyle=`rgba(${Math.random()<0.5?20:140},${Math.random()<0.5?22:144},${Math.random()<0.5?26:148},${0.05+Math.random()*0.10})`;
+    g.lineWidth=2+Math.random()*4;
     g.beginPath();g.moveTo(x,y);
-    g.bezierCurveTo(x+l*0.3,y+(Math.random()-0.5)*10,x+l*0.7,y+(Math.random()-0.5)*10,
-                    x+Math.cos(a)*l,y+Math.sin(a)*l);
+    g.quadraticCurveTo(x+l*0.5,y+(Math.random()-0.5)*20,x+Math.cos(a)*l,y+Math.sin(a)*l);
     g.stroke();
   }
 });
@@ -547,6 +638,22 @@ function makeBreaker(p,facing){
   g.userData.animated=true;                 // the cutscene swings its door / conjures the fuse
   return g;
 }
+/* the cab's panels are EMBOSSED stainless — the fine woven pattern cars
+   are lined with because it hides a thousand hands. As a bump on the
+   brushed map it is invisible past a metre and makes the panel a
+   different metal from the plain lining around it up close. */
+const texLinen=makeCanvas(256,256,(g,w,h)=>{
+  g.fillStyle="#808080";g.fillRect(0,0,w,h);
+  for(let i=0;i<9000;i++){
+    const x=Math.random()*w, y=Math.random()*h, horiz=((x/6|0)+(y/6|0))%2===0;
+    const l=3+Math.random()*4, v=Math.random()<0.5? 170:70;
+    g.strokeStyle=`rgba(${v},${v},${v},0.35)`;g.lineWidth=1;
+    g.beginPath();
+    if(horiz){ g.moveTo(x,y); g.lineTo(x+l,y+(Math.random()-0.5)); }
+    else     { g.moveTo(x,y); g.lineTo(x+(Math.random()-0.5),y+l); }
+    g.stroke();
+  }
+});
 /* ---- the elevator's material set, module-level and shared ----
    One brushed map under four tints does every metal in it; the trim is
    painted rather than brushed, so it takes a flat dark colour. Merging is
@@ -556,14 +663,14 @@ function makeBreaker(p,facing){
    the door darkens toward its foot where it would mirror the floor and holds
    its light toward the head where it would mirror the ceiling, which is what
    makes stainless read as stainless and not as grey paint with a hotspot */
-const elevBrightMat=new THREE.MeshPhongMaterial({map:texElevSteel, color:0xbcc2c6,
-  specular:0x9aa2a8, shininess:70,
+const _elevBright=new THREE.MeshPhongMaterial({map:texElevSteel, color:0xbcc2c6,
+  specular:0x9aa2a8, shininess:70, bumpMap:texElevSteel, bumpScale:0.0006,
   envMap:envMetal, combine:THREE.MultiplyOperation, reflectivity:0.75});   // doors, jambs, sills, bezels
 const elevLineMat  =new THREE.MeshPhongMaterial({map:texElevSteel, color:0x8b9198,
-  specular:0x5a6066, shininess:40,
+  specular:0x5a6066, shininess:40, bumpMap:texElevSteel, bumpScale:0.0005,
   envMap:envMetal, combine:THREE.MultiplyOperation, reflectivity:0.5});    // the cab's lining
-const elevPanelMat =new THREE.MeshPhongMaterial({map:texElevSteel, color:0x767c83,
-  specular:0x4c5258, shininess:34,
+const elevPanelMat =new THREE.MeshPhongMaterial({map:texElevSteel, color:0x7c8289,
+  specular:0x5a6066, shininess:38, bumpMap:texLinen, bumpScale:0.0009,
   envMap:envMetal, combine:THREE.MultiplyOperation, reflectivity:0.5});    // its raised panels
 /* the dark panel that stands in for a mirror. Held OFF both extremes on
    purpose: at a near-black base under a shininess of 110 it flipped between
@@ -576,7 +683,8 @@ const elevDarkMat  =new THREE.MeshPhongMaterial({color:0x33373b, specular:0x2226
 const elevRubberMat=new THREE.MeshPhongMaterial({color:0x141517, specular:0x1e2022, shininess:10});
 const elevAlarmMat =new THREE.MeshPhongMaterial({color:0x6e1a12, specular:0xd05a40, shininess:60});
 const elevVoidMat  =new THREE.MeshBasicMaterial({color:0x050505});   // the hole above the hatch
-const elevFloorMat =new THREE.MeshPhongMaterial({map:texElevFloor, specular:0x1a1c20, shininess:16});
+const elevFloorMat =new THREE.MeshPhongMaterial({map:texElevFloor, bumpMap:texElevFloor, bumpScale:0.004,
+  specular:0x2a2c30, shininess:22});
 const copFaceMat   =new THREE.MeshPhongMaterial({map:texCOP, transparent:true,
   specular:0x000000, shininess:1});
 const capPlateMat  =new THREE.MeshPhongMaterial({map:texCapPlate, transparent:true,
@@ -585,8 +693,36 @@ const hallFaceMat  =new THREE.MeshPhongMaterial({map:texHallFace, transparent:tr
   specular:0x000000, shininess:1});
 const jambNumMat   =new THREE.MeshPhongMaterial({map:texJambNum, transparent:true,
   specular:0x000000, shininess:1});
-markShared(elevBrightMat,elevLineMat,elevPanelMat,elevSmokeMat,elevDarkMat,elevRubberMat,
+/* the black acrylic of the hall lantern's window */
+const elevGlassMat =new THREE.MeshPhongMaterial({color:0x050505, specular:0xb0b0b0, shininess:90});
+markShared(texLeafWear,texHallDigit,texExitFace,texExitGlow,texLinen,elevGlassMat);
+markShared(_elevBright,elevLineMat,elevPanelMat,elevSmokeMat,elevDarkMat,elevRubberMat,
            elevAlarmMat,elevVoidMat,elevFloorMat,copFaceMat,capPlateMat,hallFaceMat,jambNumMat);
+/* ---- what the doors of the working car reflect: the hall itself ----
+   envMetal gives every metal a floor-to-ceiling falloff, which is right for
+   trim; the doors of the car you are sent to find want the ROOM — the paper,
+   the lamp in the ceiling, the carpet — softly, in the steel. One small cube
+   capture, taken the first time you come near (so the fixtures around it
+   are bound and lit), mixed in at a fraction. 32² is small on purpose: a
+   cube capture has no parallax, so a SHARP one bends the room into arcs
+   across a flat door — blurred, it is only the room's light and colour,
+   which is what brushed steel gives back anyway. Shared across builds and
+   re-shot on each, so nothing leaks per respawn. */
+const reflRT=new THREE.WebGLCubeRenderTarget(32,{generateMipmaps:true,minFilter:THREE.LinearMipmapLinearFilter});
+const reflCam=new THREE.CubeCamera(0.05,60,reflRT);
+reflCam.update(renderer,new THREE.Scene());          // allocate it (black) before any door samples it
+markShared(reflRT.texture);
+const _rp=new THREE.Vector3();
+function reflectElevator(){
+  const e=exitDoor;
+  if(!e||!e.userData.reflPending||STATE.level!==0) return;
+  e.localToWorld(_rp.set(0,1.45,0.9));
+  if(Math.hypot(_rp.x-STATE.pos.x,_rp.z-STATE.pos.z)>16) return;
+  e.userData.reflPending=false;
+  e.visible=false;
+  reflCam.position.copy(_rp); reflCam.update(renderer,scene);
+  e.visible=true;
+}
 export function makeElevator(p,facing,opts={}){
   /* the exit elevator, carved INTO its wall cell: placeProps removes that
      cell's wall box and this rebuilds it as flanks + header around a
@@ -603,6 +739,12 @@ export function makeElevator(p,facing,opts={}){
      handrail, the egg-crate and the car panel out with it. */
   const HW=OPEN_W/2, IN=HW-0.03;
   const g=new THREE.Group();
+  /* the working car's bright steel mixes in the captured hall; the wrecked
+     one in THE END keeps the shared envMetal */
+  const live=!opts.wrecked;
+  const elevBrightMat=live? Object.assign(_elevBright.clone(),{envMap:reflRT.texture,
+    combine:THREE.MixOperation, reflectivity:0.14}) : _elevBright;
+  if(live) g.userData.reflPending=true;
   const wallM=opts.wallMat||new THREE.MeshPhongMaterial({map:texWall, specular:0x0d0c07, shininess:6});
   /* Everything static goes into a per-material bucket and comes out as one
      mesh each. This build has roughly five times the parts the old one had
@@ -626,6 +768,49 @@ export function makeElevator(p,facing,opts={}){
   const pbox=(mat,w,h,d,x,y,z,rx)=>put(mat,new THREE.BoxGeometry(w,h,d),x,y,z,rx);
   const rod=(mat,r,len,x,y,z,rx,ry,rz)=>
     put(mat,new THREE.CylinderGeometry(r,r,len,9),x,y,z,rx,ry,rz);
+  /* a moulding: a 2-D profile extruded along its length, UV'd so the grain
+     runs down it. `vert` stands it up as a jamb (profile x across the face,
+     y OUT of the wall, drawn negative); otherwise it lies along x as a head
+     (profile x UP, y out). Both maps are proper rotations, so the faces keep
+     their winding. */
+  const moulding=(mat,pts,len,vert,x0,y0,z0)=>{
+    const sh=new THREE.Shape();
+    pts.forEach(([x,y,q],i)=>{ if(!i) sh.moveTo(x,y); else if(q) sh.quadraticCurveTo(q[0],q[1],x,y); else sh.lineTo(x,y); });
+    const geo=new THREE.ExtrudeGeometry(sh,{depth:len,bevelEnabled:false,curveSegments:5});
+    const P=geo.attributes.position, N=geo.attributes.normal, U=geo.attributes.uv;
+    for(let i=0;i<P.count;i++){
+      const px=P.getX(i), py=P.getY(i), pz=P.getZ(i), nx=N.getX(i), ny=N.getY(i), nz=N.getZ(i);
+      U.setXY(i,(Math.abs(px)+Math.abs(py))/0.5,pz/0.5);
+      if(vert){ P.setXYZ(i,x0+px,y0+pz,z0-py); N.setXYZ(i,nx,nz,-ny); }
+      else    { P.setXYZ(i,x0+pz,y0+px,z0+py); N.setXYZ(i,nz,nx,ny); }
+    }
+    put(mat,geo);
+  };
+  /* a rounded plate, bevelled, standing proud of the wall by `d` */
+  const plate=(mat,w,h,d,r,x,y,z)=>{
+    const sh=new THREE.Shape(), X=w/2, Y=h/2;
+    sh.moveTo(-X+r,-Y);sh.lineTo(X-r,-Y);sh.quadraticCurveTo(X,-Y,X,-Y+r);sh.lineTo(X,Y-r);
+    sh.quadraticCurveTo(X,Y,X-r,Y);sh.lineTo(-X+r,Y);sh.quadraticCurveTo(-X,Y,-X,Y-r);
+    sh.lineTo(-X,-Y+r);sh.quadraticCurveTo(-X,-Y,-X+r,-Y);
+    const b=Math.min(0.004,d*0.4);
+    const geo=new THREE.ExtrudeGeometry(sh,{depth:d-b,bevelEnabled:true,bevelThickness:b,bevelSize:b,bevelSegments:2,curveSegments:5});
+    const P=geo.attributes.position, U=geo.attributes.uv;
+    for(let i=0;i<P.count;i++) U.setXY(i,P.getX(i)/0.5,P.getY(i)/0.5);
+    geo.translate(x,y,z);
+    put(mat,geo);
+  };
+  /* the same plate, turned to face into the car from a side wall (ry) */
+  const plateR=(mat,w,h,d,r,x,y,z,ry)=>{
+    const sh=new THREE.Shape(), X=w/2, Y=h/2;
+    sh.moveTo(-X+r,-Y);sh.lineTo(X-r,-Y);sh.quadraticCurveTo(X,-Y,X,-Y+r);sh.lineTo(X,Y-r);
+    sh.quadraticCurveTo(X,Y,X-r,Y);sh.lineTo(-X+r,Y);sh.quadraticCurveTo(-X,Y,-X,Y-r);
+    sh.lineTo(-X,-Y+r);sh.quadraticCurveTo(-X,-Y,-X+r,-Y);
+    const b=Math.min(0.005,d*0.4);
+    const geo=new THREE.ExtrudeGeometry(sh,{depth:d-b,bevelEnabled:true,bevelThickness:b,bevelSize:b,bevelSegments:3,curveSegments:5});
+    const P=geo.attributes.position, U=geo.attributes.uv;
+    for(let i=0;i<P.count;i++) U.setXY(i,P.getX(i)/0.5,P.getY(i)/0.5);
+    put(mat,geo,x,y,z,0,ry||0,0);
+  };
   const flushBuckets=(target)=>{
     for(const[mat,arr]of B){
       target.add(mergeStatic(arr,mat));
@@ -677,14 +862,14 @@ export function makeElevator(p,facing,opts={}){
      which is also the only version that throws a shadow. */
   const PY0=0.24, PY1=OPEN_H-0.22, PH=PY1-PY0, PCY=(PY0+PY1)/2;
   for(const s of[-1,1])
-    for(const pz of[-1.94,-0.72]) sbox(elevPanelMat, 0.016,PH,1.06, s*(IN-0.038),PCY,pz);
+    for(const pz of[-1.94,-0.72]) plateR(elevPanelMat,1.06,PH,0.016,0.02, s*(IN-0.030),PCY,pz, s>0?-Math.PI/2:Math.PI/2);
   /* three boards across the back wall — the middle one stands in for the
      mirror. Their width is solved from the lining rather than written down,
      so the 65mm margin at the corners and the 125mm gap between boards hold
      at any cab width instead of leaving a bare strip beside the kick posts. */
   const BPW=(2*(IN-0.065)-0.25)/3, BPX=BPW+0.125;
   for(const px of[-BPX,0,BPX])
-    sbox(px===0? elevSmokeMat:elevPanelMat, BPW,PH,0.016, px,PCY,-DEPTH+0.068);
+    plateR(px===0? elevSmokeMat:elevPanelMat, BPW,PH,0.016,0.02, px,PCY,-DEPTH+0.060);
   /* the crashed car took the impact through the back panel */
   if(opts.wrecked)
     put(new THREE.MeshPhongMaterial({map:makeCrackTexture(), transparent:true, opacity:0.85,
@@ -800,19 +985,32 @@ export function makeElevator(p,facing,opts={}){
     sbox(elevBrightMat,OPEN_W+0.10,0.014,z0-z1, 0,0.023,(z0+z1)/2);
   for(const s of[-1,1]) pbox(elevDarkMat,0.035,OPEN_H,0.14, s*(HW-0.018),OPEN_H/2,0.055);
   pbox(elevDarkMat,OPEN_W,0.06,0.14, 0,OPEN_H-0.03,0.055);
-  sbox(elevBrightMat,0.15,OPEN_H+0.20,0.13, -(HW+0.075),(OPEN_H+0.20)/2,0.065);
-  sbox(elevBrightMat,0.15,OPEN_H+0.20,0.13,  (HW+0.075),(OPEN_H+0.20)/2,0.065);
-  sbox(elevBrightMat,OPEN_W+0.45,0.17,0.13, 0,OPEN_H+0.085,0.065);
+  /* the entrance frame: two side casings and a head casing that caps them,
+     each a real profile — a rounded return into the opening, a flat face
+     with a quirk cut in it, a rounded outer edge — so every edge catches the
+     light instead of the frame reading as three boxes of grey */
+  const JAMB=[[0,0],[0,-0.092],[0.022,-0.13,[0,-0.13]],[0.046,-0.13],[0.050,-0.124],[0.056,-0.124],[0.060,-0.13],
+              [0.128,-0.13],[0.15,-0.108,[0.15,-0.13]],[0.15,0]];
+  for(const s2 of[-1,1])
+    moulding(elevBrightMat,JAMB.map(([x,y,q])=>[s2*x,y,q&&[s2*q[0],q[1]]]),OPEN_H,true,s2*HW,0,0);
+  moulding(elevBrightMat,[[0,0],[0,0.098],[0.024,0.14,[0,0.14]],[0.056,0.14],[0.060,0.134],[0.066,0.134],[0.070,0.14],
+                          [0.148,0.14],[0.17,0.118,[0.17,0.14]],[0.17,0]],OPEN_W+0.34,false,-(OPEN_W+0.34)/2,OPEN_H,0);
   /* the floor designation, cut into a plate on the jamb — the only place
      in the building that names the floor you are standing on */
   sbox(elevBrightMat,0.12,0.19,0.012, -(HW+0.075),1.95,0.136);
   /* the hall station, and the hall lantern over the head */
-  sbox(elevBrightMat,HALL.w+0.03,HALL.h+0.05,0.014, HALL.x+0.038,HALL.y,0.014);
+  plate(elevBrightMat,HALL.w+0.03,HALL.h+0.05,0.016,0.018, HALL.x+0.038,HALL.y,0.007);
   for(const[sx,sy]of[[-1,1],[1,1],[-1,-1],[1,-1]])          // its four screws
-    rod(elevBrightMat,0.007,0.007, HALL.x+0.038+sx*0.088,HALL.y+sy*0.15,0.024, Math.PI/2,0,0);
-  for(const cy of[HALL.upC,HALL.dnC])                       // and the two bezels
-    rod(elevBrightMat,0.040,0.008, HALL.x,hallY(cy),0.030, Math.PI/2,0,0);
-  pbox(elevDarkMat,0.42,0.21,0.09, 0,OPEN_H+0.42,0.085);
+    rod(elevDarkMat,0.0065,0.006, HALL.x+0.038+sx*0.088,HALL.y+sy*0.15,0.025, Math.PI/2,0,0);
+  for(const cy of[HALL.upC,HALL.dnC]){                      // and the two bezels
+    const t=new THREE.TorusGeometry(0.036,0.006,8,24);
+    put(elevBrightMat,t,HALL.x,hallY(cy),0.030);
+  }
+  /* the hall lantern and position indicator over the head: a rounded steel
+     plate, a black acrylic window, the two arrows the ding lights and the
+     figure of the floor the car is standing at */
+  plate(elevBrightMat,0.66,0.25,0.04,0.03, 0,OPEN_H+0.42,0.012);
+  put(elevGlassMat,new THREE.PlaneGeometry(0.60,0.19), 0,OPEN_H+0.42,0.0535);
   flushBuckets(g);
   /* ---------- the parts the cutscenes drive ---------- */
   const printed=(mat,w,h,x,y,z,ry)=>{
@@ -929,6 +1127,13 @@ export function makeElevator(p,facing,opts={}){
       d.add(mergeStatic(arr,mat));
       for(const m of arr) m.geometry.dispose();
     }
+    /* the fitted wear, on the hall face, mirrored so both meeting edges
+       carry the hands */
+    const wear=new THREE.Mesh(new THREE.PlaneGeometry(LWD-0.03,LHD),
+      new THREE.MeshPhongMaterial({map:texLeafWear, transparent:true, depthWrite:false,
+        specular:0x000000, shininess:1}));
+    wear.position.set(0,LCY,zg1+0.0215); if(side<0) wear.scale.x=-1;
+    d.add(wear);
     d.position.set(side*ELEV.LEAF_X,0,0);
     /* one leaf came out of its track. This is a ROLL about z, not a
        translation: the cutscene owns .position.x on both leaves, so any
@@ -942,39 +1147,36 @@ export function makeElevator(p,facing,opts={}){
   g.userData.hallLamps=[];
   for(const[ly,rz]of[[OPEN_H+0.42,0],[OPEN_H+0.42,Math.PI]]){
     const lm=new THREE.MeshBasicMaterial({color:0x241a06});
-    const tri=new THREE.Mesh(new THREE.CircleGeometry(0.055,3),lm);
-    tri.position.set(rz? 0.10:-0.10,ly,0.132); tri.rotation.z=rz+Math.PI/2;
+    const tri=new THREE.Mesh(new THREE.CircleGeometry(0.052,3),lm);
+    tri.position.set(rz? 0.19:-0.19,ly,0.0545); tri.rotation.z=rz+Math.PI/2;
     g.add(tri); g.userData.hallLamps.push(lm);
   }
-  /* ---------- the EXIT sign: a real box, not a decal ---------- */
-  const signC=makeCanvas(256,96,(gx,w,h)=>{
-    gx.fillStyle="#0e120e";gx.fillRect(0,0,w,h);
-    gx.fillStyle="#39d24a";gx.font="bold 58px Courier New";
-    gx.textAlign="center";gx.textBaseline="middle";gx.fillText("EXIT",w/2,h/2+2);
-    for(let i=0;i<260;i++){                  // the grime of a diffuser nobody cleans
-      gx.fillStyle=`rgba(${18+Math.random()*30|0},${22+Math.random()*30|0},${18+Math.random()*26|0},${0.1+Math.random()*0.3})`;
-      gx.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*3,1+Math.random()*3);
-    }
-    const dead=gx.createLinearGradient(0,0,0,h);      // and the tube behind it, sagging
-    dead.addColorStop(0,"rgba(0,0,0,0.35)");dead.addColorStop(0.5,"rgba(0,0,0,0)");
-    dead.addColorStop(1,"rgba(0,0,0,0.45)");
-    gx.fillStyle=dead;gx.fillRect(0,0,w,h);
-  });
+  const digit=new THREE.Mesh(new THREE.PlaneGeometry(0.16,0.12),
+    new THREE.MeshBasicMaterial({map:texHallDigit, color:0x6a6a6a}));
+  digit.position.set(0,OPEN_H+0.42,0.0545); g.add(digit);
+  /* ---------- the EXIT sign: a real box, not a decal ----------
+     A rounded housing on two hangers, the legend lit from behind, and the
+     green it throws on the wall around it — driven off the sign's own
+     material, so it wakes with the power exactly as the face does. */
   {
     const sh=[];
-    const hb=new THREE.Mesh(new THREE.BoxGeometry(0.92,0.38,0.11));
-    hb.position.set(0,OPEN_H+0.82,0.075); sh.push(hb);
-    for(const s of[-1,1]){                    // the brackets it hangs off
-      const br=new THREE.Mesh(new THREE.BoxGeometry(0.05,0.16,0.10));
-      br.position.set(s*0.30,OPEN_H+1.03,0.045); sh.push(br);
+    for(const s2 of[-1,1]){
+      const br=new THREE.Mesh(new THREE.BoxGeometry(0.04,0.16,0.08));
+      br.position.set(s2*0.30,OPEN_H+1.03,0.04); sh.push(br);
     }
     g.add(mergeStatic(sh,elevDarkMat));
     for(const m of sh) m.geometry.dispose();
   }
-  const sign=new THREE.Mesh(new THREE.PlaneGeometry(0.82,0.29),
-    new THREE.MeshBasicMaterial({map:signC}));
-  sign.position.set(0,OPEN_H+0.82,0.131); g.add(sign); g.userData.sign=sign;
+  plate(elevDarkMat,0.94,0.38,0.11,0.035, 0,OPEN_H+0.82,0.02);
+  const sign=new THREE.Mesh(new THREE.PlaneGeometry(0.84,0.30),
+    new THREE.MeshBasicMaterial({map:texExitFace}));
+  sign.position.set(0,OPEN_H+0.82,0.1315); g.add(sign); g.userData.sign=sign;
   sign.material.color.set(0x333333);
+  const glowMat=new THREE.MeshBasicMaterial({map:texExitGlow, color:0x000000,
+    transparent:true, depthWrite:false, blending:THREE.AdditiveBlending});
+  const glow=new THREE.Mesh(new THREE.PlaneGeometry(1.5,0.76),glowMat);
+  glow.position.set(0,OPEN_H+0.82,0.008); g.add(glow);
+  glow.onBeforeRender=()=>{ const c=sign.material.color; glowMat.color.setRGB(c.r*0.05,c.g*0.30,c.b*0.08); };
   /* ---------- the call buttons ----------
      DOWN is the one that matters, so DOWN is `btnMat`/`btnLocal` — the ride
      cutscene lights that material and aims the camera at that position. */
@@ -985,6 +1187,11 @@ export function makeElevator(p,facing,opts={}){
   const up=new THREE.Mesh(new THREE.CylinderGeometry(0.030,0.030,0.020,14),
     new THREE.MeshBasicMaterial({color:0x231208}));
   up.rotation.x=Math.PI/2; up.position.set(HALL.x,hallY(HALL.upC),0.040); g.add(up);
+  /* each button sits in a thin lit ring that answers with it */
+  for(const[cy,mat]of[[HALL.dnC,btnMat],[HALL.upC,up.material]]){
+    const ring=new THREE.Mesh(new THREE.RingGeometry(0.0302,0.0335,24),mat);
+    ring.position.set(HALL.x,hallY(cy),0.0352); g.add(ring);
+  }
   g.position.copy(p); g.rotation.y=facing;
   g.userData.animated=true;                 // doors slide, buttons/sign light during the ride cutscene
   return g;
@@ -1086,6 +1293,7 @@ export function placeProps(){
 
 /* ---------------- prop idle ---------------- */
 export function updateProps(t){
+  reflectElevator();
   for(const it of interactables){
     if(it.taken) continue;
     if(it.kind==="bottle"||it.kind==="fuse"){
