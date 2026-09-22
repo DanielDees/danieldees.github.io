@@ -28,7 +28,7 @@ import { updateCave, CAVE, grid3 } from "./cave.js";
 import { updateHatchlings, HATCH } from "./hatchling.js";
 import { updateLantern, LANT } from "./lantern.js";
 import { enterTheEnd, enterTheNest, debugSkipToTheEnd, debugWarpToTerminal, debugWarpToNest,
-         respawn, die, win } from "./lifecycle.js";
+         respawn, die, win, prewarmLevel0 } from "./lifecycle.js";
 import { ui, renderObjectives } from "./ui.js";
 import "./input.js";
 
@@ -74,6 +74,8 @@ function loop(now){
   renderer.render(scene,camera);
 }
 requestAnimationFrame(loop);
+/* once the start screen has painted, build and warm level 0 behind it */
+setTimeout(prewarmLevel0,120);
 
 /* console/debug handle (also used by automated smoke tests) */
 window.NOCLIP_DEBUG={STATE, monster, spider, CINE, scene, camera, renderer,

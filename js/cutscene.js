@@ -1,4 +1,4 @@
-/* ---------------- scripted cinematics: breaker fix & exit elevator ----------------
+/* ---------------- scripted cinematics: restoring the power & exit elevator ----------------
    Both sequences take the camera away from the player (main.js skips
    updatePlayer/updateFocus while CINE.active) and drive props, audio and
    the entity on a fixed timeline. The breaker scene keeps the entity AI
@@ -10,13 +10,13 @@ import { worldToCell, isWall, losCells } from "./map.js";
 import { scene, camera, playerLight, amb, lights, markShared } from "./scene.js";
 import { makeCanvas } from "./textures.js";
 import { AU, panTo, sfxAlert, sfxStinger, sfxClunk, sfxPowerOn,
-         sfxBoxOpen, sfxBoxClose, sfxFuseHum,
+         sfxBoxOpen, sfxLatchTurn, sfxFuseSeat, FUSE_SEAT_AT, sfxLeverStrain, sfxMainThrow, sfxBreakerClick,
          sfxElevButton, sfxElevDing, sfxElevDoors, sfxElevThud, sfxElevJolt, sfxFloorBlip,
          startElevDescend, sfxElevRattle, sfxElevGrind, sfxLightsOut,
          sfxComputerBoot, sfxComputerStatic, sfxSpiderShriek, sfxSpiderTap,
          sfxSpiderScratch, sfxSpiderDig, sfxHoleRumble, sfxStoneStep } from "./audio.js";
 import { ui, renderObjectives } from "./ui.js";
-import { monsterRushTo } from "./monster.js";
+import { monsterRushTo, poseMonster } from "./monster.js";
 import { exitDoor, ELEV } from "./props.js";
 import { win, enterTheEnd, enterTheNest } from "./lifecycle.js";
 import { LIB, losCells2, revealHole } from "./library.js";
@@ -43,14 +43,14 @@ function setCam(x,y,z,yaw,pitch){
 export function updateCinematic(dt){
   if(!CINE.active) return;
   if(STATE.dead||STATE.won){                  // safety: nothing to script anymore
-    if(CINE.kind==="breaker"&&D) playerLight.intensity=D.savedPL;
+    if(CINE.kind==="breaker"&&D){ playerLight.intensity=D.savedPL; playerLight.color.set(PL_WARM); }
     if(CINE.kind==="elev"){ STATE.ambDim=1; playerLight.intensity=0.12; }
     CINE.active=false; CINE.kind=null; D=null;
     monster.holdAt30=false; monster.held=false;
     return;
   }
   CINE.t+=dt;
-  if(CINE.kind==="breaker") updateBreaker();
+  if(CINE.kind==="breaker") updateBreaker(dt);
   else if(CINE.kind==="elev") updateElevator(dt);
   else if(CINE.kind==="libIntro") updateLibIntro(dt);
   else if(CINE.kind==="terminal") updateTerminal(dt);
@@ -59,60 +59,159 @@ export function updateCinematic(dt){
   else if(CINE.kind==="ascend") updateAscend(dt);
 }
 
-/* ================= breaker: the fuse seats itself ================= */
-/* ~4.6s: door swings open, the fuse fades in hovering and glides into the
-   slot, the lever flips with the power surge, the door claps shut. The
-   player can't move — deliberately long enough for a distant entity to
-   close in; one inside 30m freezes there until control returns. */
+/* ================= breaker: restoring the power ================= */
+/* ~7s, all of it done by hand: the latch, the door, the fuse pushed up into
+   its jaws, the main switch thrown against its spring. The contacts close
+   with an arc, the whole floor browns out, and the tubes strike back up in a
+   ring rolling out from the board (lights.js, STATE.surge) while the camera
+   turns to watch it come on down the corridor. The player can't move — long
+   enough for a distant entity to close in; one inside 30m freezes there
+   until control returns. */
+const BK={LATCH:0.5, OPEN:0.72, OPEN_END:1.38, FUSE0:1.5, FUSE1:2.42, SEAT:2.7,
+          SWING0:3.0, SWING1:3.7, STRAIN:3.72, THROW:4.08, LIVE:4.45,
+          BACK0:5.2, BACK1:6.3, END:7.0};
+const PL_WARM=0xffeeb0;
+/* the way to look when it is done: the longest open run from the cell the
+   board faces into, so the lights have somewhere to come on */
+function breakerLookBack(g){
+  const n=new THREE.Vector3(0,0,1).applyQuaternion(g.quaternion);
+  const nx=Math.round(n.x), nz=Math.round(n.z);
+  const c=worldToCell(g.position.x+nx*1.2,g.position.z+nz*1.2);
+  let best=[nx,nz], bestN=-1;
+  for(const[dx,dz]of[[nx,nz],[nz,-nx],[-nz,nx]]){
+    let k=0; while(k<9 && !isWall(c.cx+dx*(k+1),c.cy+dz*(k+1))) k++;
+    if(k>bestN){ bestN=k; best=[dx,dz]; }
+  }
+  return {yaw:Math.atan2(-best[0],-best[1]), pitch:0.1};
+}
 export function startBreakerCine(item){
   CINE.active=true; CINE.kind="breaker"; CINE.t=0;
   ui.prompt.classList.remove("show");
-  const mesh=item.mesh, bp=mesh.position;
-  const ex=STATE.pos.x, ey=STATE.y+STATE.curEyeH, ez=STATE.pos.z;
-  D={fired:new Set(), u:mesh.userData,
-     eye:{x:ex,y:ey,z:ez},
-     yaw0:STATE.yaw, pitch0:STATE.pitch,
-     tgt:lookAngles(ex,ey,ez,bp.x,bp.y,bp.z),
-     fuseFrom:new THREE.Vector3(0,-0.25,0.55),
-     fuseTo:new THREE.Vector3(0,-0.055,0.08),
+  const g=item.mesh, u=g.userData;
+  g.updateMatrixWorld(true);
+  const L=(x,y,z)=>g.localToWorld(new THREE.Vector3(x,y,z));
+  const pose=(p,q)=>({p, ...lookAngles(p.x,p.y,p.z,q.x,q.y,q.z)});
+  const eye=new THREE.Vector3(STATE.pos.x,STATE.y+STATE.curEyeH,STATE.pos.z);
+  D={fired:new Set(), g, u,
+     poses:[{p:eye.clone(), yaw:STATE.yaw, pitch:STATE.pitch},
+            pose(L(0.1,0.14,1.25),L(0,-0.02,0.1)),              // the board
+            pose(L(0.06,0.1,0.62),L(0,0,0)),                    // the fuse holder
+            pose(L(0.34,0.2,1.08),L(0.3,0.16,0.02)),            // the main switch, under the meter
+            {p:eye.clone(), ...breakerLookBack(g)}],            // back down the corridor
+     n:new THREE.Vector3(0,0,1).applyQuaternion(g.quaternion),
+     arcW:L(0,0.33,0.3),
+     shake:0, flash:0, fuseFrom:null, fusePre:null, trip:0, tagA:0, tagV:0,
      savedPL:playerLight.intensity};
-  /* enough fill light to actually read the animation in the murk */
   playerLight.intensity=0.8;
   /* the entity drops everything and sprints for this spot */
-  monsterRushTo(bp.x,bp.z);
+  monsterRushTo(g.position.x,g.position.z);
   monster.holdAt30=true;
 }
-function updateBreaker(){
-  const t=CINE.t, u=D.u;
-  const k=seg(t,0,0.6);                       // the panel pulls your eyes to it
-  STATE.yaw=angLerp(D.yaw0,D.tgt.yaw,k);
-  STATE.pitch=lerp(D.pitch0,D.tgt.pitch,k);
-  setCam(D.eye.x,D.eye.y,D.eye.z,STATE.yaw,STATE.pitch);
-  /* door open ramps 0→1, the close envelope multiplies it back down */
-  cue("open",0.15,()=>sfxBoxOpen());
-  u.doorPivot.rotation.y = -2.05*seg(t,0.15,0.95)*(1-seg(t,3.55,4.25));
-  const fuse=u.fuse;
-  cue("conjure",1.0,()=>{ fuse.visible=true; sfxFuseHum(2.1); });
-  if(t>=1.0){
-    const fk=seg(t,1.05,3.0);
-    fuse.position.lerpVectors(D.fuseFrom,D.fuseTo,fk);
-    fuse.position.x+=Math.sin(t*5)*0.012*(1-fk);          // unsteady hover
-    fuse.position.y+=Math.sin(t*3.3)*0.01*(1-fk);
-    fuse.rotation.y=(1-fk)*0.5*Math.sin(t*2.1);
-    const op=seg(t,1.0,1.35);
-    fuse.traverse(o=>{ if(o.isMesh) o.material.opacity=op; });
+function updateBreaker(dt){
+  const t=CINE.t, u=D.u, g=D.g, P=D.poses;
+  /* ---- the camera: four moves, handheld throughout ---- */
+  const cp=P[0].p.clone(); let yaw=P[0].yaw, pitch=P[0].pitch;
+  const ks=[seg(t,0,0.8), seg(t,1.05,1.85), seg(t,BK.SWING0,BK.SWING1), seg(t,BK.BACK0,BK.BACK1)];
+  ks.forEach((k,i)=>{ const q=P[i+1]; cp.lerp(q.p,k); yaw=angLerp(yaw,q.yaw,k); pitch=lerp(pitch,q.pitch,k); });
+  /* leaning into the switch, and the recoil when it goes */
+  cp.addScaledVector(D.n,-0.05*seg(t,BK.STRAIN,BK.THROW)*(1-seg(t,BK.THROW,BK.THROW+0.35)));
+  const hh=1-seg(t,BK.BACK1,BK.END);
+  cp.x+=Math.sin(t*1.7)*0.004*hh; cp.y+=Math.sin(t*2.3+1)*0.003*hh;
+  yaw+=Math.sin(t*1.3)*0.005*hh; pitch+=Math.sin(t*1.9+2)*0.004*hh;
+  D.shake*=Math.exp(-dt*6);
+  const sk=Math.floor(t*60);
+  cp.x+=(hash(sk)-0.5)*0.03*D.shake; cp.y+=(hash(sk+7)-0.5)*0.03*D.shake;
+  yaw+=(hash(sk+3)-0.5)*0.025*D.shake; pitch+=(hash(sk+5)-0.5)*0.025*D.shake;
+  STATE.yaw=yaw; STATE.pitch=pitch;
+  setCam(cp.x,cp.y,cp.z,yaw,pitch);
+  /* ---- the latch, then the door flung back against its stop ---- */
+  cue("latch",BK.LATCH,()=>sfxLatchTurn());
+  u.latch.rotation.z=-Math.PI/2*seg(t,BK.LATCH,BK.LATCH+0.2);
+  cue("open",BK.OPEN,()=>sfxBoxOpen());
+  const knock=t>BK.OPEN_END? Math.sin(clamp((t-BK.OPEN_END)/0.32,0,1)*Math.PI)*0.07 : 0;
+  u.doorPivot.rotation.y=u.DOOR_OPEN*seg(t,BK.OPEN,BK.OPEN_END)+knock;
+  /* ---- the fuse: up from the bottom of the frame, into its jaws ---- */
+  const f=u.fuse;
+  if(t>=BK.FUSE0 && !D.fuseFrom){
+    /* it rises into frame from below, near the board — brought in from the
+       lens it filled the screen and its blades read as planks */
+    D.fusePre=u.FUSE_SEAT.clone().add(new THREE.Vector3(0,-0.12,0.03));
+    D.fuseFrom=D.fusePre.clone().add(new THREE.Vector3(0.04,-0.36,0.2));
+    f.visible=true;
   }
-  cue("seat",3.05,()=>{
-    sfxClunk(); sfxPowerOn();
+  if(D.fuseFrom){
+    if(t<BK.FUSE1){
+      const k=seg(t,BK.FUSE0,BK.FUSE1);
+      f.position.lerpVectors(D.fuseFrom,D.fusePre,k); f.position.y+=Math.sin(k*Math.PI)*0.03;
+      f.rotation.set((1-k)*0.22,(1-k)*-0.3,(1-k)*0.15);
+    } else if(t<BK.SEAT){
+      /* worked in against the springs, harder toward the end */
+      const k=(t-BK.FUSE1)/(BK.SEAT-BK.FUSE1);
+      f.position.lerpVectors(D.fusePre,u.FUSE_SEAT,k*k);
+      f.position.x+=Math.sin(k*Math.PI*4)*0.004*(1-k);
+      f.rotation.set(0,0,Math.sin(k*Math.PI*3)*0.03*(1-k));
+    } else { f.position.copy(u.FUSE_SEAT); f.rotation.set(0,0,0); }
+  }
+  cue("seatSfx",BK.SEAT-FUSE_SEAT_AT,()=>sfxFuseSeat());
+  cue("seat",BK.SEAT,()=>{
+    u.sparks.emit(10,u.socket,0.05,{x:0,y:-0.3,z:0.6});
+    D.shake=Math.max(D.shake,0.35); D.flash=0.35;
+  });
+  /* half a circuit: the FAULT lamp stutters until the main is closed */
+  if(t>=BK.SEAT && t<BK.LIVE) u.setLamp(u.lampR, hash(Math.floor(t*14)+3)>0.35? 1:0.2);
+  /* ---- the main switch, pulled back and then thrown ---- */
+  cue("strain",BK.STRAIN,()=>sfxLeverStrain());
+  let a=u.LEVER_OFF+0.1*seg(t,BK.STRAIN,BK.THROW-0.05);
+  if(t>=BK.THROW-0.05){
+    const k=clamp((t-(BK.THROW-0.05))/0.11,0,1);
+    a=lerp(u.LEVER_OFF+0.1,u.LEVER_ON-0.14,k*k);
+    if(k>=1){ const e=t-(BK.THROW+0.06); a=u.LEVER_ON-0.14*Math.exp(-e*9)*Math.cos(e*30); }
+  }
+  u.lever.rotation.x=a;
+  /* the lockout tag hangs off it and swings when it goes */
+  D.tagV+=(-D.tagA*55-D.tagV*2.2)*dt; D.tagA+=D.tagV*dt;
+  u.tag.rotation.x=-a+D.tagA;
+  cue("throw",BK.THROW,()=>{
+    sfxMainThrow();
+    u.sparks.emit(22,u.switchAt,0.06,{x:0.5,y:0.2,z:0.7});
+    u.sparks.emit(20,u.lugs,0.1,{x:0,y:0.1,z:1});
+    D.shake=1; D.flash=1; D.tagV=-9;
+    STATE.surge={x:g.position.x, z:g.position.z, t:0, maxR:190};
+  });
+  /* the arc: blue-white, in the cabinet and on everything near it */
+  D.flash*=Math.exp(-dt*9);
+  const fl=D.flash>0.02? D.flash*(hash(Math.floor(t*40))>0.3? 1:0.25) : 0;
+  u.arc.material.opacity=Math.min(1,fl*1.1);
+  const fk=Math.min(1,fl);
+  playerLight.color.setRGB(1-0.28*fk, 0.933-0.09*fk, 0.69+0.31*fk);
+  /* the fill goes with the building when the load comes on */
+  const dip=seg(t,BK.THROW+0.1,BK.THROW+0.2)*(1-seg(t,BK.LIVE,BK.LIVE+0.3));
+  playerLight.intensity=0.8*(1-0.7*dip)+fl*3.5;
+  if(fl>0.05) playerLight.position.copy(D.arcW);
+  else playerLight.position.set(cp.x,cp.y+0.3,cp.z);
+  /* ---- the building takes the load ---- */
+  cue("live",BK.LIVE,()=>{
+    sfxPowerOn();
     STATE.powerOn=true;
-    u.lamp.material.color.set(0x39d24a);
     if(exitDoor) exitDoor.userData.sign.material.color.set(0xffffff);
     renderObjectives();                                 // the objective box says it
   });
-  if(t>=3.05) u.lever.position.y=lerp(-0.1,0.1,seg(t,3.05,3.3));
-  cue("close",4.1,()=>sfxBoxClose());
-  if(t>=4.6){
-    playerLight.intensity=D.savedPL;
+  if(t>=BK.LIVE){
+    const e=t-BK.LIVE;
+    u.setLamp(u.lampR,0);
+    u.setLamp(u.lampG, e<0.25? (hash(Math.floor(t*30)+9)>0.4? 1:0.2) : 1);
+    u.needle.rotation.z=u.needleAng(Math.max(0,230*(1-Math.exp(-e*4.2)*Math.cos(e*7.5))));
+  }
+  /* the tripped breakers snap themselves back on, one after another */
+  while(D.trip<u.trips.length && t>=BK.LIVE+0.2+D.trip*0.09){
+    const tr=u.trips[D.trip++];
+    tr.piv.rotation.x=u.TOG_ON; tr.flag.visible=false;
+    sfxBreakerClick(clamp(tr.x*2.5,-0.6,0.6));
+  }
+  u.sparks.update(dt);
+  if(t>=BK.END){
+    playerLight.intensity=D.savedPL; playerLight.color.set(PL_WARM);
+    u.powered=true;
     CINE.active=false; CINE.kind=null; D=null;
     /* control returns; a held entity announces itself and comes loose */
     monster.holdAt30=false;
@@ -173,9 +272,7 @@ export function startElevatorCine(item){
   /* the emergency lamp gets a REAL point source parked at the fixture —
      the same dim, distance-falloff red as the crashed cab in THE END —
      instead of recoloring the bright ceiling panel into a screen wash */
-  const eml=new THREE.PointLight(0xff2515,0,5,2);
-  eml.position.copy(u.emerg.position); eml.position.z+=0.25; eml.position.y-=0.08;
-  g.add(eml); D.emergLight=eml;
+  D.emergLight=u.emergLight;
   /* the entity is wherever its AI left it — vanish it until the script
      conjures it sprinting down the corridor */
   monster.mesh.visible=false;
@@ -198,9 +295,7 @@ function makeSparks(g){
     m.visible=false; g.add(m);
     pool.push({m,vx:0,vy:0,vz:0,life:0,max:1});
   }
-  const light=new THREE.PointLight(0xff9540,0,3.5,2);
-  light.position.set(0,1.3,-0.35); g.add(light);
-  return {pool,light,acc:0};
+  return {pool,light:g.userData.sparkLight,acc:0};
 }
 function updateSparks(dt,t){
   const S=D.sparks; if(!S) return;
@@ -264,13 +359,11 @@ function runMonster(dt){
     const step=Math.min(D.monRun.speed*dt,rem);
     m.pos.x+=rx/rem*step; m.pos.z+=rz/rem*step;
   }
-  /* sprint cycle (mirrors updateMonster's walk animation) */
-  m.anim+=dt*(1.5+D.monRun.speed*1.6);
-  const sw=Math.sin(m.anim)*0.7;
-  u.armL.rotation.x=sw;       u.armR.rotation.x=-sw;
-  u.legL.rotation.x=-sw*0.85; u.legR.rotation.x=sw*0.85;
-  u.head.rotation.y=(hash(Math.floor(CINE.t*16))-0.5)*0.7;   // frantic jolts
-  m.mesh.position.set(m.pos.x,Math.abs(Math.sin(m.anim))*0.07,m.pos.z);
+  /* the same body the AI drives, flat out */
+  poseMonster(dt,rem>0.05? D.monRun.speed:0,"chase");
+  const hr=u.B.head.userData.rest;
+  u.B.head.rotation.set(hr[0],(hash(Math.floor(CINE.t*16))-0.5)*0.7,hr[2]);   // frantic jolts
+  m.mesh.position.set(m.pos.x,0,m.pos.z);
   m.mesh.rotation.y=m.faceAng;
   /* fear channels track its approach until the doors seal */
   const d=Math.hypot(m.pos.x-D.cabEye.x,m.pos.z-D.cabEye.z);
@@ -1151,12 +1244,13 @@ export function startDeathCam(cause,onCard){
   const fall=cause==="fall";
   /* who did it — the position is read LIVE each frame, so if a mesh is still
      where it caught you the camera finds it however it was posed */
-  let killer=null;
+  let killer=null, lookH=1.35;
   if(!fall){
-    if(STATE.level===0&&monster.mesh) killer=monster.pos;
+    /* the wire thing is bent over you: look up into the knot, not its hips */
+    if(STATE.level===0&&monster.mesh){ killer=monster.pos; lookH=2.55; }
     else if(spider.mesh) killer=spider.mesh.position;
   }
-  DX={fall, killer, onCard, carded:false, landed:false,
+  DX={fall, killer, lookH, onCard, carded:false, landed:false,
       x:camera.position.x, y:camera.position.y, z:camera.position.z,
       yaw0:STATE.yaw, pitch0:STATE.pitch,
       roll:(Math.random()<0.5?-1:1)*(fall?1:0.62),
@@ -1217,7 +1311,7 @@ export function updateDeathCam(dt){
     if(DX.killer){
       const dx=DX.killer.x-x, dz=DX.killer.z-z;
       const hd=Math.max(0.6,Math.hypot(dx,dz));
-      const ky=(DX.killer.y!==undefined? DX.killer.y:0)+1.35;
+      const ky=(DX.killer.y!==undefined? DX.killer.y:0)+DX.lookH;
       kyaw=Math.atan2(-dx,-dz);
       kpitch=clamp(Math.atan2(ky-y,hd),0.05,1.32);
     }

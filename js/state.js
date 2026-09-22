@@ -14,6 +14,7 @@ export const STATE={
   deaths:0, time:0,
   bob:0, moving:false,
   ambDim:1,                      // ambient-floor multiplier (the elevator crash drains it)
+  surge:null,                    // level 0: the breaker's power-on wave {x,z,t,maxR}
   /* the one place the HUD is allowed to point at: {x,z} of a way OUT that
      the level has already revealed to you in a cutscene (the library's hole,
      the cave's fissure). Never a collectible — those you find yourself. */
@@ -43,6 +44,7 @@ export const monster={
   lastSeen:null, searchT:0, alertT:0, pauseT:0, knockT:4, knockMove:null,
   curSpeed:0, faceAng:0, anim:0, groanT:6,
   twitchT:5, twitchDur:0, twitchSeed:0,
+  knockAnim:0,          // >0: the arm is up, rapping on the wall it walked to
   teleT:20,             // countdown to the next space-fold (see monster.js)
   rush:false,           // hunt at full chase speed (final-objective sprint)
   holdAt30:false,       // breaker cinematic: arm the 30m freeze ring

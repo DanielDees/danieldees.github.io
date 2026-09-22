@@ -23,13 +23,12 @@ import { LIB, ROOM_SPAN, LIB_WALL_H, cellToWorld2, worldToCell2, isBlockedSpider
          spawnWeb, updateWeb, removeWeb, severWeb } from "./library.js";
 import { AU, panTo, sfxHeartbeat, sfxSpiderTap, sfxSpiderScratch, sfxSpiderSniff,
          sfxSpiderShriek, sfxWebSplat, sfxWebSnap } from "./audio.js";
-import { texSpiderAbd, texSpiderCarapace, texSpiderLimb } from "./textures.js";
-import { mergeStatic, markShared } from "./scene.js";
+import { texSpiderAbd, texSpiderCarapace, texSpiderLimb, texSpiderFur } from "./textures.js";
+import { markShared } from "./scene.js";
 import { ui } from "./ui.js";
 import { die } from "./lifecycle.js";
 
 const RUN_BASE=7.28;                    // base run speed (chase/seekRun) = ×1.4 of browse
-const FEM=1.35, TIB=2.25, PITCH=0.42, KNEE=-1.62;   // leg chain dimensions
 
 /* ---- sniff fits ----------------------------------------------------
    The cooldown is armed the moment a fit STARTS, not when it ends. It
@@ -47,293 +46,695 @@ function startSniffFit(s,n,t0){
 }
 
 /* ================= the body =================
-   Rebuilt as an animal rather than an assembly of primitives. What changed,
-   and why each part is where it is:
+   A horse-sized hunting spider, built as an animal rather than an assembly
+   of primitives. What each part is for:
 
-   · The abdomen and carapace are LATHES turned onto the body axis instead
-     of scaled spheres, so they can be shaped (a teardrop that swells behind
-     the waist, a carapace that slopes down to the eye shield) and, more
-     importantly, so their UVs run around-the-body / front-to-rear and the
-     folium and striae in textures.js land where they belong.
-   · 8 eyes in the real two-row arrangement, not a crown of 6 — the anterior
-     medians large and forward, the laterals small and set out on the
-     shoulders. This is most of what makes a shape read as SPIDER.
-   · Pedipalps. The old mesh had none, and their absence is why it read as
-     a body with legs stuck on.
-   · Legs gain a tarsus and a claw, joint bulbs, and bristles. The chain
-     still measures FEM then TIB and the knee is still fixed at KNEE, so
-     the gait's terrain probe (which reaches FEM·cos + TIB·cos) is unchanged
-     — the tarsus is carved OUT of the tibia's length, not added past it.
+   · Every leg is ONE swept tube through all seven segments — coxa,
+     trochanter, femur, patella, tibia, metatarsus, tarsus — swollen
+     mid-segment, pinched at each joint, pale at the articular membrane and
+     darkening to the distal end, the way a real leg is annulated. Nothing
+     below femG moves, so the bends are baked into the sweep and a joint is
+     never a gap between two pipes.
+   · The KNEE is the highest point of the animal: the femur rises steeply
+     and the patella turns the leg down, so eight knees stand over the body.
+     That silhouette is most of the fear.
+   · The legs are not one length (I and IV long, III short). Each leg solves
+     its own resting pitch to put its claws on the floor, and carries its
+     own foot vector for the gait's terrain probe.
+   · All eight legs leave the PROSOMA, and the prosoma, eyes, mouthparts and
+     legs all hang off the head group, which pitches about the pedicel to
+     sniff — so nothing detaches when it puts its face to the floor. Each
+     leg carries the pitch that keeps its foot planted at a full sniff.
+   · Hair is geometry, merged into the part it grows on: fine setae over
+     every segment, stout spines down the tibia and metatarsus, the
+     trichobothria — long listening hairs, for a thing that hunts by
+     sound — standing off the tops of the shins, scopula tufts under the
+     feet. The abdomen wears a velvet undercoat as SHELL FUR under its
+     long bristles.
+   · The face: a raised ocular mound with eight lenses in two rows and an
+     eyeshine that only shows when they face you; heavy hairy chelicerae
+     whose fangs unfold when it commits; five-segment pedipalps that feel
+     the air and reach down when it sniffs.
 
-   Draw calls go DOWN despite all of it: everything below femG is rigid
-   (tibG's rotation is fixed at build and never animated), so each leg
-   merges from 3 meshes into 1. 34 draws before, 12 now. */
+   Contract with the gait: userData {legs, eyeMat, abd, head, BODY_Y, ABD_Z,
+   scratchAnim, sniffAnim, abdTilt}; each leg {hip, femG, basePhi, phase,
+   front, row, fold, pitch0, tipX, tipY, sniffComp}. `abd.scale` is
+   overwritten every frame to (1, 0.9, ABD_SZ), and TAIL_LOCAL is derived
+   from the same numbers. */
+const SP_BODY_Y=1.5, HIP_Y=SP_BODY_Y-0.06;
+const ABD_HALF=0.72, ABD_R=0.74, ABD_SZ=1.35, ABD_Z=-1.25;
+const CAR_LEN=1.34, CAR_R=0.60, CAR_Z=0.30;
+const PIV_Z=-0.36;                        // the pedicel: the head group pitches about it
+const SNIFF_TILT=0.30, SNIFF_DROP=0.06;
+/* per row, front to back: splay (radians toward the head), length scale,
+   hip position on the prosoma's margin */
+const LEG_ROWS=[
+  {phi:1.00, k:1.06, z:0.64, x:0.44},
+  {phi:0.36, k:1.00, z:0.40, x:0.53},
+  {phi:-0.30,k:0.90, z:0.14, x:0.54},
+  {phi:-0.95,k:1.08, z:-0.10,x:0.47},
+];
+/* the leg in femG's frame (femur along +x before pitch):
+   [length, bend from the previous segment, r0, r1, mid-segment swell] */
+const LEG_SEGS=[
+  [0.22, 0,    0.120,0.114,0.15],     // coxa — starts inside the body
+  [0.10, 0,    0.096,0.094,0.10],     // trochanter
+  [1.14, 0,    0.112,0.090,0.12],     // femur, to the knee
+  [0.22,-1.15, 0.089,0.080,0.22],     // patella: the knee's cap, the high point
+  [1.35,-0.85, 0.077,0.058,0.06],     // tibia
+  [1.10, 0.15, 0.052,0.035,0.00],     // metatarsus
+  [0.34, 0.50, 0.030,0.011,0.00],     // tarsus: the foot
+];
+const LEG_J=(()=>{
+  const J=[new THREE.Vector2(-0.06,0)]; let a=0;
+  for(const [len,bend] of LEG_SEGS){
+    a+=bend; const p=J[J.length-1];
+    J.push(new THREE.Vector2(p.x+Math.cos(a)*len, p.y+Math.sin(a)*len));
+  }
+  return J;
+})();
+const sstep=(a,b,x)=>{ const t=clamp((x-a)/(b-a),0,1); return t*t*(3-2*t); };
+
 const _SPIDER_MATS=()=>({
-  /* Near-black and waxy. The abdomen especially wants a BROAD, weak sheen:
-     it is a big smooth surface, and a tight bright highlight on one turns
-     the animal into a balloon under any light that gets near it. The
-     carapace is the one hard glossy plate, so it keeps a tighter lobe. */
-  /* Near-neutral, near-black. Warm browns here plus the lantern's orange
-     multiplied out to BRONZE — the thing looked cast, not grown. A real
-     spider under a warm light stays black with the barest brown lift, so
-     the maps and these tints are both pulled toward neutral. */
-  body:new THREE.MeshPhongMaterial({map:texSpiderAbd, color:0x413f3b,
-    specular:0x0a0806, shininess:6}),
-  car:new THREE.MeshPhongMaterial({map:texSpiderCarapace, color:0x4a4844,
-    specular:0x1a1712, shininess:22}),
-  limb:new THREE.MeshPhongMaterial({map:texSpiderLimb, color:0x35332f,
-    specular:0x0c0a08, shininess:8}),
-  eye:new THREE.MeshPhongMaterial({color:0x050202, emissive:0x3a0805,
-    specular:0x181818, shininess:60}),
+  /* Near-neutral, near-black. Warm browns here times the lantern's orange
+     multiply out to BRONZE and the animal looks cast, not grown. The
+     abdomen wants a BROAD weak sheen (a tight bright one on a big smooth
+     surface is a balloon); the carapace is the one hard glossy plate. */
+  body:new THREE.MeshPhongMaterial({map:texSpiderAbd, color:0x524e49, vertexColors:true,
+    specular:0x0c0a08, shininess:7}),
+  car:new THREE.MeshPhongMaterial({map:texSpiderCarapace, color:0x4c4a48, vertexColors:true,
+    specular:0x1a1918, shininess:44}),
+  limb:new THREE.MeshPhongMaterial({map:texSpiderLimb, color:0x3c3b3a, vertexColors:true,
+    specular:0x0e0d0c, shininess:30}),
+  /* the chelicerae carry a faint cold sheen, the fangs a hard glassy one */
+  cheli:new THREE.MeshPhongMaterial({map:texSpiderLimb, color:0x4a4845, vertexColors:true,
+    specular:0x1c2322, shininess:34}),
+  fang:new THREE.MeshPhongMaterial({color:0x22120e, vertexColors:true,
+    specular:0x6a6866, shininess:110}),
+  /* the lens is black glass; what the gait drives is `eye`, a control the
+     lens and the eyeshine both read — written straight onto the lens, the
+     red flooded all eight into glowing beads */
+  lens:new THREE.MeshPhongMaterial({color:0x040303, emissive:0x000000,
+    specular:0xd8d8d8, shininess:160}),
+  eye:{emissive:new THREE.Color(0x3a0805)},
 });
-markShared(texSpiderAbd,texSpiderCarapace,texSpiderLimb);
+markShared(texSpiderAbd,texSpiderCarapace,texSpiderLimb,texSpiderFur);
+
+/* ---- geometry accumulation ----
+   Every part of the body is poured into one of these and comes out as one
+   BufferGeometry per material: position, normal, uv and a grey vertex
+   colour that multiplies the map (annulation, hair tips, the sternum). */
+const _hA=new THREE.Vector3(), _hB=new THREE.Vector3(), _hC=new THREE.Vector3(),
+      _hX=new THREE.Vector3(1,0,0), _hY=new THREE.Vector3(0,1,0), _hN=new THREE.Vector3();
+class PartAcc{
+  constructor(){ this.P=[]; this.N=[]; this.U=[]; this.C=[]; this.I=[]; }
+  get n(){ return this.P.length/3; }
+  vert(x,y,z,nx,ny,nz,u,v,c){ this.P.push(x,y,z); this.N.push(nx,ny,nz); this.U.push(u,v); this.C.push(c,c,c); }
+  /* a hair: a three-sided spike from p along unit d. Flat-shaded — it is
+     too thin for a smooth normal to mean anything, and a flat facet is
+     what catches a glint. c0 at the root, c1 at the tip. */
+  hair(p,d,len,r,c0,c1){
+    _hA.crossVectors(d,Math.abs(d.y)<0.9? _hY:_hX).normalize();
+    _hB.crossVectors(d,_hA);
+    const tx=p.x+d.x*len, ty=p.y+d.y*len, tz=p.z+d.z*len, B=[];
+    for(let i=0;i<3;i++){
+      const a=i/3*Math.PI*2, c=Math.cos(a)*r, s=Math.sin(a)*r;
+      B.push([p.x+_hA.x*c+_hB.x*s, p.y+_hA.y*c+_hB.y*s, p.z+_hA.z*c+_hB.z*s]);
+    }
+    for(let i=0;i<3;i++){
+      const b0=B[i], b1=B[(i+1)%3];
+      _hC.set(b1[0]-b0[0],b1[1]-b0[1],b1[2]-b0[2]);
+      _hN.set(tx-b0[0],ty-b0[1],tz-b0[2]).cross(_hC).negate().normalize();
+      const k=this.n;
+      this.vert(b0[0],b0[1],b0[2],_hN.x,_hN.y,_hN.z,0.5,0.5,c0);
+      this.vert(b1[0],b1[1],b1[2],_hN.x,_hN.y,_hN.z,0.5,0.5,c0);
+      this.vert(tx,ty,tz,_hN.x,_hN.y,_hN.z,0.5,0.5,c1);
+      this.I.push(k,k+1,k+2);
+    }
+  }
+  /* bake a finished geometry in, through matrix m, tinted c */
+  add(geo,m,c=1){
+    const p=geo.attributes.position, nr=geo.attributes.normal, uv=geo.attributes.uv;
+    const nm=new THREE.Matrix3().getNormalMatrix(m), base=this.n;
+    for(let i=0;i<p.count;i++){
+      _hA.fromBufferAttribute(p,i).applyMatrix4(m);
+      _hB.fromBufferAttribute(nr,i).applyMatrix3(nm).normalize();
+      this.vert(_hA.x,_hA.y,_hA.z,_hB.x,_hB.y,_hB.z, uv?uv.getX(i):0.5, uv?uv.getY(i):0.5, c);
+    }
+    if(geo.index) for(let i=0;i<geo.index.count;i++) this.I.push(base+geo.index.getX(i));
+    else for(let i=0;i<p.count;i++) this.I.push(base+i);
+  }
+  /* a tube swept along a path lying in this part's xy-plane. z is square to
+     every tangent, so the frame is exact and never twists. R/C per sample,
+     `vRep` metres per texture repeat; u=0 is the dorsal (convex) side. */
+  sweep(path,R,C,radial,vRep){
+    const n=path.length, base=this.n; let arc=0;
+    for(let i=0;i<n;i++){
+      const a=path[Math.max(0,i-1)], b=path[Math.min(n-1,i+1)];
+      const tl=Math.hypot(b.x-a.x,b.y-a.y)||1, Tx=(b.x-a.x)/tl, Ty=(b.y-a.y)/tl;
+      if(i>0) arc+=Math.hypot(path[i].x-path[i-1].x,path[i].y-path[i-1].y);
+      for(let k=0;k<=radial;k++){
+        const th=k/radial*Math.PI*2, c=Math.cos(th), s=Math.sin(th);
+        const nx=-Ty*c, ny=Tx*c, nz=s;
+        this.vert(path[i].x+nx*R[i], path[i].y+ny*R[i], nz*R[i], nx,ny,nz, k/radial, arc/vRep, C[i]);
+      }
+    }
+    for(let i=0;i<n-1;i++) for(let k=0;k<radial;k++){
+      const a=base+i*(radial+1)+k, b=a+1, c=a+radial+1, d=c+1;
+      this.I.push(a,b,c, b,d,c);
+    }
+  }
+  geometry(){
+    const g=new THREE.BufferGeometry();
+    g.setAttribute("position",new THREE.Float32BufferAttribute(this.P,3));
+    g.setAttribute("normal",new THREE.Float32BufferAttribute(this.N,3));
+    g.setAttribute("uv",new THREE.Float32BufferAttribute(this.U,2));
+    g.setAttribute("color",new THREE.Float32BufferAttribute(this.C,3));
+    g.setIndex(this.I);
+    return g;
+  }
+}
+/* a lathe's seam and poles duplicate vertices; after a deformation and
+   computeVertexNormals they shade as creases. Average every coincident set. */
+function weldNormals(g){
+  const p=g.attributes.position, n=g.attributes.normal, map=new Map();
+  for(let i=0;i<p.count;i++){
+    const k=`${Math.round(p.getX(i)*1e4)},${Math.round(p.getY(i)*1e4)},${Math.round(p.getZ(i)*1e4)}`;
+    let a=map.get(k); if(!a) map.set(k,a=[]); a.push(i);
+  }
+  for(const a of map.values()){
+    if(a.length<2) continue;
+    _hA.set(0,0,0);
+    for(const i of a) _hA.x+=n.getX(i), _hA.y+=n.getY(i), _hA.z+=n.getZ(i);
+    _hA.normalize();
+    for(const i of a) n.setXYZ(i,_hA.x,_hA.y,_hA.z);
+  }
+}
 /* a lathe turned onto the body axis: profile runs front(t=0) → rear(t=1),
    u wraps the body with u=0.5 on the dorsal midline, v runs front → rear */
 function bodyLathe(prof,len,rad,seg){
-  const pts=prof.map(([t,r])=>new THREE.Vector2(Math.max(r*rad,0.004), t*len));
+  const pts=prof.map(([t,r])=>new THREE.Vector2(Math.max(r*rad,0.001), t*len));
   const g=new THREE.LatheGeometry(pts,seg,-Math.PI,Math.PI*2);
   g.rotateX(-Math.PI/2);            // +Y (profile axis) → −Z (toward the rear)
   g.translate(0,0,len/2);           // centre it on its own origin
   return g;
 }
-/* one bristle: a hair-fine spike from p along dir. They cost almost nothing
-   merged, and they are the whole difference between chitin and plastic. */
-/* Everything on the head is placed by a POINT and a DIRECTION, never by
-   Euler angles. Hand-written rotations are how the first pass ended up
-   with the chelicerae inverted — tip welded to the face and the fat base
-   swinging free — and with the pedipalps buried in the carapace. With
-   these two helpers a part cannot be inside-out: the geometry is built
-   from its attachment at the origin outward along +Y, and then +Y is
-   simply aimed where the part should go. `end()` returns the far end so
-   the next segment starts exactly where the last one stopped. */
-const _bA=new THREE.Vector3(), _bB=new THREE.Vector3(0,1,0);
-function aim(m,dx,dy,dz){
-  _bA.set(dx,dy,dz).normalize();
-  m.quaternion.setFromUnitVectors(_bB,_bA);
-  return m;
+/* a profile smoothed to n samples, and a lookup into it */
+function smoothProf(pts,n){
+  const c=new THREE.SplineCurve(pts.map(([t,r])=>new THREE.Vector2(t,r)));
+  const out=c.getPoints(n).map(v=>[clamp(v.x,0,1),Math.max(v.y,0.001)]);
+  out[0]=[0,0.001]; out[out.length-1]=[1,0.001];
+  return out;
 }
-function end(px,py,pz,dx,dy,dz,len){
-  const l=Math.hypot(dx,dy,dz)||1;
-  return [px+dx/l*len, py+dy/l*len, pz+dz/l*len];
+function profAt(prof,t){
+  let i=0; while(i<prof.length-2 && prof[i+1][0]<t) i++;
+  const [t0,r0]=prof[i], [t1,r1]=prof[i+1];
+  return r0+(r1-r0)*clamp((t-t0)/Math.max(t1-t0,1e-6),0,1);
 }
-/* a cone whose BASE sits at the attachment and whose TIP points along dir */
-function spike(px,py,pz,dx,dy,dz,len,thick,mat,seg){
-  const geo=new THREE.ConeGeometry(thick,len,seg||5);
+/* a straight tapered tube from p along d (a spinneret, a claw) */
+function tube(acc,p,d,len,r0,r1,c,radial=8){
+  const geo=new THREE.CylinderGeometry(r1,r0,len,radial,1);
   geo.translate(0,len/2,0);
-  const m=new THREE.Mesh(geo,mat); m.position.set(px,py,pz);
-  return aim(m,dx,dy,dz);
+  const m=new THREE.Matrix4().compose(p,new THREE.Quaternion().setFromUnitVectors(_hY,d.clone().normalize()),
+    new THREE.Vector3(1,1,1));
+  acc.add(geo,m,c); geo.dispose();
 }
-/* a tapered limb segment: r0 at the attachment, r1 at the far end */
-function seg(px,py,pz,dx,dy,dz,len,r0,r1,mat){
-  const geo=new THREE.CylinderGeometry(r1,r0,len,8);
-  geo.translate(0,len/2,0);
-  const m=new THREE.Mesh(geo,mat); m.position.set(px,py,pz);
-  return aim(m,dx,dy,dz);
+
+/* ---- the carapace: a lathe, flattened, then SCULPTED — the head region
+   standing higher than the thorax, a mound under the eyes, the fovea, the
+   cervical groove and the radial striae running out toward the coxae ---- */
+const CAR_PROF=smoothProf([[0,0.001],[0.02,0.26],[0.06,0.46],[0.12,0.62],[0.2,0.76],[0.3,0.88],
+  [0.42,0.97],[0.55,1],[0.68,0.97],[0.8,0.87],[0.9,0.68],[0.96,0.44],[1,0.001]],44);
+const _dSeg=(px,pz,ax,az,bx,bz)=>{
+  const vx=bx-ax, vz=bz-az, t=clamp(((px-ax)*vx+(pz-az)*vz)/(vx*vx+vz*vz),0,1);
+  return Math.hypot(px-ax-vx*t, pz-az-vz*t);
+};
+function carDeform(x,y,z){
+  let yy=y>0? y*0.62 : y*0.48;
+  /* pear-shaped from above: the head region narrower than the thorax */
+  x*=0.95-0.16*sstep(0.0,0.75,z/(CAR_LEN/2));
+  if(y>0){
+    const w=y/(Math.hypot(x,y)||1);                 // 1 on the top, 0 at the margin
+    const zf=z/(CAR_LEN/2), ax=Math.abs(x);
+    yy+=0.10*w*sstep(-0.25,0.45,zf);                 // the cephalic region stands up
+    yy+=0.05*w*Math.exp(-(x*x)/(0.15*0.15)-((z-0.47)*(z-0.47))/(0.13*0.13));   // ocular mound
+    yy-=0.06*w*Math.exp(-(x*x)/(0.024*0.024)-((z+0.10)*(z+0.10))/(0.075*0.075)); // the fovea
+    const dv=_dSeg(ax,z,0,-0.06,0.34,0.24);          // cervical groove
+    yy-=0.035*w*Math.exp(-dv*dv/(0.03*0.03));
+    const df=Math.hypot(x,z+0.10);
+    for(const r of LEG_ROWS){                        // striae to each coxa
+      const d=_dSeg(ax,z,0,-0.10,r.x+0.1,r.z-CAR_Z);
+      yy-=0.026*w*Math.exp(-d*d/(0.026*0.026))*sstep(0.1,0.24,df);
+    }
+  }
+  return [x,yy,z];
 }
-function bristle(px,py,pz,dx,dy,dz,len,thick,mat){
-  return spike(px,py,pz,dx,dy,dz,len,thick,mat,4);
+/* a point on the sculpted shell: t down the profile from the snout, `ang`
+   from the dorsal midline. Eyes are seated with this, so they sit ON the
+   skin the mesh actually has. */
+function carSurf(t,ang){
+  const r=profAt(CAR_PROF,t)*CAR_R;
+  return carDeform(r*Math.sin(ang), r*Math.cos(ang), CAR_LEN/2-t*CAR_LEN);
 }
+function carNormal(t,ang){
+  const p=carSurf(t,ang), a=carSurf(t+0.004,ang), b=carSurf(t,ang+0.01);
+  _hA.set(a[0]-p[0],a[1]-p[1],a[2]-p[2]);
+  _hB.set(b[0]-p[0],b[1]-p[1],b[2]-p[2]);
+  const n=new THREE.Vector3().crossVectors(_hB,_hA).normalize();
+  if(n.x*p[0]+n.y*p[1]<0) n.negate();
+  return n;
+}
+function buildProsoma(M){
+  const acc=new PartAcc();
+  const g=bodyLathe(CAR_PROF,CAR_LEN,CAR_R,44);
+  const p=g.attributes.position;
+  for(let i=0;i<p.count;i++){ const [x,y,z]=carDeform(p.getX(i),p.getY(i),p.getZ(i)); p.setXYZ(i,x,y,z); }
+  g.computeVertexNormals(); weldNormals(g);
+  acc.add(g,new THREE.Matrix4(),1); g.dispose();
+  /* the sternum and labium, dark plates under the belly of the prosoma */
+  const st=new THREE.SphereGeometry(0.27,22,10);
+  acc.add(st,new THREE.Matrix4().compose(new THREE.Vector3(0,-0.235,-0.02),new THREE.Quaternion(),
+    new THREE.Vector3(1,0.16,1.3)),0.5); st.dispose();
+  const lb=new THREE.SphereGeometry(0.1,12,8);
+  acc.add(lb,new THREE.Matrix4().compose(new THREE.Vector3(0,-0.24,0.45),new THREE.Quaternion(),
+    new THREE.Vector3(1,0.35,0.8)),0.45); lb.dispose();
+  /* the pelt: a fringe round the margin, a short coat laid back over the
+     thorax, and a few long bristles standing up among the eyes */
+  const d=new THREE.Vector3(), q=new THREE.Vector3();
+  for(let i=0;i<150;i++){
+    const t=rand(0.12,0.95), ang=(Math.random()<0.5?-1:1)*rand(1.25,1.6);
+    const s=carSurf(t,ang), n=carNormal(t,ang);
+    d.set(n.x,n.y-0.8,n.z-0.35).normalize();
+    acc.hair(q.set(s[0],s[1],s[2]),d,rand(0.05,0.11),0.005,0.7,1.5);
+  }
+  for(let i=0;i<120;i++){
+    const t=rand(0.3,0.9), ang=rand(-1.2,1.2);
+    const s=carSurf(t,ang), n=carNormal(t,ang);
+    d.set(n.x*0.5,n.y*0.5,-1).normalize();
+    acc.hair(q.set(s[0],s[1],s[2]),d,rand(0.04,0.08),0.004,0.8,1.5);
+  }
+  for(let i=0;i<9;i++){
+    const t=rand(0.1,0.24), ang=rand(-0.5,0.5);
+    const s=carSurf(t,ang), n=carNormal(t,ang);
+    d.set(n.x*0.6,n.y+0.4,0.7).normalize();
+    acc.hair(q.set(s[0],s[1],s[2]),d,rand(0.12,0.2),0.005,0.6,1.3);
+  }
+  return new THREE.Mesh(acc.geometry(),M.car);
+}
+/* ---- eight eyes, two rows, seated on the sculpted shell ----
+   Anterior row low on the face (the medians the big forward pair), the
+   posterior row recurved over it, the laterals out on the shoulders of the
+   mound. Lenses, not beads: flattened along their own normal. */
+const EYES=[[0.050,0.30,0.05],[0.068,0.78,0.032],[0.108,0.26,0.038],[0.140,0.74,0.036]];
+function buildEyes(M){
+  const acc=new PartAcc(), P=[], Nn=[], Rr=[];
+  for(const [t,ang,r] of EYES) for(const s of[-1,1]){
+    const a=s*ang, sp=carSurf(t,a), n=carNormal(t,a);
+    const c=new THREE.Vector3(sp[0],sp[1],sp[2]).addScaledVector(n,r*0.04);
+    const geo=new THREE.SphereGeometry(r,16,12);
+    const m=new THREE.Matrix4().compose(c,new THREE.Quaternion().setFromUnitVectors(_hY,n),
+      new THREE.Vector3(1,0.52,1));
+    acc.add(geo,m,1); geo.dispose();
+    P.push(c.x+n.x*r*0.45,c.y+n.y*r*0.45,c.z+n.z*r*0.45); Nn.push(n.x,n.y,n.z); Rr.push(r);
+  }
+  const eyes=new THREE.Mesh(acc.geometry(),M.lens);
+  eyes.onBeforeRender=()=>{ M.lens.emissive.copy(M.eye.emissive).multiplyScalar(0.28); };
+  /* eyeshine: a retroreflection, so it shows only when the lens is turned
+     toward you and fades with the fog. Additive, depth-tested, one draw. */
+  const gg=new THREE.BufferGeometry();
+  gg.setAttribute("position",new THREE.Float32BufferAttribute(P,3));
+  gg.setAttribute("eyeN",new THREE.Float32BufferAttribute(Nn,3));
+  gg.setAttribute("eyeR",new THREE.Float32BufferAttribute(Rr,1));
+  const gm=new THREE.ShaderMaterial({
+    uniforms:{uCol:{value:new THREE.Color()}, uScale:{value:400}, uFog:{value:new THREE.Vector2(10,60)}},
+    vertexShader:`attribute vec3 eyeN; attribute float eyeR;
+      uniform float uScale; uniform vec2 uFog; varying float vA;
+      void main(){
+        vec4 wp=modelMatrix*vec4(position,1.0);
+        vec3 wn=normalize(mat3(modelMatrix)*eyeN);
+        vec4 mv=viewMatrix*wp;
+        float face=smoothstep(0.15,0.85,dot(wn,normalize(cameraPosition-wp.xyz)));
+        vA=face*(1.0-smoothstep(uFog.x,uFog.y,-mv.z));
+        gl_PointSize=uScale*eyeR*1.6/max(-mv.z,0.05);
+        gl_Position=projectionMatrix*mv;
+      }`,
+    fragmentShader:`uniform vec3 uCol; varying float vA;
+      void main(){
+        vec2 c=gl_PointCoord-0.5; float d=dot(c,c)*4.0;
+        float a=(exp(-d*14.0)+0.12*exp(-d*2.5))*vA;
+        gl_FragColor=vec4(uCol*a,1.0);
+      }`,
+    transparent:true, depthWrite:false, blending:THREE.AdditiveBlending});
+  const glow=new THREE.Points(gg,gm);
+  const _sz=new THREE.Vector2();
+  glow.onBeforeRender=(r,sc,cam)=>{
+    r.getDrawingBufferSize(_sz);
+    gm.uniforms.uScale.value=_sz.y/(2*Math.tan((cam.fov||60)*Math.PI/360));
+    if(sc.fog) gm.uniforms.uFog.value.set(sc.fog.near,sc.fog.far);
+    gm.uniforms.uCol.value.copy(M.eye.emissive).multiplyScalar(2.2);
+  };
+  glow.frustumCulled=false;
+  return [eyes,glow];
+}
+/* ---- a limb: joints in the part's own xy-plane, swept through a
+   centripetal spline that runs straight down each segment and turns tight
+   at each joint. Returns the samples with their segment and fraction. ---- */
+function limbPath(J,step){
+  const ctrl=[J[0]];
+  for(let i=0;i<J.length-1;i++){
+    const a=J[i], b=J[i+1];
+    ctrl.push(a.clone().lerp(b,0.06), a.clone().lerp(b,0.94), b.clone());
+  }
+  const curve=new THREE.SplineCurve(ctrl), cl=curve.getLength();
+  const pts=curve.getSpacedPoints(Math.max(8,Math.ceil(cl/step)));
+  const cum=[0]; for(let i=1;i<J.length;i++) cum.push(cum[i-1]+J[i].distanceTo(J[i-1]));
+  const k=cum[cum.length-1]/cl;
+  return pts.map((p,i)=>{
+    const s=i/(pts.length-1)*cl*k;
+    let seg=0; while(seg<J.length-2 && cum[seg+1]<s) seg++;
+    const t=clamp((s-cum[seg])/Math.max(cum[seg+1]-cum[seg],1e-6),0,1);
+    return {p,seg,t,m:s-cum[seg], left:cum[seg+1]-s};
+  });
+}
+/* where on the limb a hair grows: the surface point for a sample and an
+   angle round it (0 = dorsal), plus the tangent and outward radial there */
+function limbSite(S,i,th,R){
+  const a=S[Math.max(0,i-1)].p, b=S[Math.min(S.length-1,i+1)].p;
+  const tl=Math.hypot(b.x-a.x,b.y-a.y)||1, T=new THREE.Vector3((b.x-a.x)/tl,(b.y-a.y)/tl,0);
+  const rad=new THREE.Vector3(-T.y*Math.cos(th),T.x*Math.cos(th),Math.sin(th));
+  const p=new THREE.Vector3(S[i].p.x,S[i].p.y,0).addScaledVector(rad,R*0.92);
+  return {p,T,rad};
+}
+function buildLeg(M,k){
+  const acc=new PartAcc();
+  const J=LEG_J.map(v=>v.clone().multiplyScalar(k));
+  const S=limbPath(J,0.045*k);
+  const R=[], C=[];
+  for(const q of S){
+    const [len,,r0,r1,bul]=LEG_SEGS[q.seg];
+    let r=lerp(r0,r1,q.t)*(1+bul*Math.sin(Math.PI*q.t));
+    /* the articular membrane: a pinch either side of every joint */
+    const dj=Math.min(q.m,q.left)/k;
+    if(q.seg>0||q.m>0.05) r*=1-0.13*Math.exp(-(dj*dj)/(0.045*0.045));
+    R.push(r*k);
+    /* annulation: pale at the membrane, darkening down each segment */
+    let c=1-0.34*sstep(0.55,1,q.t);
+    if(q.seg>=3) c+=1.2*Math.exp(-Math.pow((q.m/k-0.035)/0.03,2));
+    C.push(c);
+  }
+  acc.sweep(S.map(q=>q.p),R,C,11,1.5);
+  const at=(seg,t)=>{ let i=S.findIndex(q=>q.seg===seg&&q.t>=t); return i<0? S.length-1:i; };
+  const d=new THREE.Vector3();
+  /* fine setae over everything past the trochanter, laid toward the foot */
+  for(let n=0;n<80;n++){
+    const seg=2+Math.floor(Math.random()*5), i=at(seg,rand(0.05,0.95));
+    const {p,T,rad}=limbSite(S,i,rand(0,Math.PI*2),R[i]);
+    const e=rand(0.35,0.75); d.copy(T).multiplyScalar(Math.cos(e)).addScaledVector(rad,Math.sin(e));
+    acc.hair(p,d,rand(0.05,0.12)*k,0.0045*k,0.55,1.6);
+  }
+  /* macrosetae: stout spines, ventral and lateral, down the shin */
+  for(let n=0;n<14;n++){
+    const seg=n<3? 2 : 4+(n%2), i=at(seg,rand(0.12,0.9));
+    const th=seg===2? rand(-0.5,0.5) : Math.PI+(Math.random()<0.5?-1:1)*rand(0.35,1.1);
+    const {p,T,rad}=limbSite(S,i,th,R[i]);
+    const e=rand(0.4,0.65); d.copy(T).multiplyScalar(Math.cos(e)).addScaledVector(rad,Math.sin(e));
+    acc.hair(p,d,rand(0.10,0.19)*k,0.011*k,0.3,0.75);
+  }
+  /* trichobothria: long, fine, standing straight off the top of the shin */
+  for(let n=0;n<6;n++){
+    const i=at(4+(n%2),rand(0.2,0.8));
+    const {p,T,rad}=limbSite(S,i,rand(-0.35,0.35),R[i]);
+    const e=rand(1.15,1.45); d.copy(T).multiplyScalar(Math.cos(e)).addScaledVector(rad,Math.sin(e));
+    acc.hair(p,d,rand(0.16,0.27)*k,0.003*k,0.8,1.4);
+  }
+  /* scopula: the dense pad under the foot */
+  for(let n=0;n<18;n++){
+    const i=at(n<12?6:5,n<12? rand(0.05,0.9):rand(0.7,0.98));
+    const {p,T,rad}=limbSite(S,i,Math.PI+rand(-0.9,0.9),R[i]);
+    const e=rand(0.9,1.3); d.copy(T).multiplyScalar(Math.cos(e)).addScaledVector(rad,Math.sin(e));
+    acc.hair(p,d,rand(0.03,0.055)*k,0.005*k,0.6,1.0);
+  }
+  /* the claws: a pair of hooks off the end of the tarsus */
+  const tip=S[S.length-1].p, pre=S[S.length-3].p;
+  const T=new THREE.Vector3(tip.x-pre.x,tip.y-pre.y,0).normalize();
+  for(const s of[-1,1]){
+    const base=new THREE.Vector3(tip.x,tip.y,s*0.008*k);
+    const d1=new THREE.Vector3(T.x+T.y*0.5,T.y-T.x*0.5,s*0.25).normalize();
+    tube(acc,base,d1,0.05*k,0.010*k,0.006*k,0.4,5);
+    const b2=base.clone().addScaledVector(d1,0.05*k);
+    const d2=new THREE.Vector3(T.x+T.y*1.4,T.y-T.x*1.4,s*0.2).normalize();
+    tube(acc,b2,d2,0.04*k,0.006*k,0.001,0.4,5);
+  }
+  return {mesh:new THREE.Mesh(acc.geometry(),M.limb), tip:J[J.length-1]};
+}
+/* the resting pitch that puts a foot (tip in femG's frame) on the floor */
+function footPitch(tip,hipH){
+  const R=tip.length(), phi=Math.atan2(tip.y,tip.x);
+  const s=Math.asin(clamp(-(hipH-0.02)/R,-1,1));
+  const p=s-phi;
+  return (p>-0.2&&p<1.5)? p : Math.PI-s-phi;
+}
+/* ---- a pedipalp: a small leg, five segments, ending in a hairy tarsus ---- */
+function buildPalp(M){
+  const acc=new PartAcc();
+  const segs=[[0.12,-0.2,0.052,0.048],[0.07,0.2,0.046,0.044],[0.34,0.35,0.046,0.040],
+              [0.12,-0.75,0.040,0.038],[0.26,-0.7,0.036,0.032],[0.24,-0.25,0.032,0.018]];
+  const J=[new THREE.Vector2(-0.04,0)]; let a=0;
+  for(const [len,bend] of segs){ a+=bend; const p=J[J.length-1]; J.push(new THREE.Vector2(p.x+Math.cos(a)*len,p.y+Math.sin(a)*len)); }
+  const S=limbPath(J,0.03), R=[], C=[];
+  for(const q of S){
+    const [,,r0,r1]=segs[q.seg];
+    const dj=Math.min(q.m,q.left);
+    R.push(lerp(r0,r1,q.t)*(1-0.12*Math.exp(-dj*dj/(0.03*0.03))));
+    C.push(1-0.3*sstep(0.6,1,q.t)+(q.seg>=2? 0.6*Math.exp(-Math.pow((q.m-0.025)/0.022,2)):0));
+  }
+  acc.sweep(S.map(q=>q.p),R,C,9,1.5);
+  const d=new THREE.Vector3();
+  for(let n=0;n<44;n++){
+    const i=Math.floor(rand(0.25,1)*(S.length-1));
+    const {p,T,rad}=limbSite(S,i,rand(0,Math.PI*2),R[i]);
+    const e=rand(0.35,0.8); d.copy(T).multiplyScalar(Math.cos(e)).addScaledVector(rad,Math.sin(e));
+    acc.hair(p,d,rand(0.04,0.1)*(S[i].seg===5?1.3:1),0.004,0.55,1.6);
+  }
+  return new THREE.Mesh(acc.geometry(),M.limb);
+}
+/* ---- a chelicera: a heavy hairy basal segment, built along +y in its own
+   group, and the fang articulated off its end ---- */
+function buildChelicera(M){
+  const acc=new PartAcc();
+  const prof=[[0,0.075],[0.1,0.1],[0.26,0.112],[0.45,0.104],[0.7,0.082],[0.88,0.06],[0.97,0.035],[1,0.001]];
+  const L=0.33;
+  const geo=new THREE.LatheGeometry(prof.map(([t,r])=>new THREE.Vector2(Math.max(r,0.001),t*L)),20);
+  geo.scale(0.86,1,1);                                  // flattened where the pair meet
+  acc.add(geo,new THREE.Matrix4(),1); geo.dispose();
+  const d=new THREE.Vector3(), p=new THREE.Vector3();
+  for(let n=0;n<130;n++){
+    const t=rand(0.05,0.9), th=rand(-2.2,2.2);        // the front and outer faces
+    const r=profAt(prof,t)*0.95;
+    p.set(Math.sin(th)*r*0.86,t*L,Math.cos(th)*r);
+    d.set(Math.sin(th)*0.6,0.7,Math.cos(th)*0.7).normalize();
+    acc.hair(p,d,rand(0.04,0.10),0.004,0.5,1.4);
+  }
+  return {mesh:new THREE.Mesh(acc.geometry(),M.cheli), len:L};
+}
+function buildFang(M){
+  /* a curved horn: out along +y, curling toward +x (the group mirrors it) */
+  const acc=new PartAcc(), n=16, pts=[], R=[], C=[];
+  let x=0,y=0,a=Math.PI/2;
+  for(let i=0;i<=n;i++){
+    const u=i/n;
+    pts.push(new THREE.Vector2(x,y));
+    R.push(lerp(0.036,0.0025,Math.pow(u,0.85)));
+    C.push(lerp(0.7,2.2,Math.pow(u,1.6)));              // black at the root, the tip gone to red horn
+    const step=0.30/n; a-=1.05/n;
+    x+=Math.cos(a)*step; y+=Math.sin(a)*step;
+  }
+  acc.sweep(pts,R,C,9,1);
+  return new THREE.Mesh(acc.geometry(),M.fang);
+}
+/* ---- the abdomen: a teardrop lathe, spinnerets, and the long bristles ---- */
+const ABD_PROF=smoothProf([[0,0.001],[0.03,0.28],[0.08,0.52],[0.16,0.72],[0.28,0.88],[0.42,0.98],
+  [0.55,1],[0.68,0.97],[0.8,0.87],[0.89,0.7],[0.95,0.48],[0.985,0.22],[1,0.001]],44);
+function abdSurf(t,th){
+  const r=profAt(ABD_PROF,t)*ABD_R;
+  const y=Math.cos(th)*r;
+  return new THREE.Vector3(Math.sin(th)*r, y<0? y*0.9:y, ABD_HALF-t*ABD_HALF*2);
+}
+function abdBase(){
+  const g=bodyLathe(ABD_PROF,ABD_HALF*2,ABD_R,44);
+  const p=g.attributes.position;
+  for(let i=0;i<p.count;i++) if(p.getY(i)<0) p.setY(i,p.getY(i)*0.9);   // a flatter belly
+  g.computeVertexNormals(); weldNormals(g);
+  return g;
+}
+function buildAbdomen(M,base){
+  const acc=new PartAcc();
+  acc.add(base,new THREE.Matrix4(),1);
+  /* spinnerets at the tail: the posterior laterals long and two-jointed,
+     cocked up and out — the "fingers" at the back of the animal */
+  for(const s of[-1,1]){
+    tube(acc,new THREE.Vector3(s*0.055,-0.09,-0.66),new THREE.Vector3(s*0.3,-0.6,-1),0.12,0.05,0.03,0.7);
+    const b=new THREE.Vector3(s*0.08,-0.03,-0.68), d1=new THREE.Vector3(s*0.45,0.1,-1);
+    tube(acc,b,d1,0.16,0.045,0.035,0.8);
+    tube(acc,b.clone().addScaledVector(d1.clone().normalize(),0.16),new THREE.Vector3(s*0.55,0.35,-1),0.13,0.035,0.012,0.9);
+    tube(acc,new THREE.Vector3(s*0.025,-0.07,-0.69),new THREE.Vector3(s*0.1,-0.3,-1),0.08,0.025,0.01,0.6);
+  }
+  /* the long bristles, swept back and up, off the back and flanks */
+  const d=new THREE.Vector3();
+  for(let i=0;i<260;i++){
+    const t=rand(0.04,0.95), th=rand(-2.5,2.5);
+    const p=abdSurf(t,th);
+    d.set(Math.sin(th)*0.6,Math.cos(th)*0.6+0.15,-1).normalize();
+    acc.hair(p,d,rand(0.07,0.2),0.0055,0.5,1.7);
+  }
+  return new THREE.Mesh(acc.geometry(),M.body);
+}
+/* the velvet: NS copies of the abdomen shell pushed out along the normal and
+   combed toward the tail, each keeping only the strands taller than itself
+   (texSpiderFur). One draw, alpha-TESTED so it needs no sorting. */
+function buildFur(M,base){
+  const NS=12, FL=0.05, p=base.attributes.position, nr=base.attributes.normal, uv=base.attributes.uv;
+  const P=[],N=[],U=[],H=[],I=[], n=p.count, idx=base.index;
+  for(let s=1;s<=NS;s++){
+    const h=s/NS, comb=h*h*FL*0.9;
+    for(let i=0;i<n;i++){
+      const nx=nr.getX(i), ny=nr.getY(i), nz=nr.getZ(i);
+      P.push(p.getX(i)+nx*h*FL, p.getY(i)+ny*h*FL-comb*0.25, p.getZ(i)+nz*h*FL-comb);
+      N.push(nx,ny,nz); U.push(uv.getX(i),uv.getY(i)); H.push(h);
+    }
+    const o=(s-1)*n;
+    for(let i=0;i<idx.count;i++) I.push(o+idx.getX(i));
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute("position",new THREE.Float32BufferAttribute(P,3));
+  g.setAttribute("normal",new THREE.Float32BufferAttribute(N,3));
+  g.setAttribute("uv",new THREE.Float32BufferAttribute(U,2));
+  g.setAttribute("aShell",new THREE.Float32BufferAttribute(H,1));
+  g.setIndex(I);
+  const mat=new THREE.MeshPhongMaterial({map:texSpiderAbd, color:0x57534e, specular:0x0a0907, shininess:5});
+  mat.onBeforeCompile=sh=>{
+    sh.uniforms.uFur={value:texSpiderFur};
+    sh.vertexShader=sh.vertexShader
+      .replace("#include <common>","#include <common>\nattribute float aShell;\nvarying float vShell;")
+      .replace("#include <begin_vertex>","#include <begin_vertex>\n  vShell=aShell;");
+    sh.fragmentShader=sh.fragmentShader
+      .replace("#include <common>","#include <common>\nuniform sampler2D uFur;\nvarying float vShell;")
+      .replace("#include <map_fragment>",
+        "#include <map_fragment>\n  if(texture2D(uFur,vUv*vec2(3.0,2.0)).r<vShell) discard;\n  diffuseColor.rgb*=mix(0.45,1.45,vShell);");
+  };
+  return new THREE.Mesh(g,mat);
+}
+
 export function makeSpider(){
   const M=_SPIDER_MATS();
   const eyeMat=M.eye;
   const g=new THREE.Group();
-  const BODY_Y=1.5;
+  const BODY_Y=SP_BODY_Y;
 
-  /* ---- abdomen ----------------------------------------------------
-     Built at radius 0.8 / half-length 0.8 because the gait overwrites
-     abd.scale to (1, 0.9, 1.35) every frame — and TAIL_LOCAL depends on
-     the tail landing at local z −0.8 (→ −1.08 scaled → −2.03 in mesh
-     space, where the silk anchors). Do not resize without moving both. */
-  const abdParts=[];
-  /* NOTE the 0.001 at both ends. A lathe profile that starts at a non-zero
-     radius leaves an OPEN RING there — the geometry is a tube, not a solid
-     — and with backfaces culled you see straight through it. That is what
-     put a hole in the middle of the spider's face. Every body lathe closes
-     at both poles now. */
-  const abdGeo=bodyLathe([[0,0.001],[0.04,0.30],[0.10,0.58],[0.22,0.79],[0.36,0.93],[0.50,1.00],
-                          [0.64,0.99],[0.76,0.91],[0.86,0.75],[0.94,0.49],[0.985,0.16],[1,0.001]],
-                         1.6,0.8,20);
-  abdParts.push(new THREE.Mesh(abdGeo,M.body));
-  /* spinnerets, clustered at the tail where the silk actually leaves */
-  for(const[sx,sy]of[[-0.07,0.05],[0.07,0.05],[-0.05,-0.07],[0.05,-0.07]]){
-    const sp=new THREE.Mesh(new THREE.ConeGeometry(0.055,0.20,6),M.limb);
-    sp.geometry.translate(0,0.10,0);
-    sp.position.set(sx,sy,-0.74); sp.rotation.x=-Math.PI/2;
-    abdParts.push(sp);
-  }
-  /* the coat: bristles over the back and flanks, swept toward the tail */
-  for(let i=0;i<64;i++){
-    const th=Math.random()*Math.PI*2, tz=Math.random();
-    const rr=0.30+0.70*Math.sin(Math.PI*(0.10+tz*0.84));
-    const z=0.8-tz*1.6, r=0.8*rr;
-    const nx=Math.cos(th), ny=Math.sin(th);
-    if(ny<-0.35) continue;                       // the belly is bald
-    abdParts.push(bristle(nx*r*0.97, ny*r*0.97, z,
-                          nx, ny+0.25, -0.55,     // swept back and up
-                          0.12+Math.random()*0.20, 0.012, M.limb));
-  }
-  const abd=mergeStatic(abdParts,M.body);
-  for(const p of abdParts) p.geometry.dispose();
-  abd.matrixAutoUpdate=true;                     // the gait drives it every frame
-  abd.scale.set(1.0,0.9,1.35); abd.position.set(0,BODY_Y+0.12,-0.95); g.add(abd);
+  /* ---- abdomen: in g, not the head — it stays put while the front sniffs */
+  const base=abdBase();
+  const abd=buildAbdomen(M,base);
+  abd.add(buildFur(M,base));
+  base.dispose();
+  abd.scale.set(1.0,0.9,ABD_SZ); abd.position.set(0,BODY_Y+0.12,ABD_Z); g.add(abd);
 
-  /* ---- the head group: carapace, eyes, chelicerae, pedipalps ----
-     one group so the sniff dip carries all of it down together */
-  const head=new THREE.Group(); g.add(head);
-  const CAR_PROF=[[0,0.001],[0.03,0.30],[0.08,0.52],[0.16,0.71],[0.28,0.87],
-                  [0.42,0.97],[0.58,1.00],[0.74,0.95],[0.88,0.82],[1,0.60]];
-  const CAR_LEN=1.10, CAR_R=0.58, CAR_FLAT=0.74, CAR_Z=0.42;
-  const carGeo=bodyLathe(CAR_PROF,CAR_LEN,CAR_R,18);
-  carGeo.scale(1,CAR_FLAT,1);                    // a carapace is flat, not round
-  const ceph=new THREE.Mesh(carGeo,M.car);
-  ceph.position.set(0,BODY_Y,CAR_Z); head.add(ceph);
+  /* ---- the head group, pivoting at the pedicel: prosoma, face, legs ---- */
+  const head=new THREE.Group(); head.position.set(0,BODY_Y,PIV_Z); g.add(head);
+  const at=(x,y,z)=>new THREE.Vector3(x,y-BODY_Y,z-PIV_Z);      // mesh space → head space
+  const pro=buildProsoma(M); pro.position.copy(at(0,BODY_Y,CAR_Z)); head.add(pro);
+  const [eyes,glow]=buildEyes(M);
+  eyes.position.copy(pro.position); glow.position.copy(pro.position);
+  head.add(eyes); head.add(glow);
 
-  /* ---- 8 eyes, two rows ----
-     Placed ON the carapace by evaluating the SAME profile the mesh is
-     lathed from, rather than by hand-picked xyz. The hand-picked set sat
-     inside the shell — the laterals especially, which the skin then cut in
-     half — because guessing a point on a scaled lathe by eye does not
-     work. `carSurf(t,th)` returns the surface point and its outward
-     normal for a profile parameter t (0 = snout) and an angle th measured
-     from the dorsal midline, so an eye can be seated on the skin and
-     pushed just proud of it. They are lenses, not balls: flattened along
-     the normal so they read as set INTO the carapace the way real eyes
-     are, without popping out of it. */
-  const carRadiusAt=(z)=>{
-    const t=clamp((CAR_Z+CAR_LEN/2-z)/CAR_LEN,0,1);
-    let i=0; while(i<CAR_PROF.length-2 && CAR_PROF[i+1][0]<t) i++;
-    const [t0,r0]=CAR_PROF[i], [t1,r1]=CAR_PROF[i+1];
-    return (r0+(r1-r0)*(t-t0)/Math.max(t1-t0,1e-6))*CAR_R;
-  };
-  /* Keep the arrangement — it read correctly — and just push each eye OUT
-     along its own direction until it meets the shell. Parametrising by
-     angle instead spread them around the whole dome like a ring of beads. */
-  const eyeParts=[];
-  /* Seating them on the shell spreads them — the carapace flares fast
-     behind the snout — so they are pulled FORWARD onto the face and cut
-     right down in size. At the old radii, eight lenses on the shell read
-     as a ring of red lozenges stuck to a helmet. */
-  for(const[ex,ey,ez,er] of [[-0.055,0.070,0.906,0.034],[0.055,0.070,0.906,0.034],
-                             [-0.070,0.150,0.866,0.028],[0.070,0.150,0.866,0.028],
-                             [-0.150,0.050,0.884,0.022],[0.150,0.050,0.884,0.022],
-                             [-0.175,0.115,0.848,0.020],[0.175,0.115,0.848,0.020]]){
-    const r=carRadiusAt(ez), ry=r*CAR_FLAT;
-    /* scale the (x,y) offset out onto the shell's ellipse at this z */
-    const q=Math.hypot(ex/r, ey/ry) || 1e-6;
-    const sx=ex/q, sy=ey/q;
-    const n=[sx/(r*r), sy/(ry*ry), 0];                       // ellipse normal
-    const L=Math.hypot(n[0],n[1])||1; n[0]/=L; n[1]/=L;
-    const e=new THREE.Mesh(new THREE.SphereGeometry(er,10,8),eyeMat);
-    e.scale.set(1,0.62,1);                                   // a lens, not a bead
-    e.position.set(sx+n[0]*er*0.28, BODY_Y+sy+n[1]*er*0.28, ez);
-    aim(e,n[0],n[1],n[2]);                                   // flatten ALONG the normal
-    eyeParts.push(e);
-  }
-  const eyes=mergeStatic(eyeParts,eyeMat);
-  for(const p of eyeParts) p.geometry.dispose();
-  head.add(eyes);
-
-  /* chelicerae: a stout basal segment hanging under the clypeus, the fang
-     folded down and BACK off its end (a resting spider's fangs tuck under,
-     they do not stick out forward). Pedipalps sit OUTSIDE the jaws and
-     stop short of them, so nothing intersects the carapace. Everything
-     here is deliberately smaller than the first pass — at that size the
-     mouthparts were the only thing you could see of the face. */
-  const jaw=[];
+  /* chelicerae hang under the clypeus, basis built by hand: +y down the
+     jaw, +z its front face, +x toward world −x on both. The fang is built
+     curling toward its own +x and mirrored for the left, so its rotation
+     z is negated there (a mirror about x flips a rotation about z). */
+  const fangs=[], palps=[];
   for(const sx of[-1,1]){
-    /* --- chelicera --- */
-    const bx=sx*0.115, by=BODY_Y-0.20, bz=0.78;
-    const bd=[sx*0.10,-1,0.16], bl=0.26;
-    jaw.push(seg(bx,by,bz, bd[0],bd[1],bd[2], bl, 0.095,0.072, M.limb));
-    const [fx,fy,fz]=end(bx,by,bz, bd[0],bd[1],bd[2], bl);
-    jaw.push(spike(fx,fy,fz, sx*0.04,-1,-0.42, 0.22, 0.048, M.limb, 7));
-    /* --- pedipalp: two short segments, elbowed, clear of the jaws --- */
-    const px=sx*0.31, py=BODY_Y-0.14, pz=0.60;
-    const pd=[sx*0.62,-0.74,0.36], pl=0.26;
-    jaw.push(seg(px,py,pz, pd[0],pd[1],pd[2], pl, 0.052,0.042, M.limb));
-    const [qx,qy,qz]=end(px,py,pz, pd[0],pd[1],pd[2], pl);
-    jaw.push(seg(qx,qy,qz, sx*0.12,-0.96,0.24, 0.22, 0.042,0.024, M.limb));
-    /* a few bristles on the palps, pointing away from the body */
-    for(let i=0;i<4;i++)
-      jaw.push(bristle(sx*(0.34+Math.random()*0.10), BODY_Y-0.20-Math.random()*0.18,
-                       0.58+Math.random()*0.14, sx*0.8, -0.35, 0.4,
-                       0.07+Math.random()*0.05, 0.009, M.limb));
+    const {mesh,len}=buildChelicera(M);
+    const cg=new THREE.Group();
+    const Y=new THREE.Vector3(sx*0.12,-1,0.42).normalize();
+    const X=new THREE.Vector3(-1,0,0); X.addScaledVector(Y,-X.dot(Y)).normalize();
+    const Z=new THREE.Vector3().crossVectors(X,Y);
+    cg.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(X,Y,Z));
+    cg.position.copy(at(sx*0.105,BODY_Y-0.10,CAR_Z+CAR_LEN/2-0.09));
+    cg.add(mesh);
+    const fg=new THREE.Group(); fg.position.set(0,len*0.9,0.02);
+    const fm=buildFang(M); fg.add(fm);
+    fg.userData.sx=sx; fg.scale.x=sx; fg.rotation.set(0.5,0,-sx*1.35);
+    cg.add(fg); fangs.push(fg);
+    head.add(cg);
+    /* the palp: yawed to reach forward and a little out */
+    const pm=buildPalp(M), pg=new THREE.Group();
+    const fx=sx*Math.sin(0.38), fz=Math.cos(0.38);
+    pg.position.copy(at(sx*0.24,BODY_Y-0.15,CAR_Z+CAR_LEN/2-0.2));
+    pg.rotation.set(0,Math.atan2(-fz,fx),0);
+    pg.add(pm); pg.userData={sx, ry:pg.rotation.y};
+    head.add(pg); palps.push(pg);
   }
-  const jawM=mergeStatic(jaw,M.limb);
-  for(const p of jaw) p.geometry.dispose();
-  head.add(jawM);
 
-  /* ---- 8 legs: hip yaw + femur pitch + fixed knee, animated as two
-     alternating tetrapods. Everything below femG is rigid, so it merges. ---- */
+  /* ---- 8 legs: hip yaw + femur pitch; everything below femG is rigid ---- */
   const legs=[];
-  const PHI_R=[0.96,0.35,-0.26,-0.87];           // splay angles, right side
-  const TIBL=TIB*0.60, TARL=TIB-TIBL;            // tibia / tarsus split of the same reach
+  head.updateMatrixWorld(true);
   for(let side=0;side<2;side++){
     for(let i=0;i<4;i++){
-      const phi = side===0? PHI_R[i] : Math.PI-PHI_R[i];
+      const R=LEG_ROWS[i], sgn=side===0?1:-1;
+      const phi = side===0? R.phi : Math.PI-R.phi;
       const hip=new THREE.Group();
-      hip.position.set((side===0?1:-1)*0.42, BODY_Y, 0.55-i*0.37);
+      hip.position.copy(at(sgn*R.x,HIP_Y,R.z));
       hip.rotation.y=-phi;
-      const femG=new THREE.Group(); femG.rotation.z=PITCH; hip.add(femG);
-
-      const parts=[];
-      /* coxa/trochanter: the thick stub where the leg meets the body */
-      const cox=new THREE.Mesh(new THREE.SphereGeometry(0.115,9,7),M.limb);
-      cox.scale.set(1.25,0.95,0.95); parts.push(cox);
-      const fem=new THREE.Mesh(new THREE.CylinderGeometry(0.088,0.058,FEM,8),M.limb);
-      fem.geometry.rotateZ(-Math.PI/2); fem.geometry.translate(FEM/2,0,0);
-      parts.push(fem);
-      const knee=new THREE.Mesh(new THREE.SphereGeometry(0.082,9,7),M.limb);
-      knee.position.x=FEM; parts.push(knee);
-      /* femur bristles */
-      for(let b=0;b<5;b++){
-        const t=0.18+Math.random()*0.7, a=Math.random()*Math.PI*2;
-        parts.push(bristle(FEM*t, Math.sin(a)*0.06, Math.cos(a)*0.06,
-                           -0.35, Math.sin(a), Math.cos(a),
-                           0.13+Math.random()*0.13, 0.010, M.limb));
-      }
-      /* everything past the knee rides a fixed-rotation frame — build it
-         under a temp group so mergeStatic bakes that transform in */
-      const tibG=new THREE.Group(); tibG.position.x=FEM; tibG.rotation.z=KNEE;
-      tibG.updateMatrixWorld(true);
-      const tibParts=[];
-      const tib=new THREE.Mesh(new THREE.CylinderGeometry(0.056,0.030,TIBL,8),M.limb);
-      tib.geometry.rotateZ(-Math.PI/2); tib.geometry.translate(TIBL/2,0,0);
-      tibParts.push(tib);
-      const ank=new THREE.Mesh(new THREE.SphereGeometry(0.036,8,6),M.limb);
-      ank.position.x=TIBL; tibParts.push(ank);
-      /* the tarsus, angled a little further down — the foot */
-      const tar=new THREE.Mesh(new THREE.CylinderGeometry(0.030,0.014,TARL,7),M.limb);
-      tar.geometry.rotateZ(-Math.PI/2); tar.geometry.translate(TARL/2,0,0);
-      tar.position.x=TIBL; tar.rotation.z=-0.30; tibParts.push(tar);
-      /* the claw */
-      const claw=new THREE.Mesh(new THREE.ConeGeometry(0.020,0.10,5),M.limb);
-      claw.geometry.rotateZ(-Math.PI/2); claw.geometry.translate(0.05,0,0);
-      claw.position.set(TIBL+Math.cos(-0.30)*TARL, Math.sin(-0.30)*TARL, 0);
-      claw.rotation.z=-0.95; tibParts.push(claw);
-      /* tibial bristles — the spiny ones, longest on a spider's shin */
-      for(let b=0;b<7;b++){
-        const t=0.10+Math.random()*0.82, a=Math.random()*Math.PI*2;
-        tibParts.push(bristle(TIBL*t, Math.sin(a)*0.04, Math.cos(a)*0.04,
-                              -0.30, Math.sin(a), Math.cos(a),
-                              0.14+Math.random()*0.16, 0.009, M.limb));
-      }
-      for(const p of tibParts){ tibG.add(p); }
-      tibG.updateMatrixWorld(true);
-      parts.push(...tibParts);
-
-      const legMesh=mergeStatic(parts,M.limb);
-      for(const p of parts) p.geometry.dispose();
-      femG.add(legMesh);
-      g.add(hip);
+      const {mesh,tip}=buildLeg(M,R.k);
+      const pitch0=footPitch(tip,HIP_Y);
+      const femG=new THREE.Group(); femG.rotation.z=pitch0; hip.add(femG);
+      femG.add(mesh);
+      head.add(hip);
       legs.push({hip, femG, basePhi:phi, phase:(i%2===0)===(side===0)? 0:Math.PI,
-                 front:i===0, row:i, fold:0});
+                 front:i===0, row:i, fold:0, pitch0, tipX:tip.x, tipY:tip.y, sniffComp:0,
+                 hx:sgn*R.x, hz:R.z});         // the hip in mesh space, for the terrain probe
     }
   }
-  g.userData={legs, eyeMat, abd, head, BODY_Y, scratchAnim:0, sniffAnim:0, abdTilt:0, animated:true};
+  /* each leg's pitch at a full sniff, solved against the tilted head so the
+     foot stays down: the tip's height in the group is monotonic in pitch */
+  const tipV=new THREE.Vector3();
+  const footY=(leg,p)=>{ leg.femG.rotation.z=p; leg.hip.updateMatrixWorld(true);
+    return tipV.set(leg.tipX,leg.tipY,0).applyMatrix4(leg.femG.matrixWorld).y; };
+  head.rotation.x=SNIFF_TILT; head.position.y=BODY_Y-SNIFF_DROP; g.updateMatrixWorld(true);
+  for(const leg of legs){
+    let lo=leg.pitch0-0.9, hi=leg.pitch0+0.9;
+    for(let it=0;it<30;it++){ const mid=(lo+hi)/2; if(footY(leg,mid)<0.02) lo=mid; else hi=mid; }
+    leg.sniffComp=(lo+hi)/2-leg.pitch0;
+    leg.femG.rotation.z=leg.pitch0;
+  }
+  head.rotation.x=0; head.position.y=BODY_Y;
+
+  g.userData={legs, eyeMat, abd, head, BODY_Y, ABD_Z, fangs, palps, fangOpen:0,
+              scratchAnim:0, sniffAnim:0, abdTilt:0, animated:true};
   g.visible=false;
   return g;
 }
+/* the sniff: the whole front pitches down about the pedicel */
+function sniffPose(u){
+  u.head.rotation.x=u.sniffAnim*SNIFF_TILT;
+  u.head.position.y=u.BODY_Y-u.sniffAnim*SNIFF_DROP;
+}
+/* the face between strides: fangs unfold when it commits, palps feel the
+   air as it walks and reach for the floor when it sniffs */
+function faceAnim(u,dt,tNow,moved,aggr){
+  u.fangOpen+=((aggr?1:0)-u.fangOpen)*Math.min(1,dt*(aggr?6:2));
+  for(const f of u.fangs){
+    const sx=f.userData.sx, o=u.fangOpen;
+    f.rotation.set(lerp(0.5,0.95,o), 0, sx*(lerp(-1.35,0.32,o)+Math.sin(tNow*14+sx)*0.12*o));
+  }
+  const walk=clamp(moved/3,0,1);
+  for(const p of u.palps){
+    const sx=p.userData.sx;
+    p.rotation.z=0.10*Math.sin(tNow*2.1+sx*1.7)+0.18*walk*Math.sin(tNow*7+sx*2)-u.sniffAnim*0.45;
+    p.rotation.y=p.userData.ry+0.08*Math.sin(tNow*1.3+sx);
+  }
+}
+/* the terrain probe's reach for a leg at a femur pitch */
+const legReach=(leg,pitch)=>leg.tipX*Math.cos(pitch)-leg.tipY*Math.sin(pitch);
 
 /* ================= hearing ================= */
 /* a floppy disk just left its shelf at (x,z) */
@@ -469,8 +870,8 @@ const WALL_TRAVERSE_MULT=2.55;        // wall mount/traverse/dismount speed (× 
 const CEIL_TRAVERSE_MULT=2.25;        // ceiling disc-transit glide speed (× browse)
 const S_LEAD=10;                      // along-the-wall lead of the S-curve mount/dismount (horizontal blend distance)
 const SIDE=2*INNER, PERIM=4*SIDE;     // inner-perimeter loop length (wall transit)
-const TAIL_LOCAL=new THREE.Vector3(0,1.62,-2.03);  // the abdomen tail tip in mesh-local space (web origin / hang anchor)
-const HANG_LAND=3.5;                  // tail height when the head-down hang's legs reach the floor
+const TAIL_LOCAL=new THREE.Vector3(0,SP_BODY_Y+0.12,ABD_Z-ABD_HALF*ABD_SZ);  // the abdomen tail tip in mesh-local space (web origin / hang anchor)
+const HANG_LAND=3.7;                  // tail height when the head-down hang's face reaches you
 const _tmp=new THREE.Vector3();
 
 function nearestWall(x,z){
@@ -1145,11 +1546,11 @@ export function updateSpider(dt){
     const sw=Math.sin(s.anim+leg.phase);
     const lift=Math.max(0,Math.sin(s.anim+leg.phase+1.3));
     let yaw=-leg.basePhi+sw*0.30*clamp(movedSpeed/3,0,1);
-    let pitch=PITCH+lift*0.34*clamp(movedSpeed/3,0,1);
+    let pitch=leg.pitch0+lift*0.34*clamp(movedSpeed/3,0,1);
     if(u.scratchAnim>0&&leg.front){
       /* a flurry against the shelf face */
       yaw=-leg.basePhi+Math.sin(tNow*30+leg.phase)*0.18;
-      pitch=0.85+Math.sin(tNow*34+leg.phase*2)*0.4;
+      pitch=leg.pitch0+0.43+Math.sin(tNow*34+leg.phase*2)*0.4;
     }
     /* terrain: where would this foot land? Tall things (walls, shelves)
        fold the leg up against the face instead of skewering it; low things
@@ -1157,22 +1558,22 @@ export function updateSpider(dt){
     let foldTgt=0;
     if(onFloorNow){                                  // terrain-fold is a floor probe; walls/ceiling are flat
       const phiEff=-yaw;
-      const horiz=FEM*Math.cos(pitch)+TIB*Math.cos(-KNEE-pitch);
-      const lx=leg.hip.position.x+Math.cos(phiEff)*horiz;
-      const lz=leg.hip.position.z+Math.sin(phiEff)*horiz;
+      const horiz=legReach(leg,pitch);
+      const lx=leg.hx+Math.cos(phiEff)*horiz;
+      const lz=leg.hz+Math.sin(phiEff)*horiz;
       const ct=cellAt(s.pos.x+lx*cosY+lz*sinY, s.pos.z-lx*sinY+lz*cosY);
       foldTgt = (ct===1||ct===2||ct===3)? 0.55 : (ct===4||ct===5)? 0.30 : 0;
     }
     leg.fold+=(foldTgt-leg.fold)*Math.min(1,dt*7);
     leg.hip.rotation.y=yaw;
-    leg.femG.rotation.z=pitch+leg.fold;
+    leg.femG.rotation.z=pitch+leg.fold+u.sniffAnim*leg.sniffComp;
   }
   if(u.scratchAnim>0) u.scratchAnim-=dt;
   /* the head dips when it sniffs — and when it braces to fire silk (telegraph) */
   const telegraph = s.surf.phase==="toCeiling"||s.surf.phase==="drop"||s.surf.phase==="dropAttack";
   if(s.state!=="investigate" && !telegraph) u.sniffAnim=Math.max(0,u.sniffAnim-dt*2);
-  u.head.position.y=-u.sniffAnim*0.55;
-  u.head.position.z=u.sniffAnim*0.25;
+  sniffPose(u);
+  faceAnim(u,dt,tNow,movedSpeed,s.state==="chase"||s.state==="stalk");
   /* the abdomen cocks up as it aims the spinnerets at the ceiling */
   u.abd.rotation.x=-u.abdTilt*0.6;
   const breath=1+Math.sin(tNow*0.9)*0.04*(1-sp01);
@@ -1221,8 +1622,10 @@ export function spiderPose(dt,speed){
     const sw=Math.sin(s.anim+leg.phase);
     const lift=Math.max(0,Math.sin(s.anim+leg.phase+1.3));
     leg.hip.rotation.y=-leg.basePhi+sw*0.30;
-    leg.femG.rotation.z=0.42+lift*0.34;
+    leg.femG.rotation.z=leg.pitch0+lift*0.34;
   }
+  u.sniffAnim=0; sniffPose(u);
+  faceAnim(u,dt,performance.now()/1000,speed,true);
   u.eyeMat.emissive.setHex(0x8a1410);
   s.mesh.position.set(s.pos.x, Math.abs(Math.sin(s.anim*2))*0.07, s.pos.z);
   s.mesh.rotation.set(0,s.faceAng,0);     // clear any surface tilt before the scripted run
@@ -1243,16 +1646,16 @@ export function spiderDigPose(dt,sink=0){
     if(leg.row<2){
       /* alternating downward strikes, fast and deep */
       leg.hip.rotation.y=-leg.basePhi+Math.sin(tNow*22+leg.phase)*0.24;
-      leg.femG.rotation.z=0.95+Math.sin(tNow*26+leg.phase*2.3)*0.55;
+      leg.femG.rotation.z=leg.pitch0+0.53+Math.sin(tNow*26+leg.phase*2.3)*0.55;
     } else {
       /* braced low — scrambling harder the steeper it tips, shoving it down */
       leg.hip.rotation.y=-leg.basePhi+Math.sin(tNow*(3+dive*15)+leg.phase)*(0.04+dive*0.16);
-      leg.femG.rotation.z=PITCH+0.14+dive*0.30;
+      leg.femG.rotation.z=leg.pitch0+0.14+dive*0.30+u.sniffAnim*leg.sniffComp;
     }
   }
   u.sniffAnim=Math.min(1,u.sniffAnim+dt*3);      // head down into the work
-  u.head.position.y=-u.sniffAnim*0.55;
-  u.head.position.z=u.sniffAnim*0.25;
+  sniffPose(u);
+  faceAnim(u,dt,tNow,0,true);
   u.abd.rotation.x=0.22-dive*0.12;                // abdomen cocked up, throwing spoil
   u.abd.position.y=(u.BODY_Y+0.12)+0.18;
   u.eyeMat.emissive.setHex(0x8a1410);
@@ -1305,7 +1708,7 @@ export function resetSpider(farFromX,farFromZ,minDist=33){
   if(s.mesh){
     s.mesh.position.set(p.x,0,p.z); s.mesh.quaternion.identity();
     const u=s.mesh.userData;
-    u.abdTilt=0; u.sniffAnim=0; u.abd.rotation.x=0; u.abd.position.set(0,u.BODY_Y+0.12,-0.95);
+    u.abdTilt=0; u.sniffAnim=0; u.abd.rotation.x=0; u.abd.position.set(0,u.BODY_Y+0.12,u.ABD_Z);
   }
 }
 
@@ -1828,34 +2231,34 @@ export function updateSpiderCave(dt){
     const sw=Math.sin(s.anim+leg.phase);
     const lift=Math.max(0,Math.sin(s.anim+leg.phase+1.3));
     let yaw=-leg.basePhi+sw*0.30*clamp(movedSpeed/3,0,1);
-    let pitch=PITCH+lift*0.34*clamp(movedSpeed/3,0,1);
+    let pitch=leg.pitch0+lift*0.34*clamp(movedSpeed/3,0,1);
     if(u.scratchAnim>0&&leg.front){
       yaw=-leg.basePhi+Math.sin(tNow*30+leg.phase)*0.18;
-      pitch=0.85+Math.sin(tNow*34+leg.phase*2)*0.4;
+      pitch=leg.pitch0+0.43+Math.sin(tNow*34+leg.phase*2)*0.4;
     }
     let foldTgt=0;
     {
       const phiEff=-yaw;
-      const horiz=FEM*Math.cos(pitch)+TIB*Math.cos(-KNEE-pitch);
-      const lx=leg.hip.position.x+Math.cos(phiEff)*horiz;
-      const lz=leg.hip.position.z+Math.sin(phiEff)*horiz;
+      const horiz=legReach(leg,pitch);
+      const lx=leg.hx+Math.cos(phiEff)*horiz;
+      const lz=leg.hz+Math.sin(phiEff)*horiz;
       const ct=cellAt3(s.pos.x+lx*cosY+lz*sinY, s.pos.z-lx*sinY+lz*cosY);
       foldTgt = (ct===1||ct===2||ct===7)? 0.55 : 0;
     }
     leg.fold+=(foldTgt-leg.fold)*Math.min(1,dt*7);
     leg.hip.rotation.y=yaw;
-    leg.femG.rotation.z=pitch+leg.fold;
+    leg.femG.rotation.z=pitch+leg.fold+u.sniffAnim*leg.sniffComp;
   }
   if(u.scratchAnim>0) u.scratchAnim-=dt;
   if(s.state!=="investigate") u.sniffAnim=Math.max(0,u.sniffAnim-dt*2);
-  u.head.position.y=-u.sniffAnim*0.55;
-  u.head.position.z=u.sniffAnim*0.25;
+  sniffPose(u);
   u.abd.rotation.x=0;
   const breath=1+Math.sin(tNow*0.9)*0.04*(1-sp01);
   u.abd.scale.set(1.0*breath,0.9,1.35/breath);
   u.abd.position.y=u.BODY_Y+0.12;
   const aggressive=s.state==="chase"||s.state==="frenzy"||s.state==="hunt"||s.state==="rampage";
   u.eyeMat.emissive.setHex(aggressive? 0x8a1410:0x3a0805);
+  faceAnim(u,dt,tNow,movedSpeed,aggressive);
   const bob=Math.abs(Math.sin(s.anim*2))*0.07*sp01;
   s.mesh.position.set(s.pos.x,floorYAt(s.pos.x,s.pos.z)+bob,s.pos.z);
   s.mesh.quaternion.setFromEuler(new THREE.Euler(0,s.faceAng,0));
@@ -1896,6 +2299,6 @@ export function resetSpiderCave(farFromX,farFromZ,minDist=30){
   if(s.mesh){
     s.mesh.position.set(p.x,floorYAt(p.x,p.z),p.z); s.mesh.quaternion.identity();
     const u=s.mesh.userData;
-    u.abdTilt=0; u.sniffAnim=0; u.abd.rotation.x=0; u.abd.position.set(0,u.BODY_Y+0.12,-0.95);
+    u.abdTilt=0; u.sniffAnim=0; u.abd.rotation.x=0; u.abd.position.set(0,u.BODY_Y+0.12,u.ABD_Z);
   }
 }
