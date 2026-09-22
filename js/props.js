@@ -1,7 +1,7 @@
 /* ---------------- props ---------------- */
 import { rand } from "./utils.js";
 import { W, H, CELL, WALL_H as WALL_H0, cellToWorld, randomOpenCell, isWall, losCells } from "./map.js";
-import { makeCanvas, texWall, scaleBoxUV, makeCrackTexture } from "./textures.js";
+import { makeCanvas, texWall, scaleBoxUV, makeCrackTexture, envMetal } from "./textures.js";
 import { scene, wallMeshes, removeDecalsOnWall, mergeWallMeshes, freezeStaticScene,
          markShared, mergeStatic } from "./scene.js";
 
@@ -89,28 +89,67 @@ const texCeramic=makeCanvas(128,128,(g,w,h)=>{
     g.fillStyle=gr;g.fillRect(x-r,y-r,r*2,r*2);
   }
 });
-/* painted steel, for the panel: orange peel, old scratches, rust creeping up
-   from the bottom edge (v=0 is the bottom of the door under flipY) */
-const texPanel=makeCanvas(256,256,(g,w,h)=>{
+/* painted steel, for the panel. Every face of the cabinet and door wears the
+   whole canvas, so its border IS the edge of a face: that is where paint
+   wears through to bare metal and where rust starts, and rust RUNS — down
+   from the top edge and the hardware in streaks, and blooms along the bottom
+   where the damp sits. Round rust dots scattered over a face are polka dots. */
+const texPanel=makeCanvas(512,512,(g,w,h)=>{
   g.fillStyle="#5b666a";g.fillRect(0,0,w,h);
-  for(let i=0;i<3000;i++){                          // orange peel in the paint
+  for(let i=0;i<9000;i++){                          // orange peel in the paint
     const v=Math.random()<0.5;
-    g.fillStyle=`rgba(${v?68:126},${v?76:136},${v?80:140},${0.10+Math.random()*0.16})`;
-    g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*2.4,1+Math.random()*2);
+    g.fillStyle=`rgba(${v?68:126},${v?76:136},${v?80:140},${0.07+Math.random()*0.12})`;
+    g.beginPath();g.arc(Math.random()*w,Math.random()*h,0.8+Math.random()*1.6,0,7);g.fill();
   }
-  for(let i=0;i<26;i++){                            // scratches down to bare metal
-    g.save();g.translate(Math.random()*w,Math.random()*h);g.rotate(Math.random()*Math.PI);
-    g.fillStyle=`rgba(178,186,190,${0.10+Math.random()*0.22})`;
-    g.fillRect(0,0,6+Math.random()*40,1);g.restore();
+  for(let i=0;i<16;i++){                            // broad tone: the paint was brushed on site
+    const x=Math.random()*w,y=Math.random()*h,r=40+Math.random()*120;
+    const gr=g.createRadialGradient(x,y,1,x,y,r);
+    gr.addColorStop(0,Math.random()<0.5?"rgba(120,132,136,0.08)":"rgba(30,36,38,0.10)");gr.addColorStop(1,"rgba(0,0,0,0)");
+    g.fillStyle=gr;g.beginPath();g.arc(x,y,r,0,7);g.fill();
   }
-  for(let i=0;i<14;i++){                            // rust blooming off the bottom rail
-    const x=Math.random()*w, y=h-Math.pow(Math.random(),1.7)*h*0.45;
-    const r=5+Math.random()*20;
-    const gr=g.createRadialGradient(x,y,0,x,y,r);
-    gr.addColorStop(0,`rgba(122,62,26,${0.14+Math.random()*0.26})`);
-    gr.addColorStop(1,"rgba(122,62,26,0)");
-    g.fillStyle=gr;g.fillRect(x-r,y-r,r*2,r*2);
+  g.lineCap="round";
+  for(let i=0;i<46;i++){                            // scratches down to bare metal
+    const x=Math.random()*w,y=Math.random()*h,a=Math.random()*Math.PI,l=10+Math.random()*80;
+    g.strokeStyle=`rgba(178,186,190,${0.10+Math.random()*0.22})`;g.lineWidth=0.7+Math.random()*1.2;
+    g.beginPath();g.moveTo(x,y);g.quadraticCurveTo(x+Math.cos(a)*l*0.5+(Math.random()-0.5)*6,y+Math.sin(a)*l*0.5,
+      x+Math.cos(a)*l,y+Math.sin(a)*l);g.stroke();
   }
+  /* worn edges: bare steel where hands and hinges have rubbed the paint off */
+  for(let i=0;i<700;i++){
+    const side=(Math.random()*4)|0, t=Math.random(), d=Math.pow(Math.random(),2.2)*16;
+    const x=side===0?d: side===1?w-d: t*w, y=side===2?d: side===3?h-d: t*h;
+    g.fillStyle=`rgba(150,158,160,${0.08+Math.random()*0.2})`;
+    g.beginPath();g.ellipse(x,y,1+Math.random()*4,1+Math.random()*3,Math.random()*3,0,7);g.fill();
+  }
+  /* rust runs from the top edge and the fastener line */
+  for(let i=0;i<22;i++){
+    let x=Math.random()*w, y=Math.random()<0.6? Math.random()*14 : h*(0.12+Math.random()*0.2);
+    const len=30+Math.random()*170, ww=2+Math.random()*5, a=0.08+Math.random()*0.16;
+    const L=[],R=[];
+    for(let k=0;k<=24;k++){ const t=k/24; x+=(Math.random()-0.5)*1.4;
+      const wk=ww*(1-t*0.8); L.push([x-wk/2,y+t*len]); R.push([x+wk/2,y+t*len]); }
+    const gr=g.createLinearGradient(0,y,0,y+len);
+    gr.addColorStop(0,`rgba(116,58,24,${a})`);gr.addColorStop(1,"rgba(116,58,24,0)");
+    g.fillStyle=gr;g.beginPath();g.moveTo(L[0][0],L[0][1]);
+    for(const q of L) g.lineTo(q[0],q[1]); for(let k=R.length-1;k>=0;k--) g.lineTo(R[k][0],R[k][1]);
+    g.closePath();g.fill();
+  }
+  /* and the bloom along the bottom rail (v=0 is the bottom under flipY) */
+  for(let i=0;i<30;i++){
+    const x=Math.random()*w, y=h-Math.pow(Math.random(),1.8)*h*0.28, r=6+Math.random()*30;
+    const p1=Math.random()*7, a=0.10+Math.random()*0.22;
+    g.fillStyle=`rgba(122,62,26,${a})`;
+    g.beginPath();
+    for(let t=0;t<=Math.PI*2+0.01;t+=0.3){
+      const rr=r*(1+0.3*Math.sin(t*3+p1)+0.18*Math.sin(t*5+p1*2));
+      const px=x+Math.cos(t)*rr, py=y+Math.sin(t)*rr*0.6;
+      t? g.lineTo(px,py):g.moveTo(px,py);
+    }
+    g.closePath();g.fill();
+  }
+  const gr=g.createLinearGradient(0,h*0.7,0,h);   // grime settling toward the bottom
+  gr.addColorStop(0,"rgba(28,30,26,0)");gr.addColorStop(1,"rgba(28,30,26,0.22)");
+  g.fillStyle=gr;g.fillRect(0,h*0.7,w,h*0.3);
 });
 /* the two bits of paper on the door: the maker's plate, and the circuit
    directory that was never filled in past the first two lines */
@@ -173,34 +212,40 @@ const texCard=makeCanvas(160,180,(g,w,h)=>{
    mid for the cab lining, dark for the trim. Tiled at a fixed world scale
    (scaleBoxUV) at 0.5m, so a 2.5m door leaf and a 20mm bezel wear the same
    steel at the same grain size. */
-const texElevSteel=makeCanvas(256,256,(g,w,h)=>{
+const texElevSteel=makeCanvas(512,512,(g,w,h)=>{
   g.fillStyle="#c2c7ca";g.fillRect(0,0,w,h);
-  for(let i=0;i<2400;i++){                       // the satin: vertical, always
-    const v=Math.random();
-    g.fillStyle=`rgba(${v<0.5?150:238},${v<0.5?156:243},${v<0.5?160:246},${0.05+Math.random()*0.16})`;
-    g.fillRect(Math.random()*w,Math.random()*h,1,10+Math.random()*70);
+  /* the tone of the sheet drifts across its width — soft, wrapped, and far
+     broader than any one grain line. There used to be two dozen round
+     fingerprint smudges in here too, and a map that repeats every half
+     metre turned them into POLKA DOTS on every door in the building. */
+  for(let i=0;i<10;i++){
+    const x=Math.random()*w, ww=30+Math.random()*120, a=0.03+Math.random()*0.05;
+    const c=Math.random()<0.5?"120,126,130":"238,242,244";
+    for(const ox of[-w,0,w]){
+      const gr=g.createLinearGradient(x+ox-ww/2,0,x+ox+ww/2,0);
+      gr.addColorStop(0,`rgba(${c},0)`);gr.addColorStop(0.5,`rgba(${c},${a})`);gr.addColorStop(1,`rgba(${c},0)`);
+      g.fillStyle=gr;g.fillRect(x+ox-ww/2,0,ww,h);
+    }
   }
-  for(let i=0;i<70;i++){                         // the longer draw marks
+  for(let i=0;i<9600;i++){                       // the satin: vertical, always
+    const v=Math.random();
+    g.fillStyle=`rgba(${v<0.5?150:238},${v<0.5?156:243},${v<0.5?160:246},${0.04+Math.random()*0.13})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1,20+Math.random()*140);
+  }
+  for(let i=0;i<140;i++){                        // the longer draw marks
     const x=Math.random()*w;
-    g.fillStyle=`rgba(${Math.random()<0.5?128:250},${Math.random()<0.5?134:252},${Math.random()<0.5?138:254},${0.06+Math.random()*0.1})`;
+    g.fillStyle=`rgba(${Math.random()<0.5?128:250},${Math.random()<0.5?134:252},${Math.random()<0.5?138:254},${0.05+Math.random()*0.08})`;
     g.fillRect(x,0,1+Math.random(),h);
   }
-  for(let i=0;i<26;i++){                         // hands, forty years of them
-    const x=Math.random()*w,y=Math.random()*h,r=8+Math.random()*22;
-    const gr=g.createRadialGradient(x,y,1,x,y,r);
-    gr.addColorStop(0,`rgba(96,100,102,${0.05+Math.random()*0.1})`);
-    gr.addColorStop(1,"rgba(96,100,102,0)");
-    g.fillStyle=gr;g.beginPath();g.ellipse(x,y,r*0.7,r,0,0,7);g.fill();
-  }
-  for(let i=0;i<110;i++){                        // micro-scratches, every angle
-    const x=Math.random()*w,y=Math.random()*h,a=Math.random()*7,l=3+Math.random()*16;
-    g.strokeStyle=`rgba(${Math.random()<0.5?110:252},${Math.random()<0.5?116:254},${Math.random()<0.5?120:255},${0.10+Math.random()*0.2})`;
+  for(let i=0;i<260;i++){                        // micro-scratches, every angle
+    const x=Math.random()*w,y=Math.random()*h,a=Math.random()*7,l=4+Math.random()*26;
+    g.strokeStyle=`rgba(${Math.random()<0.5?110:252},${Math.random()<0.5?116:254},${Math.random()<0.5?120:255},${0.08+Math.random()*0.16})`;
     g.lineWidth=0.7;
     g.beginPath();g.moveTo(x,y);g.lineTo(x+Math.cos(a)*l,y+Math.sin(a)*l);g.stroke();
   }
 });
 texElevSteel.wrapS=texElevSteel.wrapT=THREE.RepeatWrapping;
-texElevSteel.anisotropy=4;
+texElevSteel.anisotropy=8;
 /* the cab floor: resilient sheet, and what reads on one is the METRE-scale
    blotch of a poured/rolled sheet, not the speckle — the carpet had to
    learn the same thing twice. Tiled at 1m. */
@@ -332,16 +377,24 @@ const texJambNum=makeCanvas(80,120,(g,w,h)=>{
   engrave(g,"0",w/2,52,"bold 46px Courier New");
   engrave(g,"LEVEL",w/2,92,"bold 10px Courier New");
 });
-markShared(texAlmond,texFuseFace,texCeramic,texPanel,texPlate,texCard,
+/* a screw cap is RIBBED — sixty ridges round it, which is the whole read at
+   arm's length; flat black plastic is a rubber stopper */
+const texCapRibs=makeCanvas(128,16,(g,w,h)=>{
+  for(let x=0;x<w;x+=2){ g.fillStyle=(x/2)%2? "#6a6a6e":"#e6e6ea"; g.fillRect(x,0,2,h); }
+});
+markShared(texAlmond,texFuseFace,texCeramic,texPanel,texPlate,texCard,texCapRibs,envMetal,
            texElevSteel,texElevFloor,texCOP,texCapPlate,texHallFace,texJambNum);
 const glassMat=new THREE.MeshPhongMaterial({color:0xd6e4ea, transparent:true, opacity:0.40,
-  specular:0xffffff, shininess:96, side:THREE.DoubleSide});
+  specular:0xffffff, shininess:96, side:THREE.DoubleSide,
+  envMap:envMetal, combine:THREE.MixOperation, reflectivity:0.14});
 const almondMat=new THREE.MeshPhongMaterial({color:0xeadfbe, emissive:0x1a1610,
   specular:0x9a9280, shininess:34});
-const capMat=new THREE.MeshPhongMaterial({color:0x2b2b2d, specular:0x4a4a4e, shininess:44});
+const capMat=new THREE.MeshPhongMaterial({color:0x2b2b2d, specular:0x4a4a4e, shininess:44,
+  bumpMap:texCapRibs, bumpScale:0.004});
 const labelMat=new THREE.MeshPhongMaterial({map:texAlmond, specular:0x1a1814, shininess:8,
   side:THREE.DoubleSide});
-const brassMat=new THREE.MeshPhongMaterial({color:0xb59a52, specular:0xe4d49a, shininess:82});
+const brassMat=new THREE.MeshPhongMaterial({color:0xb59a52, specular:0xe4d49a, shininess:82,
+  envMap:envMetal, combine:THREE.MultiplyOperation, reflectivity:0.7});
 const ceramicMat=new THREE.MeshPhongMaterial({map:texCeramic, specular:0x3a382e, shininess:26});
 const fuseFaceMat=new THREE.MeshPhongMaterial({map:texFuseFace, transparent:true,
   specular:0x000000, shininess:1});
@@ -419,7 +472,8 @@ function makeBreaker(p,facing){
   const g=new THREE.Group();
   const steel=new THREE.MeshPhongMaterial({map:texPanel, specular:0x2c3336, shininess:26});
   const steelDark=new THREE.MeshPhongMaterial({color:0x333c40, specular:0x1c2124, shininess:18});
-  const bright=new THREE.MeshPhongMaterial({color:0x9aa2a8, specular:0x5c6468, shininess:52});
+  const bright=new THREE.MeshPhongMaterial({color:0x9aa2a8, specular:0x5c6468, shininess:52,
+    envMap:envMetal, combine:THREE.MultiplyOperation, reflectivity:0.6});
   const add=(geo,mat,x,y,z)=>{const m=new THREE.Mesh(geo,mat);m.position.set(x,y,z);g.add(m);return m;};
   /* the cabinet, and the flange folded out around its mouth */
   add(new THREE.BoxGeometry(0.9,1.3,0.1),steel,0,0,0);
@@ -476,6 +530,12 @@ function makeBreaker(p,facing){
     new THREE.MeshBasicMaterial({color:0xff3020}));
   lamp.position.set(0.28,0.45,0.05); lamp.scale.z=0.7; door.add(lamp);
   g.userData.lamp=lamp;
+  /* the lens is glass over the lit core: a flat MeshBasic disc alone reads
+     as a red sticker, and the catchlight on a dome is what makes it a lamp */
+  const dome=new THREE.Mesh(new THREE.SphereGeometry(0.047,14,10),
+    new THREE.MeshPhongMaterial({color:0x000000, transparent:true, opacity:0.35,
+      specular:0xffffff, shininess:120, depthWrite:false}));
+  dome.position.set(0.28,0.45,0.052); dome.scale.z=0.75; door.add(dome);
   /* the main throw: a slotted plate with the handle riding it, kept clear of
      the directory card on the other side of the door. `lever` is the HANDLE
      and nothing else — the cutscene slides it 0.2m up the plate. */
@@ -492,18 +552,26 @@ function makeBreaker(p,facing){
    painted rather than brushed, so it takes a flat dark colour. Merging is
    done BY these materials, which is what keeps a cab this detailed to
    roughly the draw count of the six-box one it replaces. */
+/* every brushed metal takes the level's reflection by MULTIPLY (envMetal):
+   the door darkens toward its foot where it would mirror the floor and holds
+   its light toward the head where it would mirror the ceiling, which is what
+   makes stainless read as stainless and not as grey paint with a hotspot */
 const elevBrightMat=new THREE.MeshPhongMaterial({map:texElevSteel, color:0xbcc2c6,
-  specular:0x9aa2a8, shininess:70});                 // doors, jambs, sills, bezels
+  specular:0x9aa2a8, shininess:70,
+  envMap:envMetal, combine:THREE.MultiplyOperation, reflectivity:0.75});   // doors, jambs, sills, bezels
 const elevLineMat  =new THREE.MeshPhongMaterial({map:texElevSteel, color:0x8b9198,
-  specular:0x5a6066, shininess:40});                 // the cab's lining
+  specular:0x5a6066, shininess:40,
+  envMap:envMetal, combine:THREE.MultiplyOperation, reflectivity:0.5});    // the cab's lining
 const elevPanelMat =new THREE.MeshPhongMaterial({map:texElevSteel, color:0x767c83,
-  specular:0x4c5258, shininess:34});                 // its raised panels
+  specular:0x4c5258, shininess:34,
+  envMap:envMetal, combine:THREE.MultiplyOperation, reflectivity:0.5});    // its raised panels
 /* the dark panel that stands in for a mirror. Held OFF both extremes on
    purpose: at a near-black base under a shininess of 110 it flipped between
    a black rectangle — which in the middle of a back wall reads as a doorway
    — and a blown-out white blob, depending only on where the car light was. */
 const elevSmokeMat =new THREE.MeshPhongMaterial({map:texElevSteel, color:0x53595f,
-  specular:0x6e767c, shininess:64});
+  specular:0x6e767c, shininess:64,
+  envMap:envMetal, combine:THREE.MultiplyOperation, reflectivity:0.6});
 const elevDarkMat  =new THREE.MeshPhongMaterial({color:0x33373b, specular:0x22262a, shininess:26});
 const elevRubberMat=new THREE.MeshPhongMaterial({color:0x141517, specular:0x1e2022, shininess:10});
 const elevAlarmMat =new THREE.MeshPhongMaterial({color:0x6e1a12, specular:0xd05a40, shininess:60});
@@ -570,16 +638,29 @@ export function makeElevator(p,facing,opts={}){
      at a fixed world scale, so they sit seamlessly beside the regular
      full-size cells (THE END); level 0 takes raw box UVs, like every other
      wall on that floor. */
-  const wallGeo=(w,h,d)=>{
+  /* Level 0's walls carry raw box UVs, one whole canvas per 4m face — so
+     the flanks and header used to squeeze all eight stripes (and the
+     skirting, and the wall angle) into whatever face they had. Their room
+     face now maps its own slice of that same canvas instead: x across the
+     cell, height up the wall, so the paper runs on from the neighbouring
+     wall box and the header shows the top of the sheet, not a skirting
+     hung over the door. (x0,y0) is the face's lower-left in the cell. */
+  const wallGeo=(w,h,d,x0,y0)=>{
     const geo=new THREE.BoxGeometry(w,h,d);
     if(opts.uvTile) scaleBoxUV(geo,w,h,d,opts.uvTile);
+    else{
+      const uv=geo.attributes.uv;
+      for(let i=16;i<20;i++)                       // +z: the face looking into the room
+        uv.setXY(i,(x0+uv.getX(i)*w)/CELL,(y0+uv.getY(i)*h)/WALL_H);
+      uv.needsUpdate=true;
+    }
     return geo;
   };
   const flankW=(CELL-OPEN_W)/2;
-  put(wallM,wallGeo(flankW,WALL_H,CELL),-(HW+flankW/2),WALL_H/2,-CELL/2);
-  put(wallM,wallGeo(flankW,WALL_H,CELL), (HW+flankW/2),WALL_H/2,-CELL/2);
-  put(wallM,wallGeo(OPEN_W,WALL_H-OPEN_H,CELL),0,(WALL_H+OPEN_H)/2,-CELL/2);
-  put(wallM,wallGeo(OPEN_W,OPEN_H,CELL-DEPTH),0,OPEN_H/2,-(DEPTH+(CELL-DEPTH)/2));
+  put(wallM,wallGeo(flankW,WALL_H,CELL,0,0),-(HW+flankW/2),WALL_H/2,-CELL/2);
+  put(wallM,wallGeo(flankW,WALL_H,CELL,CELL-flankW,0), (HW+flankW/2),WALL_H/2,-CELL/2);
+  put(wallM,wallGeo(OPEN_W,WALL_H-OPEN_H,CELL,flankW,OPEN_H),0,(WALL_H+OPEN_H)/2,-CELL/2);
+  put(wallM,wallGeo(OPEN_W,OPEN_H,CELL-DEPTH,flankW,0),0,OPEN_H/2,-(DEPTH+(CELL-DEPTH)/2));
   /* ---------- cab shell ----------
      The floor's top sits 2mm UNDER the sill's, deliberately: the sill plates
      reach back into the cab's footprint, and two coplanar top faces at the

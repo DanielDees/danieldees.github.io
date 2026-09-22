@@ -2,7 +2,7 @@
 import { rand, clamp } from "./utils.js";
 import { W, H, CELL, WALL_H, grid, genMap, cellToWorld, isWall } from "./map.js";
 import { texWall, texCarpet, texStains, texCeil, texCeilBump, texCeilStains,
-         makeMoldTextures, makeDripTextures, sliceTexture,
+         makeMoldTextures, makeDripTextures, sliceTexture, makeSpillTexture,
          makeTubeTexture, texGalv, texReflector, texLouvre, scaleBoxUV } from "./textures.js";
 import { $ } from "./utils.js";
 import { readSettings } from "./settings.js";
@@ -78,6 +78,10 @@ export const SHARED=new Set();
 export function markShared(...res){ for(const r of res) if(r) SHARED.add(r); return res[0]; }
 // level-0 tileable textures (repeat is mutated per build, and they're reused)
 markShared(texWall,texCarpet,texStains,texCeil,texCeilBump,texCeilStains);
+/* the walls and ceiling are mostly seen at a grazing angle, which is
+   exactly where an isotropic mip chain smears a 1024² map into mud */
+const ANISO=Math.min(_lowQ?4:8, renderer.capabilities.getMaxAnisotropy());
+for(const t of[texWall,texCeil,texCeilBump,texCeilStains]) t.anisotropy=ANISO;
 const _MAT_MAPS=["map","alphaMap","aoMap","bumpMap","displacementMap","emissiveMap",
   "envMap","lightMap","metalnessMap","normalMap","roughnessMap","specularMap","gradientMap"];
 function disposeMaterial(m,done){
@@ -503,8 +507,9 @@ export function buildLevel(){
      edge: it then continues onto the co-planar neighbour wall, or wraps
      around a convex/concave corner — the texture is sliced at the fold so
      it reads as one organism bending around the geometry. */
+  /* slime is wet: a tight dull glint where a lamp catches it */
   const moldMat=t=>new THREE.MeshPhongMaterial({map:t,
-    transparent:true, depthWrite:false, specular:0x000000, shininess:1});
+    transparent:true, depthWrite:false, specular:0x1c2216, shininess:38});
   const E=CELL/2;
   const moldFaces=[];
   for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
@@ -650,6 +655,7 @@ export function buildLevel(){
 
   /* fluorescent troffers (built by makeTroffer above) into the slots chosen
      up at the top of the build, where the ceiling took its openings from */
+  const spill=[];
   for(const {x,y,p,warm} of slots){
     const f=makeTroffer(warm);
     f.fix.position.set(p.x,0,p.z);
@@ -658,5 +664,43 @@ export function buildLevel(){
        floor) faintly yellows the dimmer ones — same idea as the dying
        tubes' orange gradient, far subtler */
     lights.push(makeLightRecord(f.glowMat,f.tubeMat,x,y,p,{warm,louvMat:f.louvMat}));
+    spill.push({p,mat:f.tubeMat,warm});
   }
+  scene.add(spillMesh(spill));
+}
+/* ---- the ceiling spill ----
+   Every lit troffer's glow on the tiles around it, as ONE mesh: a quad per
+   fixture carrying a vertex colour that is re-read from that fixture's tube
+   material every frame (lights.js already drives those), so each patch
+   flickers, dies, and goes red in the shockwave with its own lamp. */
+const SPILL_M=1.35;                         // how far past the trim the glow reaches (m)
+const SPILL_W=FW+2*SPILL_M, SPILL_D=FD+2*SPILL_M;
+const spillTex=markShared(makeSpillTexture(FW/SPILL_W,FD/SPILL_D,0.35));
+function spillMesh(list){
+  const pos=[],uv=[],col=[],idx=[];
+  for(const{p}of list){
+    const b=pos.length/3, y=WALL_H-0.02;
+    for(const[dx,dz,u,v]of[[-1,-1,0,0],[1,-1,1,0],[1,1,1,1],[-1,1,0,1]]){
+      pos.push(p.x+dx*SPILL_W/2,y,p.z+dz*SPILL_D/2); uv.push(u,v); col.push(0,0,0);
+    }
+    idx.push(b,b+1,b+2, b,b+2,b+3);
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute("position",new THREE.Float32BufferAttribute(pos,3));
+  geo.setAttribute("uv",new THREE.Float32BufferAttribute(uv,2));
+  geo.setAttribute("color",new THREE.Float32BufferAttribute(col,3));
+  geo.setIndex(idx);
+  const mesh=new THREE.Mesh(geo,new THREE.MeshBasicMaterial({map:spillTex, vertexColors:true,
+    transparent:true, depthWrite:false, blending:THREE.AdditiveBlending}));
+  const ca=geo.attributes.color, K=0.24;
+  mesh.onBeforeRender=()=>{
+    for(let i=0;i<list.length;i++){
+      const c=list[i].mat.color, w=list[i].warm;
+      const r=c.r*K, g=c.g*K*(w?0.62:0.97), b=c.b*K*(w?0.3:0.86);
+      for(let k=0;k<4;k++) ca.setXYZ(i*4+k,r,g,b);
+    }
+    ca.needsUpdate=true;
+  };
+  mesh.renderOrder=1;
+  return mesh;
 }

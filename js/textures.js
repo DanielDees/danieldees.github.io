@@ -4,25 +4,105 @@ export function makeCanvas(w,h,fn){const c=document.createElement("canvas");c.wi
 
 
 /* ================= LEVEL 0 — the yellow backrooms =================
-   The wall is the ORIGINAL, restored. It was rebuilt at 256 px/m with drops,
-   seams, batch tones and printed grime, and every one of those things came out
-   the other side as a defect: the drop seams read as panel lines, the batch
-   drift as four separate boards, the printed grime as hard-edged rectangles,
-   and a "paper weave" rule every 4px as 256 courses of machined lumber. It
-   went in as wallpaper and shipped as veneered plywood.
-   What this wall is supposed to be is eight flat stripes of sour yellow at
-   64 px/m with a scatter of dirt in them, and the RESTRAINT IS THE ATMOSPHERE.
-   Anything that reads as a feature on a surface that repeats every four metres
-   down a corridor you walk for twenty minutes reads as a defect. Don't. */
-export const texWall = makeCanvas(256,256,(g,w,h)=>{
+   These three maps were rebuilt once before with drops, seams, batch tones,
+   berber flecks, tide rings and printed grime, and every one of those came
+   out as a defect — veneered plywood, ceramic tile, crop circles — and went
+   back to the originals. So this pass keeps the originals' DESIGN exactly
+   (the same eight stripes, the same mottle and fleck, the same stains) and
+   raises only the resolution and the MATERIAL: what paper, print and pile
+   look like up close. Anything nameable that would repeat every four metres
+   down a corridor is still forbidden. */
+/* the wall: 1024² over one 4m face, 256 px/m (the original was 64). The
+   eight stripes are the original's; what is new is what real wallpaper has
+   and a drawn wall does not — a faint PRINT (a small floral sprig in the
+   pale stripes, a double pinstripe in the dark ones, all at a contrast that
+   averages out to the plain stripe from across a room), the paper's grain,
+   dirt that is soft instead of rectangular, a skirting with a lip, and the
+   ceiling's wall angle along the top. Every pitch divides 1024, so the print
+   runs unbroken from one wall box into the next. */
+export const texWall = makeCanvas(1024,1024,(g,w,h)=>{
+  const S=w/256, SK=14*S, WA=7;                    // skirting, wall-angle heights (px)
   g.fillStyle="#b3a04a";g.fillRect(0,0,w,h);
-  for(let x=0;x<w;x+=32){g.fillStyle = (x/32)%2? "#a99440":"#b3a04a"; g.fillRect(x,0,32,h);}
-  for(let i=0;i<900;i++){g.fillStyle=`rgba(${60+Math.random()*40|0},${50+Math.random()*35|0},20,${Math.random()*0.07})`;
-    g.fillRect(Math.random()*w,Math.random()*h,Math.random()*4+1,Math.random()*10+2);}
-  for(let i=0;i<7;i++){const x=Math.random()*w,y=Math.random()*h,r=20+Math.random()*40;
+  for(let x=0;x<w;x+=32*S){ if((x/(32*S))%2){ g.fillStyle="#a99440"; g.fillRect(x,0,32*S,h); } }
+  /* paper grain: sub-centimetre, both ways, never a line */
+  for(let i=0;i<46000;i++){
+    const lt=Math.random()<0.5;
+    g.fillStyle=lt? `rgba(236,222,160,${0.03+Math.random()*0.05})` : `rgba(96,80,30,${0.03+Math.random()*0.05})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1,1+(Math.random()<0.3?1:0));
+  }
+  /* the print. Pale stripes carry a sprig on a half-drop; dark stripes a
+     double pinstripe. Each impression is nudged and weighted a little
+     differently, because it was rolled onto paper, not stamped by a GPU. */
+  const P=52, top=WA+10, bot=h-SK-18;
+  /* FIVE rounded petals, one pointing up. A four-petal rosette turned 45°
+     is an X, and a wall printed with columns of little X's in this place
+     reads as a message, not a wallpaper. */
+  const sprig=(x,y,a)=>{
+    g.save(); g.translate(x+(Math.random()-0.5)*1.4,y+(Math.random()-0.5)*1.4);
+    g.fillStyle=`rgba(118,96,34,${a})`;
+    for(let k=0;k<5;k++){
+      g.save(); g.rotate(k*Math.PI*2/5);
+      g.beginPath(); g.ellipse(0,-4.6,3.0,3.6,0,0,7); g.fill(); g.restore();
+    }
+    g.beginPath(); g.moveTo(0,5.5); g.quadraticCurveTo(2.2,10,0.6,15);
+    g.lineWidth=1.1; g.strokeStyle=`rgba(118,96,34,${a*0.9})`; g.stroke();
+    g.beginPath(); g.ellipse(3.4,11,1.7,3.4,0.95,0,7); g.fill();   // one leaf, on the stem's outer curve
+    g.fillStyle=`rgba(226,208,138,${a*1.1})`;      // the pale eye of it
+    g.beginPath(); g.arc(0,0,1.8,0,7); g.fill();
+    g.restore();
+  };
+  for(let i=0;i<8;i+=2){
+    const cx=i*32*S+16*S, off=((i/2)%2)*P/2;
+    for(let y=top+off;y<bot;y+=P){
+      sprig(cx,y,0.10+Math.random()*0.035);
+      g.fillStyle=`rgba(118,96,34,${0.08+Math.random()*0.03})`;   // the dot between
+      g.beginPath(); g.arc(cx+(Math.random()-0.5),y+P/2,1.4,0,7); g.fill();
+    }
+  }
+  for(let i=1;i<8;i+=2){
+    for(const dx of[40,44,84,88]){
+      g.fillStyle="rgba(206,186,106,0.075)";
+      g.fillRect(i*32*S+dx,0,1.6,h);
+    }
+  }
+  /* the original's dirt: fine vertical smudging, soft-edged now */
+  for(let i=0;i<900;i++){
+    const x=Math.random()*w, y=Math.random()*h, rw=1+Math.random()*7, rh=4+Math.random()*22;
+    g.fillStyle=`rgba(${60+Math.random()*40|0},${50+Math.random()*35|0},20,${Math.random()*0.06})`;
+    g.beginPath(); g.ellipse(x,y,rw,rh,0,0,7); g.fill();
+  }
+  for(let i=0;i<7;i++){const x=Math.random()*w,y=Math.random()*h,r=(20+Math.random()*40)*S;
     const gr=g.createRadialGradient(x,y,2,x,y,r);gr.addColorStop(0,"rgba(70,58,20,0.18)");gr.addColorStop(1,"rgba(70,58,20,0)");
-    g.fillStyle=gr;g.fillRect(x-r,y-r,r*2,r*2);}
-  g.fillStyle="rgba(40,32,12,.35)";g.fillRect(0,h-14,w,14);
+    g.fillStyle=gr;g.beginPath();g.arc(x,y,r,0,7);g.fill();}
+  /* floor dirt kicked up the bottom of the paper */
+  const kick=g.createLinearGradient(0,h-SK-70,0,h-SK);
+  kick.addColorStop(0,"rgba(58,46,16,0)");kick.addColorStop(1,"rgba(58,46,16,0.20)");
+  g.fillStyle=kick;g.fillRect(0,h-SK-70,w,70);
+  /* the skirting: the original band, with the lip its top edge catches the
+     light on and the shadow under that lip, then forty years of shoes */
+  g.fillStyle="rgba(40,32,12,.35)";g.fillRect(0,h-SK,w,SK);
+  g.fillStyle="rgba(214,196,128,0.22)";g.fillRect(0,h-SK,w,2);
+  g.fillStyle="rgba(24,18,6,0.28)";g.fillRect(0,h-SK+2,w,4);
+  /* scuffs: rubber dragged along it by shoes — a streak, darkest in the
+     middle, gone at both ends. Filled ovals here read as a row of spots. */
+  g.lineCap="round";
+  for(let i=0;i<46;i++){
+    const x=Math.random()*w, y=h-SK+10+Math.random()*(SK-16), l=14+Math.random()*50;
+    const lt=Math.random()<0.3, a=lt? 0.04+Math.random()*0.05 : 0.05+Math.random()*0.09;
+    const c=lt? "150,132,80":"14,10,4";
+    const gr=g.createLinearGradient(x-l/2,0,x+l/2,0);
+    gr.addColorStop(0,`rgba(${c},0)`);gr.addColorStop(0.5,`rgba(${c},${a})`);gr.addColorStop(1,`rgba(${c},0)`);
+    g.strokeStyle=gr; g.lineWidth=1.5+Math.random()*3.5;
+    g.beginPath(); g.moveTo(x-l/2,y+(Math.random()-0.5)*3); g.lineTo(x+l/2,y+(Math.random()-0.5)*3); g.stroke();
+  }
+  /* the wall angle: the drop ceiling's L-trim, and the dust that settles
+     in the shadow just under it */
+  g.fillStyle="#b3a98c";g.fillRect(0,0,w,WA);
+  g.fillStyle="rgba(255,250,228,0.25)";g.fillRect(0,WA-2,w,1);
+  g.fillStyle="rgba(40,34,18,0.45)";g.fillRect(0,WA,w,1.5);
+  const dust=g.createLinearGradient(0,WA,0,WA+26);
+  dust.addColorStop(0,"rgba(62,52,24,0.22)");dust.addColorStop(1,"rgba(62,52,24,0)");
+  g.fillStyle=dust;g.fillRect(0,WA,w,26);
 });
 /* ---- the carpet ----
    Also back to the original — flat mustard, a fine speckle, eleven soft
@@ -256,7 +336,7 @@ export const texCeil = makeCanvas(1024,1024,(g,w,h)=>{
   ceilBars(g,w,h,(p,vert)=>{
     const R=(off,thick)=>vert? g.fillRect(p+off,0,thick,h) : g.fillRect(0,p+off,w,thick);
     g.fillStyle="rgba(24,22,15,0.55)";  R(-CAP/2-REV,CAP+REV*2);     // the reveal
-    g.fillStyle="#b6af96";              R(-CAP/2,CAP);               // the cap
+    g.fillStyle="#b9ad8a";              R(-CAP/2,CAP);               // the cap
     g.fillStyle="rgba(255,252,236,0.30)";R(-CAP/2,1.5);              // lit edge / shadowed edge
     g.fillStyle="rgba(38,35,24,0.40)";  R(CAP/2-1.5,1.5);
     for(let i=0;i<70;i++){                                           // dirt in the runners
@@ -265,7 +345,18 @@ export const texCeil = makeCanvas(1024,1024,(g,w,h)=>{
       if(vert) g.fillRect(p-CAP/2,t,CAP,l); else g.fillRect(t,p-CAP/2,l,CAP);
     }
   });
+  ceilJoints(g,w,(x,y)=>{
+    g.fillStyle="rgba(34,30,20,0.55)";g.fillRect(x-CAP/2-2,y-CAP/2-2,CAP+4,CAP+4);   // the cross tee's cut end
+    g.fillStyle="#bdb18f";g.fillRect(x-CAP/2,y-CAP/2,CAP,CAP);
+    g.fillStyle="rgba(255,250,230,0.35)";g.fillRect(x-CAP/2,y-CAP/2,CAP,1.2);
+  });
 });
+/* every point where a cross tee butts into a main runner, wrapped like the
+   bars so the ones on the seam arrive whole */
+function ceilJoints(g,w,fn){
+  const T=w/CEIL_TILES;
+  for(let i=0;i<=CEIL_TILES;i++)for(let j=0;j<=CEIL_TILES;j++) fn(i*T,j*T);
+}
 /* the grid's relief. From underneath the T-bar cap is the LOWEST thing up
    there — nearest your eye — and the tile face is recessed behind it, so the
    cap reads bright and the fissures cut into the dark. */
@@ -277,6 +368,7 @@ export const texCeilBump = makeCanvas(1024,1024,(g,w,h)=>{
     g.fillStyle="rgba(26,26,26,0.9)"; R(-CAP/2-REV,CAP+REV*2);
     g.fillStyle="rgba(246,246,246,0.95)"; R(-CAP/2,CAP);
   });
+  ceilJoints(g,w,(x,y)=>{ g.fillStyle="rgba(255,255,255,0.9)";g.fillRect(x-CAP/2-1,y-CAP/2-1,CAP+2,CAP+2); });
 });
 /* ---- the filament: the one asset every electric light in the game shares ----
    Level 0's troffers and THE END's hanging strips run the same tubes, so
@@ -411,26 +503,28 @@ export const texLouvre = makeCanvas(64,8,(g,w,h)=>{
    dust and old water runs. Non-directional and seam-safe, because it maps
    at a fixed world scale (scaleBoxUV) across members of wildly different
    sizes: a 2.2m reflector spine and a 0.09m end cap wear the same steel. */
-export const texGalv = makeCanvas(128,128,(g,w,h)=>{
+export const texGalv = makeCanvas(256,256,(g,w,h)=>{
   g.fillStyle="#8e918c";g.fillRect(0,0,w,h);
-  for(let i=0;i<110;i++){                 // spangle: the frozen-crystal facets
-    const x=Math.random()*w, y=Math.random()*h, r=4+Math.random()*13;
+  for(let i=0;i<440;i++){                 // spangle: the frozen-crystal facets
+    const x=Math.random()*w, y=Math.random()*h, r=5+Math.random()*20;
     const v=Math.random()<0.5? 168:120;
-    g.fillStyle=`rgba(${v},${v+3},${v-2},${0.08+Math.random()*0.13})`;
+    g.fillStyle=`rgba(${v},${v+3},${v-2},${0.07+Math.random()*0.12})`;
     g.beginPath();
     for(let a=0;a<Math.PI*2;a+=Math.PI/3) g.lineTo(x+Math.cos(a)*r*(0.6+Math.random()*0.6),
                                                    y+Math.sin(a)*r*(0.6+Math.random()*0.6));
     g.closePath();g.fill();
   }
-  for(let i=0;i<900;i++){                 // mill grain
-    g.fillStyle=`rgba(${60+Math.random()*120|0},${62+Math.random()*120|0},${58+Math.random()*118|0},${0.05+Math.random()*0.10})`;
-    g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*3,1);
+  g.lineWidth=0.8;
+  for(let i=0;i<3600;i++){                 // mill grain, along the roll
+    const x=Math.random()*w, y=Math.random()*h, l=2+Math.random()*7;
+    g.strokeStyle=`rgba(${60+Math.random()*120|0},${62+Math.random()*120|0},${58+Math.random()*118|0},${0.05+Math.random()*0.09})`;
+    g.beginPath();g.moveTo(x,y);g.lineTo(x+l,y+(Math.random()-0.5)*0.6);g.stroke();
   }
-  for(let i=0;i<9;i++){                    // dust settled in the pressings
-    const x=Math.random()*w, ww=3+Math.random()*9;
+  for(let i=0;i<18;i++){                    // dust settled in the pressings
+    const x=Math.random()*w, ww=5+Math.random()*16;
     const gr=g.createLinearGradient(x,0,x+ww,0);
     gr.addColorStop(0,"rgba(52,46,36,0)");
-    gr.addColorStop(0.5,`rgba(52,46,36,${0.10+Math.random()*0.14})`);
+    gr.addColorStop(0.5,`rgba(52,46,36,${0.08+Math.random()*0.12})`);
     gr.addColorStop(1,"rgba(52,46,36,0)");
     g.fillStyle=gr;g.fillRect(x,0,ww,h);
   }
@@ -500,14 +594,20 @@ export const texCeilStains = makeCanvas(512,512,(g,w,h)=>{
    the wall/floor seam instead of reading as two unrelated decals.
    Wall canvas: dense at the bottom edge (= wall base, flipY).
    Floor canvas: dense at the top edge (= laid against the wall).
-   Canvas resolution tracks the decal's WORLD size (~72 px/m), so the colony
-   is grown at its final aspect ratio — stretching a fixed canvas onto an
-   arbitrary rectangle squashed the blobs into a photoshop-resize look. */
+   Canvas resolution tracks the decal's WORLD size, so the colony is grown at
+   its final aspect ratio — stretching a fixed canvas onto an arbitrary
+   rectangle squashed the blobs into a photoshop-resize look.
+   THE GROWTH IS THE ORIGINAL'S and must stay so: lobes, walks, counts and
+   placement are untouched. It is drawn at 1.5× the old 72 px/m, with every
+   pixel constant in it scaled by the same K so the colony comes out the same
+   shape, only sharper — and each dab is a colony now, a dense core under a
+   soft margin, instead of one even blur. */
+const DECAL_K=1.5;
 export function makeMoldTextures(wid,hgt,dep){
-  const PPM=72;
-  const wW=Math.round(Math.min(256,Math.max(48,wid*PPM)));
-  const wH=Math.round(Math.min(128,Math.max(20,hgt*PPM)));
-  const fH=Math.round(Math.min(64, Math.max(12,dep*PPM)));
+  const K=DECAL_K, PPM=72*K;
+  const wW=Math.round(Math.min(256*K,Math.max(48*K,wid*PPM)));
+  const wH=Math.round(Math.min(128*K,Math.max(20*K,hgt*PPM)));
+  const fH=Math.round(Math.min(64*K, Math.max(12*K,dep*PPM)));
   /* lobes: anchors along the seam, CHAINED outward from one colony centre
      in small steps so neighbouring lobes always overlap — independent
      scatter let big colonies split into separate-looking growths */
@@ -525,15 +625,20 @@ export function makeMoldTextures(wid,hgt,dep){
     lobes.push({x, s:(0.45+Math.random()*0.55)*(1-Math.abs(x-cx0)*0.45),
                 d:0.35+Math.random()*0.65});
   }
+  /* this colony's own cast: some are greener, some are near-black */
+  const tint=Math.random();
   const dab=(g,x,y,r,boost=1)=>{
     /* clamp sideways so no blob crosses the canvas border — a clipped blob
        leaves a dead-straight cut along the decal edge. Top/bottom edges are
        left alone: they meet the floor seam / fade out by design. */
     x=Math.min(g.canvas.width-r,Math.max(r,x));
-    const col=Math.random()<0.4? "26,46,22" : "10,14,9";
+    const green=Math.random()<0.25+tint*0.3;
+    const col=green? "26,46,22" : "10,14,9";
     const a=(0.16+Math.random()*0.46)*boost;     // wide alpha spread: patchy, not uniform
     const gr=g.createRadialGradient(x,y,0.3,x,y,r);
-    gr.addColorStop(0,`rgba(${col},${a})`);gr.addColorStop(1,`rgba(${col},0)`);
+    gr.addColorStop(0,`rgba(${col},${Math.min(1,a*1.35)})`);
+    gr.addColorStop(0.42,`rgba(${col},${a*0.9})`);
+    gr.addColorStop(1,`rgba(${col},0)`);
     g.fillStyle=gr;g.beginPath();g.arc(x,y,r,0,7);g.fill();
   };
   const wall=makeCanvas(wW,wH,(g,w,h)=>{
@@ -541,14 +646,14 @@ export function makeMoldTextures(wid,hgt,dep){
     for(const lo of lobes){
       /* branching walk climbing up from the seam; a wide angle fan lets it
          also creep sideways so neighboring lobes knit together */
-      const nodes=[{x:lo.x*w, y:h, r:h*(0.11+Math.random()*0.13)*lo.s+3}];
+      const nodes=[{x:lo.x*w, y:h, r:h*(0.11+Math.random()*0.13)*lo.s+3*K}];
       const nN=Math.round((28+Math.random()*44)*lo.d);
       for(let i=0;i<nN;i++){
         /* parent choice biased to early (big, low) nodes: growth stays
            bottom-heavy instead of spraying fine speckles up the wall */
         const n=nodes[Math.floor(Math.pow(Math.random(),1.6)*nodes.length)];
         const r=n.r*(0.55+Math.random()*0.4);
-        if(r<1) continue;
+        if(r<K) continue;
         const a=-Math.PI/2+(Math.random()-0.5)*2.8;     // climbs, creeps sideways
         nodes.push({x:Math.min(w-r,Math.max(r,n.x+Math.cos(a)*n.r*1.4)),
                     y:Math.min(h,Math.max(r,n.y+Math.sin(a)*n.r*1.4)), r});
@@ -560,17 +665,17 @@ export function makeMoldTextures(wid,hgt,dep){
       /* heavier rot right at the seam, only under this lobe — never a
          uniform full-width band (that read as a hard slab edge) */
       for(let i=0,nC=3+5*lo.d;i<nC;i++)
-        dab(g, lo.x*w+(Math.random()-0.5)*w*0.16*lo.s, h-Math.random()*3, (2.5+Math.random()*4*lo.s)*h/64+1, 1.25*lo.d);
+        dab(g, lo.x*w+(Math.random()-0.5)*w*0.16*lo.s, h-Math.random()*3*K, (2.5+Math.random()*4*lo.s)*h/64+K, 1.25*lo.d);
     }
     /* connective crust: low dabs strung between the outermost lobes so the
        colony stays one organism, thinning toward its edges */
     const lx=lobes.map(l=>l.x), x0=Math.min(...lx), x1=Math.max(...lx);
     const span=(x1-x0)*w;
-    for(let i=0,n=10+span/9;i<n;i++){
+    for(let i=0,n=10+span/(9*K);i<n;i++){
       const t=Math.random(), x=(x0+(x1-x0)*t)*w;
       const edge=1-Math.abs(t-0.5)*1.2;
-      dab(g, x+(Math.random()-0.5)*6, h-Math.random()*h*0.16*edge,
-          (1.5+Math.random()*3.5)*edge*h/40+1, 0.8*edge);
+      dab(g, x+(Math.random()-0.5)*6*K, h-Math.random()*h*0.16*edge,
+          (1.5+Math.random()*3.5)*edge*h/40+K, 0.8*edge);
     }
   });
   const floor=makeCanvas(wW,fH,(g,w,h)=>{
@@ -582,10 +687,10 @@ export function makeMoldTextures(wid,hgt,dep){
       for(let i=0;i<n;i++){
         const y=Math.pow(Math.random(),2)*h*lo.s;
         const x=lo.x*w+(Math.random()-0.5)*w*(0.10+0.14*lo.s)*(0.4+y/h);
-        dab(g, x, y, (1.2+Math.random()*4.2*lo.s)*(1.1-y/h*0.6), 0.7+0.6*lo.d);
+        dab(g, x, y, (1.2+Math.random()*4.2*lo.s)*(1.1-y/h*0.6)*K, 0.7+0.6*lo.d);
       }
       for(let i=0,nC=2+4*lo.d;i<nC;i++)   // seam crust mirroring the wall side
-        dab(g, lo.x*w+(Math.random()-0.5)*w*0.14*lo.s, Math.random()*2.5, 2+Math.random()*3.5*lo.s, 1.2*lo.d);
+        dab(g, lo.x*w+(Math.random()-0.5)*w*0.14*lo.s, Math.random()*2.5*K, (2+Math.random()*3.5*lo.s)*K, 1.2*lo.d);
     }
   });
   /* decals never tile and their canvases aren't power-of-two: clamp +
@@ -600,29 +705,34 @@ export function makeMoldTextures(wid,hgt,dep){
 /* brown ceiling-leak drips: each call grows ONE unique stain pair — a
    stalactite-shaped run of rivulets bleeding down the wall from the ceiling
    seam, plus the small ceiling blotch feeding it from above. Same world-size
-   canvas policy as the mold (~72 px/m) so rivulets keep their aspect. */
+   canvas policy and the same K as the mold.
+   The runs themselves are unchanged — where each one goes, how far, how it
+   wanders — but they are drawn as ONE tapering ribbon each. They used to be
+   stacked 3px rectangles, and up close a leak was a column of bricks with a
+   sawtooth down both edges. */
 export function makeDripTextures(wid,len){
-  const PPM=72;
-  const wW=Math.round(Math.min(128,Math.max(24,wid*PPM)));
-  const wH=Math.round(Math.min(256,Math.max(48,len*PPM)));
+  const K=DECAL_K, PPM=72*K;
+  const wW=Math.round(Math.min(128*K,Math.max(24*K,wid*PPM)));
+  const wH=Math.round(Math.min(256*K,Math.max(48*K,len*PPM)));
   const wall=makeCanvas(wW,wH,(g,w,h)=>{
     g.clearRect(0,0,w,h);
     /* contact smudge where the water exits the ceiling seam */
     for(let i=0,n=6+Math.random()*6;i<n;i++){
-      const x=w*(0.2+Math.random()*0.6), r=2.5+Math.random()*5;
-      const gr=g.createRadialGradient(x,1.5,0.3,x,1.5,r);
+      const x=w*(0.2+Math.random()*0.6), r=(2.5+Math.random()*5)*K;
+      const gr=g.createRadialGradient(x,1.5*K,0.3,x,1.5*K,r);
       gr.addColorStop(0,`rgba(86,58,24,${0.3+Math.random()*0.22})`);
       gr.addColorStop(1,"rgba(86,58,24,0)");
-      g.fillStyle=gr;g.beginPath();g.arc(x,1.5,r,0,7);g.fill();
+      g.fillStyle=gr;g.beginPath();g.arc(x,1.5*K,r,0,7);g.fill();
     }
     /* the wet sheet: a faint wash widest at the seam, narrowing downward —
        it's what makes the rivulet cluster read as one stalactite shape */
     const sheetH=h*(0.3+Math.random()*0.25);
-    for(let y=0;y<sheetH;y+=2){
-      const t=y/sheetH, ww=w*(0.72-0.5*t)*(0.9+Math.random()*0.2);
-      g.fillStyle=`rgba(92,62,26,${0.06*(1-t)})`;
-      g.fillRect(w/2-ww/2+(Math.random()-0.5)*2,y,ww,2.4);
-    }
+    const sg=g.createLinearGradient(0,0,0,sheetH);
+    sg.addColorStop(0,"rgba(92,62,26,0.06)");sg.addColorStop(1,"rgba(92,62,26,0)");
+    g.fillStyle=sg;
+    g.beginPath();g.moveTo(w*0.14,0);g.lineTo(w*0.86,0);
+    g.quadraticCurveTo(w*0.7,sheetH*0.6,w*0.61,sheetH);g.lineTo(w*0.39,sheetH);
+    g.quadraticCurveTo(w*0.3,sheetH*0.6,w*0.14,0);g.fill();
     /* rivulets: wandering tapering streaks; the first is the long center
        run, the rest hang shorter at its sides */
     const nR=2+Math.floor(Math.random()*4);
@@ -630,19 +740,28 @@ export function makeDripTextures(wid,len){
       const long=i===0;
       let x=w*(0.5+(long?(Math.random()-0.5)*0.2:(Math.random()-0.5)*0.6));
       const yEnd=h*(long? 0.78+Math.random()*0.22 : 0.25+Math.random()*0.5);
-      const baseW=(long?1.6:1.0)*(1.2+Math.random()*1.6)*(w/40+0.4);
+      const baseW=(long?1.6:1.0)*(1.2+Math.random()*1.6)*(w/40+0.4*K);
       const col=Math.random()<0.5? "96,64,26" : "74,50,22";
       const a=0.28+Math.random()*0.22;
-      const steps=Math.max(10,Math.floor(yEnd/3));
+      const steps=Math.max(10,Math.floor(yEnd/(3*K)));
+      const L=[], R=[], flecks=[];
       for(let s=0;s<steps;s++){
         const t=s/(steps-1), y=t*yEnd;
-        x+=(Math.random()-0.5)*1.5;
-        const ww=Math.max(0.6,baseW*(1-t*0.85));   // taper to a point
-        g.fillStyle=`rgba(${col},${a*(1-t*0.45)})`;
-        g.fillRect(x-ww/2,y,ww,3.4);
-        if(Math.random()<0.06)                     // dried tide flecks beside the run
-          g.fillRect(x+(Math.random()<0.5?-1:1)*(ww/2+1+Math.random()*2),y,1,2);
+        x+=(Math.random()-0.5)*1.5*K;
+        const ww=Math.max(0.6*K,baseW*(1-t*0.85));   // taper to a point
+        L.push([x-ww/2,y]); R.push([x+ww/2,y]);
+        if(Math.random()<0.06)                       // dried tide flecks beside the run
+          flecks.push([x+(Math.random()<0.5?-1:1)*(ww/2+(1+Math.random()*2)*K),y]);
       }
+      const rg=g.createLinearGradient(0,0,0,yEnd);
+      rg.addColorStop(0,`rgba(${col},${a})`);rg.addColorStop(1,`rgba(${col},${a*0.55})`);
+      g.fillStyle=rg;
+      g.beginPath();g.moveTo(L[0][0],L[0][1]);
+      for(const p of L) g.lineTo(p[0],p[1]);
+      for(let k=R.length-1;k>=0;k--) g.lineTo(R[k][0],R[k][1]);
+      g.closePath();g.fill();
+      g.fillStyle=`rgba(${col},${a*0.8})`;
+      for(const[fx,fy]of flecks){ g.beginPath();g.ellipse(fx,fy,0.6*K,1.1*K,0,0,7);g.fill(); }
       /* the hanging droplet bead at the tip */
       const br=baseW*(0.5+Math.random()*0.45);
       const gr=g.createRadialGradient(x,yEnd,0.3,x,yEnd,br);
@@ -652,13 +771,13 @@ export function makeDripTextures(wid,len){
   });
   /* the small feed stain on the ceiling above the run: an irregular brown
      blotch with a darker waterlogged core */
-  const ceil=makeCanvas(48,48,(g,w,h)=>{
+  const ceil=makeCanvas(Math.round(48*K),Math.round(48*K),(g,w,h)=>{
     g.clearRect(0,0,w,h);
     const p1=Math.random()*7,p2=Math.random()*7;
     for(let a=0;a<Math.PI*2;a+=0.16){
       const rr=(w*0.27)*(1+0.22*Math.sin(a*2+p1)+0.16*Math.sin(a*3+p2))*Math.sqrt(Math.random()*0.6+0.4);
       const px=w/2+Math.cos(a)*rr, py=h/2+Math.sin(a)*rr;
-      const sr=3+Math.random()*5;
+      const sr=(3+Math.random()*5)*K;
       const gr=g.createRadialGradient(px,py,0.4,px,py,sr);
       gr.addColorStop(0,`rgba(88,60,26,${0.2+Math.random()*0.18})`);
       gr.addColorStop(1,"rgba(88,60,26,0)");
@@ -675,6 +794,58 @@ export function makeDripTextures(wid,len){
   }
   return {wall,ceil};
 }
+/* ---- the light a troffer throws back onto the tiles around it ----
+   The pool lights hang half a metre under the ceiling, so they light the
+   tiles only at a grazing angle and the ceiling beside a burning fixture sat
+   as dark as the one beside a dead one. A drop ceiling in a lit room is
+   brightest right around its lights. This is that spill: a soft
+   rounded-rectangle falloff, drawn additively under every lit fixture (see
+   scene.js) and driven by its tube colour, so it flickers with it.
+   (cu,cv) is the fraction of the quad the fixture itself covers, per axis:
+   the falloff starts at the trim and reaches zero at the quad's edge, and
+   over the fixture's own mouth it holds at `core` so the lamps aren't
+   washed flat. */
+export function makeSpillTexture(cu,cv,core){
+  const t=makeCanvas(256,128,(g,w,h)=>{
+    const img=g.createImageData(w,h), d=img.data;
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+      const u=Math.abs(x+0.5-w/2)/(w/2), v=Math.abs(y+0.5-h/2)/(h/2);
+      const ex=Math.max(0,u-cu)/(1-cu), ey=Math.max(0,v-cv)/(1-cv);
+      const e=Math.min(1,Math.hypot(ex,ey));
+      const k=(u<cu&&v<cv)? core : Math.pow(1-e,2.4);
+      const c=Math.round(255*k);
+      const i=(y*w+x)*4; d[i]=d[i+1]=d[i+2]=c; d[i+3]=255;
+    }
+    g.putImageData(img,0,0);
+  });
+  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping;
+  return t;
+}
+/* ---- what polished metal reflects down here ----
+   A tiny cube map of the level as a mirror sees it: a pale ceiling with two
+   bright lamps in it, walls at the horizon, a dark floor. It is used with
+   MULTIPLY blending, so it never adds light a surface doesn't already have —
+   steel in a dark corridor stays dark — it only puts the floor-to-ceiling
+   falloff of a reflection into a lit face. That falloff is what stainless
+   steel looks like; without it a door is grey paint with a hotspot on it.
+   Kept close to neutral so it also serves THE END's crashed cab. */
+export const envMetal=(()=>{
+  const face=(fn)=>{ const c=document.createElement("canvas"); c.width=c.height=64; fn(c.getContext("2d"),64); return c; };
+  const side=face((g,n)=>{
+    const gr=g.createLinearGradient(0,0,0,n);
+    gr.addColorStop(0,"#e6e2d6");gr.addColorStop(0.46,"#b8b09a");gr.addColorStop(0.54,"#6e6858");gr.addColorStop(1,"#3a372f");
+    g.fillStyle=gr;g.fillRect(0,0,n,n);
+    for(let i=0;i<5;i++){ g.fillStyle=`rgba(255,255,255,${0.05+Math.random()*0.08})`; g.fillRect(Math.random()*n,0,2+Math.random()*6,n*0.5); }
+  });
+  const top=face((g,n)=>{
+    g.fillStyle="#d6d2c6";g.fillRect(0,0,n,n);
+    g.fillStyle="#ffffff";g.fillRect(n*0.3,n*0.18,n*0.4,n*0.12);g.fillRect(n*0.3,n*0.70,n*0.4,n*0.12);
+  });
+  const bottom=face((g,n)=>{ g.fillStyle="#34312a";g.fillRect(0,0,n,n); });
+  const t=new THREE.CubeTexture([side,side,top,bottom,side,side]);
+  t.needsUpdate=true;
+  return t;
+})();
 /* ================= THE END — the infinite library ================= */
 /* aged institutional plaster, TILEABLE: the walls are 8m boxes mixed with
    odd-sized elevator flanks, so the texture must map at a fixed world
