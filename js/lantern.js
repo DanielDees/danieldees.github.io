@@ -81,7 +81,9 @@ export function updateLantern(dt){
         fy=Math.sin(STATE.pitch),
         fz=-Math.cos(STATE.yaw)*Math.cos(STATE.pitch);
   LANT.target.position.set(camera.position.x+fx*8, camera.position.y-0.18+fy*8, camera.position.z+fz*8);
-  LANT.point.position.set(STATE.pos.x+fx*0.25, STATE.y+1.15, STATE.pos.z+fz*0.25);
+  /* the flame is where the held lantern is: low on your right (viewmodel.js) */
+  const rx=Math.cos(STATE.yaw), rz=-Math.sin(STATE.yaw);
+  LANT.point.position.set(camera.position.x+rx*0.24+fx*0.4, camera.position.y-0.34, camera.position.z+rz*0.24+fz*0.4);
   /* HUD: the charge bar */
   if(ui.lantWrap){
     ui.lantWrap.classList.toggle("show", true);

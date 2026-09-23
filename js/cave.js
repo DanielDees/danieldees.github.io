@@ -30,6 +30,7 @@ import { scatterStones, stoneGeo } from "./caverocks.js";
 import { initDrips, releaseDrip, updateDrips, initSpores, updateSpores, initRockDust, puffRockDust, updateRockDust,
          initMist, updateMist } from "./cavefx.js";
 import { makeClutch, updateClutch, initClutchFire, updateClutchFire, cocoonMaterial, cocoonGeo } from "./clutch.js";
+import { makeLanternModel, initViewmodel } from "./viewmodel.js";
 import { renderObjectives, toast } from "./ui.js";
 import { AU, sfxRockfall, sfxIgnite, startClutchFire, panTo } from "./audio.js";
 
@@ -727,7 +728,7 @@ markShared(HALO_TEX,texCaustic,texWaterSurf);
 const silkFloorMat=new THREE.MeshPhongMaterial({color:0xb8bcc0, specular:0x222222, shininess:8,
   transparent:true, opacity:0.34, depthWrite:false});
 const boneMat=new THREE.MeshPhongMaterial({map:texBone, bumpMap:texBone, bumpScale:0.006,
-  color:0x8e8778, specular:0x2c2a24, shininess:16});
+  color:0x7c7464, specular:0x2a2822, shininess:14});
 const clothMat=new THREE.MeshPhongMaterial({map:texCloth, bumpMap:texCloth, bumpScale:0.008,
   color:0x585048, specular:0x0c0b0a, shininess:4});
 /* the outer layer reads darker and slightly greener than the shirt under
@@ -1442,25 +1443,93 @@ function makeCocoon(){
   m.userData.r=r; m.userData.half=len/2;
   return m;
 }
-/* a hand-crank lantern: brass cage, glass core, folded handle */
-export function makeLanternProp(){
-  const g=new THREE.Group();
-  const base=new THREE.Mesh(new THREE.CylinderGeometry(0.09,0.11,0.05,10),brassMat);
-  base.position.y=0.025; g.add(base);
-  const glass=new THREE.Mesh(new THREE.CylinderGeometry(0.065,0.065,0.13,10),
-    new THREE.MeshPhongMaterial({color:0xd8e4dc, emissive:0x0a0c0a, specular:0x889088,
-      shininess:70, transparent:true, opacity:0.7}));
-  glass.position.y=0.115; g.add(glass);
-  for(let i=0;i<4;i++){
-    const a=i/4*Math.PI*2;
-    const rib=new THREE.Mesh(new THREE.BoxGeometry(0.014,0.13,0.014),brassMat);
-    rib.position.set(Math.cos(a)*0.068,0.115,Math.sin(a)*0.068); g.add(rib);
+/* ---- the journal ----
+   It was two boxes of paper on two boxes of leather. Now it lies open on a
+   written spread: the pages rise off the spine and fall away to the fore
+   edge the way a bound book lies, the ink is a hand writing fast and then
+   faster, one page is a sketch of the way they came, and the damp has got
+   into all of it. */
+let JSPREAD=null;
+function journalSpread(){
+  if(JSPREAD) return JSPREAD;
+  JSPREAD=markShared(makeCanvas(1024,512,(g,w,h)=>{
+    g.fillStyle="#b9ad8e"; g.fillRect(0,0,w,h);
+    for(let i=0;i<22;i++){                           // foxing and tide marks
+      const x=Math.random()*w, y=Math.random()*h, r=20+Math.random()*120;
+      const gr=g.createRadialGradient(x,y,r*0.6,x,y,r);
+      gr.addColorStop(0,"rgba(120,96,58,0.05)"); gr.addColorStop(0.85,`rgba(110,84,48,${0.10+Math.random()*0.12})`);
+      gr.addColorStop(1,"rgba(110,84,48,0)");
+      g.fillStyle=gr; g.beginPath(); g.arc(x,y,r,0,7); g.fill();
+    }
+    const gut=g.createLinearGradient(w/2-40,0,w/2+40,0);  // the gutter's shadow
+    gut.addColorStop(0,"rgba(60,48,30,0)"); gut.addColorStop(0.5,"rgba(60,48,30,0.45)"); gut.addColorStop(1,"rgba(60,48,30,0)");
+    g.fillStyle=gut; g.fillRect(w/2-40,0,80,h);
+    g.strokeStyle="rgba(90,110,130,0.18)"; g.lineWidth=1;
+    for(let y=58;y<h-30;y+=22) for(const x0 of[36,w/2+30]){ g.beginPath(); g.moveTo(x0,y); g.lineTo(x0+w/2-66,y); g.stroke(); }
+    /* the hand: runs of small looped strokes along the rules, rushing and
+       slanting harder down the page */
+    const write=(x0,x1,y,slant,shake)=>{
+      let x=x0+Math.random()*6;
+      g.strokeStyle=`rgba(34,28,24,${0.62+Math.random()*0.2})`; g.lineWidth=1.3; g.lineCap="round";
+      while(x<x1){
+        const wl=14+Math.random()*44; g.beginPath(); g.moveTo(x,y);
+        for(let t=0;t<wl;t+=2.2){
+          const yy=y-Math.abs(Math.sin(t*0.9+x))*6*(0.6+Math.random()*0.6)+(Math.random()-0.5)*shake;
+          g.lineTo(x+t+slant*(y-yy)*0.4,yy);
+        }
+        g.stroke(); x+=wl+6+Math.random()*8;
+      }
+    };
+    for(let y=56,i=0;y<h-40;y+=22,i++) write(40,w/2-44,y-2,0.2+i*0.03,0.4+i*0.12);
+    /* the right page: a sketch of the way down — the stair's spiral, the
+       chambers, an arrow, and a ring drawn round and round one of them */
+    g.strokeStyle="rgba(30,26,22,0.7)"; g.lineWidth=1.6;
+    const cx=w*0.74, cy=h*0.40;
+    g.beginPath(); for(let a=0;a<Math.PI*6;a+=0.2){ const r=6+a*3.2; g.lineTo(cx-110+Math.cos(a)*r,cy-90+Math.sin(a)*r*0.6); } g.stroke();
+    const blobs=[[cx-40,cy+10,34],[cx+70,cy-30,28],[cx+60,cy+80,30],[cx-100,cy+90,26]];
+    for(const[bx,by,br]of blobs){ g.beginPath();
+      for(let a=0;a<=Math.PI*2+0.1;a+=0.3){ const r=br*(0.85+Math.random()*0.3); g.lineTo(bx+Math.cos(a)*r,by+Math.sin(a)*r*0.8); }
+      g.stroke(); }
+    g.beginPath(); g.moveTo(cx-110,cy-60); g.lineTo(cx-45,cy-15); g.lineTo(cx+50,cy-25); g.lineTo(cx+62,cy+50); g.stroke();
+    g.lineWidth=1.1;
+    for(let k=0;k<6;k++){ g.beginPath(); g.ellipse(cx+60,cy+80,36+k*2+Math.random()*3,30+k*2,0.2,0,7); g.stroke(); }
+    write(w/2+36,w-40,h-96,0.5,1.4); write(w/2+36,w*0.78,h-74,0.7,2.2);
+    g.fillStyle="rgba(40,30,24,0.55)"; g.beginPath(); g.ellipse(w*0.83,h-58,26,9,0.3,0,7); g.fill();  // a smudge where the pen stopped
+  }));
+  JSPREAD.anisotropy=4;
+  return JSPREAD;
+}
+function makeJournal(){
+  const leather=new THREE.MeshPhongMaterial({map:texCloth, color:0x6e5236, specular:0x1a140c, shininess:10});
+  const edge=new THREE.MeshPhongMaterial({map:texJournalPages, color:0x8a8270, specular:0x111111, shininess:3});
+  const page=new THREE.MeshPhongMaterial({map:journalSpread(), color:0xb0a894, specular:0x141414, shininess:4});
+  const L=[], E=[], P=[];
+  const spine=new THREE.Mesh(new THREE.BoxGeometry(0.05,0.028,0.33)); spine.position.y=0.014; L.push(spine);
+  for(const sx of[-1,1]){
+    const board=new THREE.Mesh(new THREE.BoxGeometry(0.24,0.012,0.33));
+    board.position.set(sx*0.14,0.008,0); board.rotation.z=sx*0.035; L.push(board);
+    /* the page block: its top rises off the spine and falls to the fore edge */
+    const top=new THREE.PlaneGeometry(0.22,0.31,12,1); top.rotateX(-Math.PI/2);
+    const tp=top.attributes.position, tu=top.attributes.uv;
+    const lift=u=>0.026+0.018*Math.sin(Math.min(1,u*1.15)*Math.PI*0.9)-0.02*Math.pow(u,6);
+    for(let i=0;i<tp.count;i++){
+      const u=(tp.getX(i)+0.11)/0.22, uo=sx<0? 1-u : u;   // uo: 0 at the spine
+      tp.setY(i,lift(uo)); tu.setX(i, sx<0? u*0.5 : 0.5+u*0.5);
+    }
+    top.computeVertexNormals();
+    const tm=new THREE.Mesh(top); tm.position.set(sx*0.12,0.004,0); P.push(tm);
+    const blk=new THREE.Mesh(new THREE.BoxGeometry(0.21,0.024,0.30)); blk.position.set(sx*0.118,0.016,0); E.push(blk);
   }
-  const cap=new THREE.Mesh(new THREE.CylinderGeometry(0.075,0.09,0.045,10),brassMat);
-  cap.position.y=0.2; g.add(cap);
-  const crank=new THREE.Mesh(new THREE.BoxGeometry(0.02,0.1,0.02),brassMat);
-  crank.position.set(0.1,0.06,0); crank.rotation.z=0.7; g.add(crank);
-  return g;
+  /* a leaf torn loose and lying by it */
+  for(let i=0;i<2;i++){
+    const lf=new THREE.PlaneGeometry(0.2,0.28); lf.rotateX(-Math.PI/2);
+    const uv=lf.attributes.uv; for(let k=0;k<uv.count;k++) uv.setX(k,(i? 0.5:0)+uv.getX(k)*0.5);
+    const m=new THREE.Mesh(lf); m.position.set(rand(-0.45,0.45),0.004,rand(-0.45,0.5)); m.rotation.y=Math.random()*Math.PI;
+    P.push(m);
+  }
+  const jr=new THREE.Group();
+  jr.add(mergeStatic(L,leather), mergeStatic(E,edge), mergeStatic(P,page));
+  return jr;
 }
 /* the one who got this far: prone, face down, the lantern still clipped on */
 /* The one who came before. It used to be six boxes and a sphere in two
@@ -1542,20 +1611,37 @@ function makeCorpse(){
   k=limb(0.24,0.16,-0.08,       0.62,-0.12,0.42, 0.32,0.070,0.055, clothMat);
   k=limb(k[0],k[1],k[2],       -0.10,-0.16,0.86, 0.26,0.052,0.040, clothMat);
   blob(k[0],k[1],k[2]+0.03, 0.052, 1.0,0.75,1.25, boneMat, 0.10);
-  /* skull: turned to the side, jaw fallen open, sockets sunk */
+  /* skull: turned to the side, jaw fallen open, sockets sunk. It was a
+     white ball with two black dots — a cartoon. A skull is a long cranium
+     over a narrower face: a brow that overhangs the orbits, cheekbones that
+     flare, a row of teeth, and a jaw that has dropped. */
   const sk=new THREE.Group();
-  const cran=new THREE.Mesh(new THREE.SphereGeometry(0.105,12,10),boneMat);
-  cran.scale.set(0.88,0.94,1.06); sk.add(cran);
-  const face=new THREE.Mesh(new THREE.SphereGeometry(0.075,10,8),boneMat);
-  face.scale.set(0.82,0.72,0.80); face.position.set(0,-0.035,-0.075); sk.add(face);
-  for(const sx of[-0.042,0.042]){                    // the sockets
-    const soc=new THREE.Mesh(new THREE.SphereGeometry(0.032,8,7),voidMat);
-    soc.scale.set(1,0.9,0.75); soc.position.set(sx,0.008,-0.094); sk.add(soc);
+  const cranGeo=new THREE.SphereGeometry(0.105,18,14);
+  { const P=cranGeo.attributes.position;
+    for(let i=0;i<P.count;i++){ const x=P.getX(i), y=P.getY(i), z=P.getZ(i);
+      const back=Math.max(0,z)/0.105, low=Math.max(0,-y)/0.105;
+      P.setXYZ(i,x*(0.86-0.12*low),y*(0.92-0.10*back)*(1-0.18*low),z*(1.08+0.06*back)); }
+    cranGeo.computeVertexNormals(); }
+  sk.add(new THREE.Mesh(cranGeo,boneMat));
+  const face=new THREE.Mesh(new THREE.SphereGeometry(0.068,12,10),boneMat);
+  face.scale.set(0.78,0.70,0.72); face.position.set(0,-0.042,-0.070); sk.add(face);
+  const brow=new THREE.Mesh(new THREE.TorusGeometry(0.052,0.013,6,14,Math.PI),boneMat);
+  brow.position.set(0,0.020,-0.090); brow.rotation.set(0.25,0,0); sk.add(brow);
+  for(const sx of[-1,1]){
+    const cheek=new THREE.Mesh(new THREE.SphereGeometry(0.022,8,6),boneMat);
+    cheek.scale.set(1.5,0.8,1.1); cheek.position.set(sx*0.058,-0.030,-0.070); sk.add(cheek);
+    const soc=new THREE.Mesh(new THREE.SphereGeometry(0.028,10,8),voidMat);   // the sockets
+    soc.scale.set(1,0.9,0.7); soc.position.set(sx*0.034,-0.002,-0.100); sk.add(soc);
   }
-  const nas=new THREE.Mesh(new THREE.SphereGeometry(0.018,6,5),voidMat);
-  nas.scale.set(0.8,1.3,0.7); nas.position.set(0,-0.038,-0.118); sk.add(nas);
-  const jaw=new THREE.Mesh(new THREE.TorusGeometry(0.058,0.014,4,9,Math.PI*1.1),boneMat);
-  jaw.position.set(0,-0.082,-0.050); jaw.rotation.set(1.28,0,0); sk.add(jaw);
+  const nas=new THREE.Mesh(new THREE.SphereGeometry(0.016,6,5),voidMat);
+  nas.scale.set(0.8,1.4,0.7); nas.position.set(0,-0.040,-0.112); sk.add(nas);
+  for(let i=0;i<8;i++){                              // the upper teeth, a few gone
+    if(Math.random()<0.2) continue;
+    const a=(i/7-0.5)*1.9, t=new THREE.Mesh(new THREE.BoxGeometry(0.008,0.014,0.007),boneMat);
+    t.position.set(Math.sin(a)*0.036,-0.074,-0.080-Math.cos(a)*0.028); t.rotation.y=a; sk.add(t);
+  }
+  const jaw=new THREE.Mesh(new THREE.TorusGeometry(0.045,0.011,5,12,Math.PI*1.05),boneMat);
+  jaw.position.set(0,-0.108,-0.058); jaw.rotation.set(1.05,0,0); sk.add(jaw);
   sk.position.set(0.03,0.10,-0.46); sk.rotation.set(0.25,0.85,0.30); g.add(sk);
   /* the pack that came down with them, strap still over the shoulder */
   const pack=new THREE.Mesh(wrinkle(new THREE.SphereGeometry(0.22,10,8),0.12),coatMat);
@@ -1570,7 +1656,28 @@ function makeCorpse(){
     b.rotation.set(Math.PI/2+rand(-0.2,0.2),Math.random()*Math.PI,rand(-0.3,0.3));
     g.add(b);
   }
-  return g;
+  /* the brood had begun on them: lines of silk over the legs and back,
+     staked to the floor either side */
+  const lines=[];
+  for(let i=0;i<14;i++){
+    const zz=rand(-0.2,1.3), side=Math.random()<0.5?-1:1;
+    const top=[rand(-0.18,0.18),0.2+rand(0,0.08)*(zz<0.6?1:0.4),zz];
+    lines.push(strandMesh(top[0],top[1],top[2], side*rand(0.45,0.9),0.005,zz+rand(-0.3,0.3), rand(0.025,0.04)));
+    if(Math.random()<0.5) lines.push(strandMesh(top[0],top[1],top[2], -side*rand(0.45,0.9),0.005,zz+rand(-0.3,0.3), rand(0.025,0.04)));
+  }
+  g.add(mergeStatic(lines,webStrandMat));
+  const veil=new THREE.Mesh(webSheetGeo(0.9,1.1,0.12),webSheetMats[0]);
+  veil.rotation.x=-Math.PI/2; veil.position.set(0,0.16,0.95); g.add(veil);
+  /* one draw per material: a body of fifty parts was fifty draws */
+  g.updateMatrixWorld(true);
+  const byMat=new Map(), keep=[];
+  g.traverse(o=>{ if(!o.isMesh||o.material.transparent) return;
+    let a=byMat.get(o.material); if(!a) byMat.set(o.material,a=[]); a.push(o); });
+  const out=new THREE.Group();
+  for(const[mat,arr]of byMat){ const m=mergeStatic(arr,mat); out.add(m); for(const o of arr) o.geometry.dispose(); }
+  g.traverse(o=>{ if(o.isMesh&&o.material.transparent) keep.push(o); });
+  for(const o of keep) out.add(o);
+  return out;
 }
 /* ---------------- build ---------------- */
 export function buildCave(){
@@ -2786,40 +2893,16 @@ export function buildCave(){
     body.position.set(p.x+0.4,floorYAt(p.x+0.4,p.z),p.z);
     body.rotation.y=rand(0,Math.PI*2);
     scene.add(body);
-    const lant=makeLanternProp();
-    lant.position.set(p.x-0.55,floorYAt(p.x-0.55,p.z+0.3)+0.06,p.z+0.3);
-    lant.rotation.z=1.35;                          // knocked over where it was dropped
-    lant.rotation.y=rand(0,7);
+    /* the same lantern you will carry (viewmodel.js), knocked over on its
+       side where it was dropped, its mantle still holding an ember */
+    const LM=makeLanternModel(), lant=LM.group;
+    lant.position.set(p.x-0.55,floorYAt(p.x-0.55,p.z+0.3)+0.11,p.z+0.3);
+    lant.rotation.order="YXZ"; lant.rotation.y=rand(0,7); lant.rotation.z=1.5;
+    lant.scale.setScalar(1.2);
     lant.userData.animated=true;
-    /* the ember: the mantle still glows inside the glass */
-    const ember=new THREE.Mesh(new THREE.SphereGeometry(0.045,7,6),
-      new THREE.MeshBasicMaterial({color:0xffc06a}));
-    ember.position.y=0.13; lant.add(ember);
     scene.add(lant);
     /* the journal, fallen open beside it */
-    const jr=new THREE.Group();
-    /* fallen OPEN: two boards splayed off a spine with the page block
-       swollen between them, instead of two stacked slabs */
-    const leather=new THREE.MeshPhongMaterial({map:texCloth, color:0x6e5236,
-      specular:0x1a140c, shininess:10});
-    const paper=new THREE.MeshPhongMaterial({map:texJournalPages, color:0x6e6858,
-      specular:0x111111, shininess:3});
-    const spine=new THREE.Mesh(new THREE.BoxGeometry(0.045,0.030,0.35),leather);
-    spine.position.y=0.015; jr.add(spine);
-    for(const sx of[-1,1]){
-      const board=new THREE.Mesh(new THREE.BoxGeometry(0.25,0.016,0.35),leather);
-      board.position.set(sx*0.145,0.012,0); board.rotation.z=sx*0.055; jr.add(board);
-      const leaf=new THREE.Mesh(new THREE.BoxGeometry(0.225,0.026,0.315),paper);
-      leaf.position.set(sx*0.142,0.031,0.004);
-      leaf.rotation.set(0,sx*0.03,sx*0.075); jr.add(leaf);
-    }
-    /* a couple of leaves torn loose and lying nearby */
-    for(let i=0;i<3;i++){
-      const lf=new THREE.Mesh(new THREE.BoxGeometry(0.20,0.003,0.27),paper);
-      lf.position.set(rand(-0.45,0.45),0.004,rand(-0.4,0.5));
-      lf.rotation.set(rand(-0.05,0.05),Math.random()*Math.PI,rand(-0.05,0.05));
-      jr.add(lf);
-    }
+    const jr=makeJournal();
     const jx=p.x-0.15, jz=p.z+0.75;
     jr.position.set(jx,floorYAt(jx,jz),jz);
     jr.rotation.y=rand(0,7); jr.rotation.z=0.05;
@@ -2829,7 +2912,7 @@ export function buildCave(){
     const glowL=new THREE.PointLight(0xffb46a,0.8,7,1.7);
     glowL.position.set(lant.position.x,lant.position.y+0.35,lant.position.z);
     scene.add(glowL);
-    CAVE.corpse={body,lant,journal:jr,glowL};
+    CAVE.corpse={body,lant,journal:jr,glowL,LM};
     addInteractable({kind:"corpse", mesh:lant, journal:jr, glowL,
       label:()=>"TAKE LANTERN", taken:false});
   }
@@ -2851,6 +2934,7 @@ export function buildCave(){
   /* freeze all the static matrices, then pre-warm every shader (the hidden
      fissure included) while the level is still behind the intro's black */
   freezeStaticScene();
+  initViewmodel();
   CAVE.fissure.group.visible=true;
   renderer.compile(scene,camera);
   CAVE.fissure.group.visible=false;
@@ -3082,8 +3166,10 @@ export function updateCave(dt){
   if(STATE.frenzyT>0) STATE.frenzyT=Math.max(0,STATE.frenzyT-dt);
   /* the dropped lantern's ember breathes until it's taken */
   if(CAVE.corpse&&CAVE.corpse.glowL&&!STATE.hasLantern){
-    CAVE.corpse.glowL.intensity=
-      0.75+0.16*Math.sin(tN*1.7+Math.sin(tN*0.6)*1.3)+0.14*hash(Math.floor(tN*6)*0.31);
+    const e=0.75+0.16*Math.sin(tN*1.7+Math.sin(tN*0.6)*1.3)+0.14*hash(Math.floor(tN*6)*0.31);
+    CAVE.corpse.glowL.intensity=e;
+    const LM=CAVE.corpse.LM;
+    if(LM){ LM.mantleMat.color.setRGB(0.55*e,0.26*e,0.08*e); LM.glow.material.opacity=0.42*e; LM.glow.scale.setScalar(0.24); }
   }
   /* fungus regions dim after their clutch burns (mul2 feeds lights.js's v,
      which owns the halo/vein opacity — one pipeline, no fighting) */

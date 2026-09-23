@@ -27,6 +27,7 @@ import { updateLibrary, LIB, grid2, revealHole } from "./library.js";
 import { updateCave, CAVE, grid3 } from "./cave.js";
 import { updateHatchlings, HATCH } from "./hatchling.js";
 import { updateLantern, LANT } from "./lantern.js";
+import { updateViewmodel, renderViewmodel } from "./viewmodel.js";
 import { enterTheEnd, enterTheNest, debugSkipToTheEnd, debugWarpToTerminal, debugWarpToNest,
          respawn, die, win, prewarmLevel0 } from "./lifecycle.js";
 import { ui, renderObjectives } from "./ui.js";
@@ -66,12 +67,14 @@ function loop(now){
     if(STATE.level===1) updateLibrary(dt);        // light drop, blackouts, old machines
     else if(STATE.level===2) updateCave(dt);      // frenzy clock, fires, fungus, drips
     updateLantern(dt);                            // no-op outside THE NEST
+    updateViewmodel(dt,LANT.flick,CINE.active);
     updateLights(dt,now/1000);
     updateProps(now/1000);
     uiTick-=dt;
     if(uiTick<=0){ renderObjectives(); uiTick=1; }
   }
   renderer.render(scene,camera);
+  renderViewmodel();                            // the lantern in your hand, over the world
 }
 requestAnimationFrame(loop);
 /* once the start screen has painted, build and warm level 0 behind it */
