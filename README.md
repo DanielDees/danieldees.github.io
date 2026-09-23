@@ -109,7 +109,8 @@ game's interface text. No AI, generation or objective changes.
   foot of the walls, and the scree is actually scree.
 - **Dripstone and water.** Stalagmites, stalactites and columns are grown ring by
   ring the way water builds them: lumpy and never quite straight, with flow lobes,
-  runnels, popcorn where the drip splashes, pale wet calcite banded with iron, and
+  runnels, popcorn where the drip splashes, grey calcite streaked down its length
+  and banded across it, and
   their roots sunk into the floor or the vault instead of sitting on it. They come
   as candles, cones, stacked plates and knobbly totems. Beads of water hang on the tips, and the drip you hear is
   a drop you can see: it falls from a stalactite near you, splashes a ripple on the

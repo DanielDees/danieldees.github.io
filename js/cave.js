@@ -1087,7 +1087,7 @@ function vnoise3(x,y,z){
   return p+(q-p)*uz-0.5;
 }
 const fbm3d=(x,y,z)=>vnoise3(x,y,z)+0.5*vnoise3(x*2.03+5.1,y*2.03+1.7,z*2.03+9.3)+0.25*vnoise3(x*4.1+2.2,y*4.1+7.9,z*4.1+3.3);
-const BAND_TINTS=[[1.12,1.1,1.06],[0.88,0.76,0.62],[0.78,0.77,0.75],[1.18,1.16,1.12],[0.7,0.66,0.6],[0.92,0.85,0.76]];
+const BAND_TINTS=[[1.1,1.1,1.08],[0.9,0.82,0.72],[0.78,0.78,0.77],[1.16,1.16,1.13],[0.7,0.68,0.64],[0.94,0.9,0.84]];
 function speleo(h,r,prof,o={}){
   const segs=o.segs||(r<0.07?8:r<0.16?13:r<0.35?18:24);
   const step=Math.max(0.028,Math.min(0.08,r*0.26));
@@ -1170,7 +1170,7 @@ function speleo(h,r,prof,o={}){
   for(let j=0;j<=rows;j++){ const t=j/rows; starts.push(ring(t,t*h,prof(t)*r,false)); }
   for(let j=0;j<starts.length-1;j++){
     const A=starts[j], B=starts[j+1];
-    for(let i=0;i<segs;i++){ const a=A+i, b=B+i; idx.push(a,a+1,b, b,a+1,b+1); }
+    for(let i=0;i<segs;i++){ const a=A+i, b=B+i; idx.push(a,b,a+1, b,b+1,a+1); }   // outward: a runs +x→+z, so up × round
   }
   const g=new THREE.BufferGeometry();
   g.setAttribute("position",new THREE.Float32BufferAttribute(pos,3));

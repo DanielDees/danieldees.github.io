@@ -146,6 +146,7 @@ FS floorAt(vec2 t){
   c=mix(c,vec3(0.46,0.42,0.35),rim*0.8);
   c*=0.9+0.2*(grit+0.5);
   c=mix(c,c*0.5,pud*(1.0-rim));
+  c=mix(vec3(dot(c,vec3(0.3,0.59,0.11))),c,0.7);     // silt is grey-brown: the lantern brings the warmth
   f.col=c; f.h=clamp(h,0.0,1.0);
   f.wet=clamp(pud*(1.0-rim*0.5)+damp*0.18+rim*0.35,0.0,1.0);
   f.ao=clamp(1.0-mcr*0.7-(1.0-smoothstep(gs,gs*1.5,gv.x))*step(gv.z,0.42)*gravZ*(1.0-stone)*0.5,0.0,1.0);
@@ -202,16 +203,28 @@ DS dripAt(vec2 t){
   float popZ=smoothstep(0.05,0.35,fbm3(q*3.0+5.0,vec2(3.0)));
   float pop=(1.0-smoothstep(0.05,0.55,pc.x))*step(pc.z,0.45)*popZ;
   float mac=fbm4(q*4.0,vec2(4.0));
-  float h=0.5+(run*0.32+ring*0.02+pop*0.24)*(1.0-coat*0.7)+mac*0.16;
-  /* calcite is PALE: kept to the rock's browns, a formation turned to
-     driftwood under the lantern — the iron is a streak in it, not its colour */
-  vec3 c=mix(vec3(0.40,0.39,0.37),vec3(0.76,0.75,0.71),smoothstep(-0.35,0.35,mac));
-  c=mix(c,vec3(0.60,0.50,0.39),smoothstep(0.12,0.5,fbm3(vec2(q.x*2.0,q.y*7.0)+11.0,vec2(2.0,7.0)))*0.45);
-  c=mix(c,vec3(0.2,0.19,0.18),smoothstep(0.3,0.6,fbm4(q*3.0+33.0,vec2(3.0)))*0.35);
-  c*=0.86+0.2*run;
-  c*=0.97+0.04*ring;
-  c=mix(c,c*1.1,coat*0.5);
-  c=mix(c,c*1.25,pop);
+  /* STREAKS: full-height runnels, each its own tone, wandering a little,
+     and GROWTH BANDS across them. A clean calcite field under a broad sheen
+     is WAX; these are what make a formation read as stone that was built */
+  float sxs=q.x*26.0+0.3*sin(q.y*12.5663706+q.x*6.2831853*3.0)+fbm3(vec2(q.x*4.0,q.y*2.0),vec2(4.0,2.0))*1.4;
+  float sid=mod(floor(sxs),26.0), sd=abs(fract(sxs)-0.5);
+  float sw=0.05+0.14*h21(vec2(sid,5.0)), sk=step(0.35,h21(vec2(sid,7.0)))*(0.5+0.5*h21(vec2(sid,9.0)));
+  float strk=(1.0-smoothstep(sw*0.4,sw,sd))*sk, dk=step(0.5,h21(vec2(sid,3.0)));
+  float bn=q.y*30.0+fbm3(q*vec2(3.0,2.0)+41.0,vec2(3.0,2.0))*1.5;
+  float bid=mod(floor(bn),30.0);
+  float band=mix(h21(vec2(bid,11.0)),h21(vec2(mod(bid+1.0,30.0),11.0)),smoothstep(0.75,1.0,fract(bn)));
+  float grain=fbm3(q*40.0,vec2(40.0));
+  float h=0.5+(run*0.32+ring*0.02+pop*0.24)*(1.0-coat*0.7)+mac*0.16+strk*(dk>0.5? -0.05 : 0.04)+grain*0.03;
+  /* the calcite is a cool grey-green, dim and near-neutral: pale and warm, a
+     formation went to brass and then to wax under the lantern's orange */
+  vec3 c=mix(vec3(0.25,0.27,0.26),vec3(0.50,0.52,0.49),smoothstep(-0.35,0.35,mac));
+  c=mix(c,vec3(0.43,0.38,0.31),smoothstep(0.15,0.5,fbm3(vec2(q.x*2.0,q.y*7.0)+11.0,vec2(2.0,7.0)))*0.3);
+  c=mix(c,vec3(0.14,0.15,0.14),smoothstep(0.3,0.6,fbm4(q*3.0+33.0,vec2(3.0)))*0.35);
+  c*=0.84+0.32*band;
+  c=mix(c,dk>0.5? vec3(0.13,0.15,0.14) : vec3(0.68,0.70,0.66),strk*(dk>0.5? 0.55 : 0.4));
+  c*=0.9+0.2*(grain+0.5);
+  c*=0.9+0.14*run;
+  c=mix(c,c*1.2,pop);
   d.col=c; d.h=clamp(h,0.0,1.0);
   d.wet=clamp(0.3+(1.0-run)*0.5+coat*0.45+0.2*mac,0.0,1.0);
   d.ao=clamp(1.0-(1.0-smoothstep(0.35,0.55,pc.x))*popZ*0.3-(1.0-run)*0.25,0.0,1.0);
@@ -398,7 +411,7 @@ export function caveSurfaces(){
     floorMat:surfMat(floor,{planar:true, tile:4.0, ftile:0.6,
       spec:0x464c50, shin:80, dry:0.0, wetDark:0, fineK:0.4, aoK:0.75}),
     /* vertex colour carries each formation's mineral bands and cavity */
-    dripMat:surfMat(drip,{tile:2.0, ftile:0.8, spec:0x2c3236, shin:30, vc:true, nA:1.3, nF:1.6,
+    dripMat:surfMat(drip,{tile:2.0, ftile:0.8, spec:0x1c2124, shin:14, vc:true, nA:1.3, nF:1.6,
       dry:0.12, wetDark:0.2, fineK:0.45, aoK:0.7, emissive:0x020303}),
     curtainMat:surfMat(drip,{tile:2.0, ftile:0.9, spec:0x22282c, shin:22,
       dry:0.3, wetDark:0.15, fineK:0.3, aoK:0.6, emissive:0x020303, side:THREE.DoubleSide}),

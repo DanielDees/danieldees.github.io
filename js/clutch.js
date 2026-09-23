@@ -243,7 +243,7 @@ export function makeClutch(env,x,z){
     col.push((0.62+0.38*fresh)*m,(0.59+0.41*fresh)*m,(0.54+0.46*fresh)*m);
   });
   /* matte: silk in a mass has no glaze — a broad highlight made it a loaf */
-  const feltMat=new THREE.MeshPhongMaterial({map:S.felt, normalMap:S.feltN, color:0xbcc1c3,
+  const feltMat=new THREE.MeshPhongMaterial({map:S.felt, normalMap:S.feltN, color:0x9fa4a6,
     specular:0x1a1e20, shininess:8, emissive:0x000000, vertexColors:true});
   const mound=new THREE.Mesh(moundGeo,feltMat);
   g.add(mound);
@@ -256,8 +256,9 @@ export function makeClutch(env,x,z){
   /* the shells want their threads at full strength: the loose layer's alpha
      is set to lie flat over the floor, and over the pale heap it disappears */
   const fuzzMat=layerMat.clone();
+  fuzzMat.color.setHex(0xd4d8da); fuzzMat.emissive.setHex(0x0a0b0c);
   fuzzMat.onBeforeCompile=sh=>{ sh.fragmentShader=sh.fragmentShader.replace("#include <map_fragment>",
-    "#include <map_fragment>\n  diffuseColor.a=min(1.0,diffuseColor.a*2.6);"); };
+    "#include <map_fragment>\n  diffuseColor.a=min(1.0,diffuseColor.a*1.9);"); };
   {
     const nrm=moundGeo.attributes.normal, P0=moundGeo.attributes.position, NS=6, parts=[];
     for(let s2=1;s2<=NS;s2++){
@@ -410,7 +411,7 @@ export function updateClutch(b,i,dt,tN,camera){
   /* the silk goes first: it blackens, glows at its edges, and stays black */
   const ch=clamp((T-0.5)/8,0,1);
   /* to ASH, not to black: a black heap under the lantern has no shape left */
-  u.feltMat.color.setRGB(0.77-0.57*ch,0.79-0.6*ch,0.80-0.62*ch);
+  u.feltMat.color.setRGB(0.62-0.42*ch,0.64-0.45*ch,0.65-0.47*ch);
   u.huskMat.color.setRGB(0.55-0.48*ch,0.52-0.46*ch,0.47-0.42*ch);
   for(const m of [u.layerMat,u.fuzzMat]){
     m.opacity=1-ch*0.85;
