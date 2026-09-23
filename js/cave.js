@@ -25,7 +25,7 @@ import { makeCanvas, texCaveRock, texShaftMasonry, texShaftMasonryBump,
 import { addInteractable } from "./props.js";
 import { stairTreadGeo, stairRailMeshes, STAIR } from "./library.js";
 import { die } from "./lifecycle.js";
-import { caveSurfaces } from "./cavemats.js";
+import { caveSurfaces, rippleNormals } from "./cavemats.js";
 import { scatterStones, stoneGeo } from "./caverocks.js";
 import { initDrips, releaseDrip, updateDrips, initSpores, updateSpores, initRockDust, puffRockDust, updateRockDust,
          initMist, updateMist, initShaftMotes, updateShaftMotes } from "./cavefx.js";
@@ -1863,7 +1863,7 @@ export function buildCave(){
        r128's Phong, so the fade is done in COLOUR: at zero depth the water
        is the wet rock's own tone, and the shoreline disappears instead of
        ending in a bright cold rim against warm stone. */
-    const DEEP=[0.21,0.35,0.42], SHORE=[0.46,0.40,0.34];
+    const DEEP=[0.21,0.35,0.42], SHORE=[0.20,0.18,0.15];     // the shore matches the wet silt
     const wc=(xx,zz)=>{ const k=clamp(depthAt(xx,zz)/0.15,0,1);
       return [lerp(SHORE[0],DEEP[0],k),lerp(SHORE[1],DEEP[1],k),lerp(SHORE[2],DEEP[2],k)]; };
     const sAcc=new QuadAcc(), kAcc=new QuadAcc();
@@ -1903,13 +1903,31 @@ export function buildCave(){
        swimming pool, and this is meant to be the flat black water. Dimming
        the CAUSTICS instead just put the flat sheet back — the depth has to
        come from light in dark water, not from a dim bed. */
+    /* two layers of fine ripples drift past each other on top of the lens's
+       own swell, so the lantern breaks on the water into a scatter of glints
+       — at the old broad specular it came down as one white disc */
     const waterMat=new THREE.MeshPhongMaterial({map:texWaterSurf, vertexColors:true,
-      color:0x8a949a, specular:0x9fd0dc, shininess:150,
+      color:0x8a949a, specular:0x6f96a0, shininess:220,
       transparent:true, opacity:0.62, emissive:0x03090c,
       /* biased toward the camera: along the shoreline the plane runs nearly
          tangent to the bank, and without this the two z-fight into a band of
          shimmer instead of the water simply winning up to its own edge */
       polygonOffset:true, polygonOffsetFactor:-1, polygonOffsetUnits:-1});
+    waterMat.userData.U={uWN:{value:rippleNormals()}, uWT:{value:0}};
+    waterMat.onBeforeCompile=function(sh){
+      Object.assign(sh.uniforms,this.userData.U);
+      sh.vertexShader=sh.vertexShader
+        .replace("#include <common>","#include <common>\nvarying vec2 vWXZ;")
+        .replace("#include <project_vertex>","#include <project_vertex>\n  vWXZ=(modelMatrix*vec4(transformed,1.0)).xz;");
+      sh.fragmentShader=sh.fragmentShader
+        .replace("#include <common>","#include <common>\nuniform sampler2D uWN; uniform float uWT; varying vec2 vWXZ;")
+        .replace("#include <normal_fragment_maps>",`{
+    vec3 a=texture2D(uWN,vWXZ/1.5+vec2(uWT*0.045,uWT*0.012)).xyz*2.0-1.0;
+    vec3 b=texture2D(uWN,vWXZ/0.9+vec2(-uWT*0.018,uWT*0.031)).xyz*2.0-1.0;
+    vec3 nw=normalize(vec3(a.x+b.x*0.8,1.0,a.y+b.y*0.8));
+    normal=normalize(mat3(viewMatrix)*nw+normal*0.6);
+  }`);
+    };
     CAVE.waterMat=waterMat; CAVE.causticMat=causticMat;
     const bed=kAcc.mesh(causticMat);
     bed.renderOrder=-1;                         // under the surface, which keeps depthWrite
@@ -3236,6 +3254,7 @@ export function updateCave(dt){
      PARALLAX between the two is the whole effect. */
   if(CAVE.waterMat){
     CAVE.waterMat.opacity=0.60+0.045*Math.sin(tN*0.7);
+    CAVE.waterMat.userData.U.uWT.value=tN;
     const m=CAVE.waterMat.map;
     if(m){ m.offset.x=(tN*0.030)%1; m.offset.y=(tN*0.019)%1; }
   }

@@ -328,6 +328,25 @@ export function normalFromHeight(H,size,tile,relief){
   return N;
 }
 
+/* ripples for the stream: capillary wavelets over a slower swell, tiling in
+   1.5m; the water shader drifts two copies of it past each other */
+const RIPPLE_GLSL=`
+vec4 OUT(vec2 uv,float m){
+  float h=fbm4(uv*6.0,vec2(6.0))*0.5+fbm3(uv*14.0+3.1,vec2(14.0))*0.35;
+  vec3 c=cell(uv*10.0,vec2(10.0));
+  h+=0.18*smoothstep(0.0,0.6,c.x);
+  return vec4(h,1.0,0.0,1.0);
+}`;
+let RIPPLE=null;
+export function rippleNormals(){
+  if(RIPPLE) return RIPPLE;
+  const S=LOW_BAKE? 256:512;
+  const H=bakeTexture(S,RIPPLE_GLSL+BAKE_MAIN,{uniforms:{uMode:1},float:true});
+  RIPPLE=normalFromHeight(H,S,1.5,0.012);
+  H.bakeRT.dispose();
+  return RIPPLE;
+}
+
 let SURF=null;
 export function caveSurfaces(){
   if(SURF) return SURF;
