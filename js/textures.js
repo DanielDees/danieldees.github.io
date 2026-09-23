@@ -2722,6 +2722,51 @@ export function makeWrapTexture(){
 }
 /* the tape holding it shut: frosted, stretched along its length, and dull
    where the adhesive has crept out past the edge */
+/* stretch film, as it comes off the roll and round a chair. It is WOUND,
+   so what you see is the winding: each turn's edge a crisp pale line where
+   the film doubles over the turn below, climbing one band a turn (a helix,
+   so it meets itself across the u seam), and the fine streaks stretching
+   leaves running along the wind. The body is near-clear — the material's
+   edge term (filmCompile) is what gives the sheet a surface. u runs round
+   the chair, v from the hem to the fold over the top. */
+export const FILM_BANDS=5;
+export const texStretchFilm=makeCanvas(512,512,(g,w,h)=>{
+  g.clearRect(0,0,w,h);
+  g.fillStyle="rgba(230,236,238,0.05)"; g.fillRect(0,0,w,h);
+  const bandH=h/FILM_BANDS, rise=bandH/w;           // one band a turn
+  const helix=(fn)=>{ for(let b=-1;b<=FILM_BANDS;b++) fn(b*bandH); };
+  /* the doubled strip under each turn's edge, and the edge itself */
+  helix(y0=>{
+    for(const ox of[0,-w,w]){
+      g.save(); g.translate(ox,0);
+      g.beginPath(); g.moveTo(0,h-y0); g.lineTo(w,h-y0-bandH); g.lineTo(w,h-y0-bandH+bandH*0.32); g.lineTo(0,h-y0+bandH*0.32); g.closePath();
+      g.fillStyle="rgba(232,238,240,0.07)"; g.fill();
+      g.strokeStyle="rgba(244,248,250,0.5)"; g.lineWidth=1.6;
+      g.beginPath(); g.moveTo(0,h-y0); g.lineTo(w,h-y0-bandH); g.stroke();
+      g.strokeStyle="rgba(244,248,250,0.14)"; g.lineWidth=5;
+      g.beginPath(); g.moveTo(0,h-y0+1.5); g.lineTo(w,h-y0-bandH+1.5); g.stroke();
+      g.restore();
+    }
+  });
+  /* stretch streaks, running with the wind */
+  for(let i=0;i<900;i++){
+    const x=Math.random()*w, y=Math.random()*h, l=10+Math.random()*70;
+    for(const ox of[0,-w,w]){
+      g.strokeStyle=`rgba(240,246,248,${0.04+Math.random()*0.1})`; g.lineWidth=0.5+Math.random()*0.9;
+      g.beginPath(); g.moveTo(x+ox,y); g.lineTo(x+ox+l,y-l*rise); g.stroke();
+    }
+  }
+  /* where it folds over the top rail, the sheet bunches */
+  for(let i=0;i<60;i++){
+    const x=Math.random()*w, y=Math.random()*h*0.12, a=(Math.random()-0.5)*1.6+Math.PI/2, l=8+Math.random()*30;
+    g.strokeStyle=`rgba(244,248,250,${0.12+Math.random()*0.2})`; g.lineWidth=0.8+Math.random();
+    g.beginPath(); g.moveTo(x,y); g.lineTo(x+Math.cos(a)*l,y+Math.sin(a)*l); g.stroke();
+  }
+  /* dust on the outside of it */
+  for(let i=0;i<500;i++){ g.fillStyle=`rgba(200,196,184,${0.08+Math.random()*0.16})`; g.fillRect(Math.random()*w,Math.random()*h,1,1); }
+});
+texStretchFilm.wrapT=THREE.ClampToEdgeWrapping;
+texStretchFilm.anisotropy=4;
 export const texTape=makeCanvas(128,32,(g,w,h)=>{
   g.fillStyle="rgba(212,204,182,0.72)";g.fillRect(0,0,w,h);
   for(let i=0;i<180;i++){                        // adhesive drawn out into fibres

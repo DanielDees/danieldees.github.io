@@ -20,7 +20,7 @@ import { scene, camera, renderer, lights, hemi, amb, makeLightRecord, markShared
 import { makeCanvas, texLibWall, texLibCarpet, texLibCarpetBump, texLibCeil, texShelfWood, texDeskWood,
          texCaveRock, texGalv, texBeige, makeKeyboardTexture, KB_LAYOUT, makeFloppyTexture,
          makeCrackTexture, makeEndTextTexture, makePosterTexture, makeArtTexture,
-         makeWrapTexture, texTape, texCartPaint, texMannequin,
+         makeWrapTexture, texStretchFilm, FILM_BANDS, texTape, texCartPaint, texMannequin,
          makeBookCoverTexture, BOOK_TITLES, BOOK_BASES,
          makeArchiveBoxTexture, BOX_LABELS,
          texPages, texPagesAged, makeOpenPagesTexture, scaleBoxUV,
@@ -510,6 +510,88 @@ function wrapBandGeo(P,v0,v1){
   g.computeVertexNormals();
   return g;
 }
+/* Film is clear face-on and goes silvery where it turns away from you — the
+   thinner the angle, the more sheet the eye looks through. Without that edge
+   the wrap had no surface at all, only its creases, and a chair in film read
+   as a chair with a few scratches floating round it. The sheen is scaled by
+   the light actually falling on the film, so in the dark it stays dark. */
+function filmCompile(sh){
+  sh.uniforms.uFilmEdge={value:this.userData.filmEdge};
+  sh.fragmentShader=sh.fragmentShader
+    .replace("#include <common>","#include <common>\nuniform float uFilmEdge;")
+    .replace("#include <tonemapping_fragment>",
+`{ float fres=pow(1.0-abs(dot(normalize(vViewPosition),normal)),2.2);
+  float lit=dot(reflectedLight.directDiffuse+reflectedLight.indirectDiffuse,vec3(0.3333));
+  gl_FragColor.a=clamp(gl_FragColor.a+fres*uFilmEdge,0.0,0.9);
+  gl_FragColor.rgb+=fres*lit*0.6; }
+#include <tonemapping_fragment>`);
+}
+plasticWrap.userData.filmEdge=0.3; plasticWrap.onBeforeCompile=filmCompile;
+/* stretch film is two sheets to the eye — the near face and the far one
+   seen through it — so it draws as two meshes, the inside first */
+const filmMat=side=>{
+  const m=new THREE.MeshPhongMaterial({map:texStretchFilm, color:0xe4ecef, specular:0xd0dadd,
+    shininess:110, transparent:true, depthWrite:false, side});
+  m.userData.filmEdge=side===THREE.BackSide? 0.32 : 0.5; m.onBeforeCompile=filmCompile;
+  return m;
+};
+const filmBack=filmMat(THREE.BackSide), filmFront=filmMat(THREE.FrontSide);
+/* A chair in stretch film. Not a bag: film WOUND round it, so it takes the
+   chair's own shape — tight round the seat, drawn diagonally from the top
+   of the back down to the seat's front edge, folded over the top rail —
+   and it stops short of the floor in a ragged hem with the legs showing
+   under it. The sections follow the chair built by makeChair. */
+function makeChairWrap(){
+  const g=new THREE.Group();
+  const NU=40, NV=24, Y0=0.13, YS=0.5, YT=1.06, YF=1.1, N=5;
+  const ph=Math.random()*9, ph2=Math.random()*9;
+  const sect=y=>{
+    if(y<=YS) return {a:0.262, zf:0.245, zb:-0.24, t:0};
+    if(y<=YT){ const t=(y-YS)/(YT-YS); return {a:lerp(0.262,0.25,t), zf:lerp(0.245,-0.135,t), zb:-0.235, t}; }
+    const t=(y-YT)/(YF-YT); return {a:lerp(0.25,0.235,t), zf:lerp(-0.135,-0.19,t), zb:lerp(-0.235,-0.19,t), t:1};
+  };
+  const pos=[], uv=[], idx=[];
+  for(let j=0;j<=NV;j++)for(let i=0;i<=NU;i++){
+    const u=i/NU, th=u*Math.PI*2, c=Math.cos(th), s=Math.sin(th);
+    let y=Y0+(YF-Y0)*j/NV;
+    if(j===0) y+=0.025*Math.sin(th*4+ph)+0.015*Math.sin(th*9+ph2);     // the ragged hem
+    const S=sect(y), zc=(S.zf+S.zb)/2, b=(S.zf-S.zb)/2;
+    const sx=Math.sign(c)*Math.pow(Math.abs(c),2/N), sz=Math.sign(s)*Math.pow(Math.abs(s),2/N);
+    /* slack: the drape sags in toward the chair, the turns stand a hair
+       proud at their edges, and nothing is perfectly true */
+    const v=j/NV, band=((v*FILM_BANDS-u)%1+1)%1;
+    let d=0.005*Math.sin(th*3+ph+y*7)+0.003*Math.sin(th*7+y*13+ph2)+0.003*Math.exp(-Math.pow(Math.min(band,1-band)*14,2));
+    if(y>YS&&y<YT) d-=0.03*Math.sin(Math.PI*S.t)*Math.pow(Math.max(0,s),2);
+    const k=1+d/Math.max(0.05,Math.hypot(S.a*sx,b*sz));
+    pos.push(S.a*sx*k, y, zc+b*sz*k);
+    uv.push(u, v);
+  }
+  const R=NU+1;
+  for(let j=0;j<NV;j++)for(let i=0;i<NU;i++){
+    const A=j*R+i, B=A+1, C=A+R, D=C+1;
+    idx.push(A,C,B, B,C,D);                       // outward-facing
+  }
+  /* the cut tail of the last turn, hanging off one side */
+  {
+    const tx=(Math.random()<0.5?-1:1)*0.268, y0=rand(0.36,0.5), len=rand(0.28,0.42), o=pos.length/3;
+    for(let k=0;k<=6;k++){
+      const t=k/6, tw=Math.sin(t*2.2)*0.03;
+      for(const e of[-1,1]){
+        pos.push(tx+Math.sign(tx)*(0.006+t*0.03)+tw, y0-t*len, rand(-0.02,0.02)+e*(0.065-t*0.02));
+        uv.push(e>0?0.08:0.0, 0.5-t*0.4);
+      }
+    }
+    for(let k=0;k<6;k++){ const A=o+k*2; idx.push(A,A+1,A+2, A+1,A+3,A+2); }
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute("position",new THREE.Float32BufferAttribute(pos,3));
+  geo.setAttribute("uv",new THREE.Float32BufferAttribute(uv,2));
+  geo.setIndex(idx); geo.computeVertexNormals();
+  const back=new THREE.Mesh(geo,filmBack), front=new THREE.Mesh(geo,filmFront);
+  back.renderOrder=1; front.renderOrder=2;
+  g.add(back,front);
+  return g;
+}
 /* w×d footprint, h tall — the film clears the object on every side */
 function makeWrap(w,d,h){
   const g=new THREE.Group();
@@ -879,12 +961,12 @@ function makeShelfRun(run){
     occ.push([x0,x1]); return true;
   };
   /* every run has a character: a third are nearly stripped, a fifth are
-     still properly stocked, and the rest sit between — the same thinning on
-     every board read as one decorator's hand, not as years of neglect.
-     Stocking scales with the board's LENGTH: a flat per-board count spread
-     a dozen books over twelve metres of shelf, and the whole building read
-     as emptied rather than abandoned. */
-  const rc=Math.random(), rate= rc<0.3? 1.2 : rc<0.8? 3.5 : 13, full=rate>5;
+     still stocked, and the rest sit between — the same thinning on every
+     board read as one decorator's hand, not as years of neglect. Stocking
+     scales with the board's LENGTH, and it is kept LOW: the disks the level
+     sends you after lie on these boards, and at ~7,000 volumes (13 a metre
+     on a full run) they were lost among the spines. */
+  const rc=Math.random(), rate= rc<0.3? 0.18 : rc<0.8? 0.52 : 1.95, full=rate>1;
   for(let lv=0;lv<4;lv++){
   let budget=Math.round(len*rate*(0.6+Math.random()*0.8));
   let tries=Math.round(budget*1.5)+30;
@@ -897,7 +979,7 @@ function makeShelfRun(run){
     if(r<(full?0.5:0.2)&&budget>=6){
       /* a proper shelf of them, spine to spine — sometimes with one gone,
          and the gap left where it was taken */
-      const n=Math.min(budget,6+Math.floor(Math.random()*(full?40:12)));
+      const n=Math.min(budget,6+Math.floor(Math.random()*(full?14:8)));
       const row=[];let w=0;
       for(let i=0;i<n;i++){const des=pickBook();row.push(des);w+=des.tx;}
       const gapAt=Math.random()<0.4? 1+Math.floor(Math.random()*(n-2)) : -1;
@@ -1069,7 +1151,7 @@ function makeChair(wrapped){
     g.add(mergeStatic(arr[0],arr[1]));
     for(const m of arr[0]) m.geometry.dispose();
   }
-  if(wrapped) g.add(makeWrap(0.58,0.58,1.10));
+  if(wrapped) g.add(makeChairWrap());
   return g;
 }
 /* a library ladder: tapered stiles, round rungs let into them, brass hooks
@@ -3698,7 +3780,7 @@ markShared(jarGlassMat,jarDregsMat,hourGlassMat,sandMat,candleMat,JAR_GEO,JAR_LI
 markShared(wainPanelMat,skirtMat,wireMat,ghostMat,corkMat,clockFaceMat,bakeliteMat,exitSignMat,
            staffSignMat,darkWoodMat,doorGlassMat,...pinMats,
            texCork,texGhost,texClockFace,texExitSign,texStaffSign);
-markShared(deskShadeMat,closedCardMat,closedCardMat.map,MOUSE_GEO,BEZEL_GEO);
+markShared(deskShadeMat,closedCardMat,closedCardMat.map,MOUSE_GEO,BEZEL_GEO,filmBack,filmFront,texStretchFilm);
 markShared(ironMat,rootMat,jutelMat,concreteMat,shaftSilkMat,texShaftMasonry,texSpoil,texSlabSection);
 markShared(drawerHoleMat,cardMat,wetFloorMat,ropeMat,paperMat,greenGlassMat,pencilMat,LAMP_BASE_GEO,
            texWetFloor,texPaperSheets);

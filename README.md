@@ -98,8 +98,8 @@ interface text. No AI, generation or objective changes.
 - **The library draws in a tenth of the calls.** The room was ~2,400 separate
   meshes — about a thousand of them books at two draw calls each — so the library
   issued 1,300–3,300 draw calls a frame. Every static opaque mesh is now regrouped
-  by material and merged after the build: the same room, with several times the books
-  and a lot more furniture, draws in ~240–420 calls, at 3.5–7ms of GPU time at 1080p.
+  by material and merged after the build: the same room, with a lot more furniture,
+  draws in ~240–420 calls.
 - **The walls are architecture.** Plaster pilasters run up all four walls on an
   8m pitch, with an oak wainscot, a picture rail and an entablature far up in the
   dark. Each pilaster carries an enamel section plate. The pictures hang from the
@@ -118,14 +118,17 @@ interface text. No AI, generation or objective changes.
   that stuck out of the frame as diagonal bars.
 - **Books.** 28 designs (was 16) in four bindings: gilt cloth, leather, printed
   dust jackets, and paperbacks — flush-trimmed covers, a flat creased spine,
-  sun-faded. Almost every spine carries a library call-number label. Shelving scales
-  with the length of the run: some aisles are nearly stripped, most are thin, and a
-  fifth are packed spine to spine — about 7,000 volumes in all.
+  sun-faded. Almost every spine carries a library call-number label. Shelves stay thin
+  so the floppy disks are easy to pick out: some aisles are nearly stripped, a fifth
+  hold proper rows.
 - **The floor.** New: card catalogues with drawers pulled out (and one spilled on
   the floor), green banker's lamps and readers' leavings on the tables, a wooden book
   truck with sloped shelves, brass stanchions with a velvet rope (sometimes let down),
   wet-floor signs, loose paper, and books fallen off the shelves. Ladders are proper
-  rolling library ladders with brass hooks; some chairs are knocked over.
+  rolling library ladders with brass hooks; some chairs are knocked over, and the
+  wrapped ones are now in clear stretch film wound round the chair's own shape — tight
+  over the seat, drawn from the top of the back to the seat's front edge, with the
+  winding visible and the film going silvery where it turns away from you.
 - **The machines.** The CRTs have a single rounded bezel moulding, a swivel foot,
   real keycaps printed with their legends, a mouse on its cord, and dead glass that
   still reflects. Floppy disks are a moulded shell with the chamfered corner and a
