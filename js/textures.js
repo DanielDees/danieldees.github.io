@@ -2517,97 +2517,186 @@ export const PAPER_UV=[[0.02,0.52,0.48,0.98],[0.52,0.52,0.98,0.98],[0.02,0.02,0.
    librarian dug through, then the dressed stone of a stair that was down
    there long before the library was built over it. */
 /* ashlar: eight courses to the tile, each course one tread's rise, so the
-   stair climbs the wall on the coursing. Blocks wrap across u. */
-export const texShaftMasonry=makeCanvas(512,512,(g,w,h)=>{
-  g.fillStyle="#2c2822"; g.fillRect(0,0,w,h);                   // the mortar, weathered back
-  const CH=h/8;
-  for(let c=0;c<8;c++){
-    let x=Math.random()*w; const x0=x;
-    while(x<x0+w){
-      const bw=Math.min(130+Math.random()*120,x0+w-x);
-      const t=46+Math.random()*26, warm=Math.random()*8;
-      for(const ox of[0,-w]){
-        const bx=x+ox+2, by=c*CH+2+Math.random()*2, ww=bw-4, hh=CH-4-Math.random()*2;
-        if(bx+ww<0||bx>w) continue;
-        const gr=g.createLinearGradient(0,by,0,by+hh);
-        gr.addColorStop(0,`rgb(${t+14+warm|0},${t+10|0},${t+2|0})`);
-        gr.addColorStop(0.5,`rgb(${t+warm|0},${t-3|0},${t-12|0})`);
-        gr.addColorStop(1,`rgb(${t-18+warm|0},${t-22|0},${t-28|0})`);
-        g.fillStyle=gr; g.fillRect(bx,by,ww,hh);
+   stair climbs the wall on the coursing. 1024² — you walk the stair an arm's
+   length from this, and at 512 it was soft. The colour map and the height
+   map are drawn from ONE layout (every random drawn up front into it), the
+   ceiling foam's lesson: two maps that roll their own randoms describe two
+   different walls. The relief is its own map because the colour's shading
+   used as a bump tilted every block the same way and left the faces flat.
+   Blocks are polygons with softened, chipped arrises, dressed with chisel
+   striations and pitted — a rectangle with a gradient in it is a tile. */
+const MAS_S=1024, MAS_C=8;
+const MAS_LAYOUT=(()=>{
+  const W=MAS_S, CH=MAS_S/MAS_C, blocks=[];
+  for(let c=0;c<MAS_C;c++){
+    let x=Math.random()*W; const x0=x;
+    while(x<x0+W-60){
+      const bw=Math.min(200+Math.random()*220,x0+W-x);
+      const y0=c*CH, j=()=>2+Math.random()*5;
+      /* the face, inset from the joint by an uneven margin */
+      const poly=[[x+j(),y0+j()],[x+bw*0.5,y0+2+Math.random()*3],[x+bw-j(),y0+j()],
+                  [x+bw-2-Math.random()*3,y0+CH*0.5],[x+bw-j(),y0+CH-j()],[x+bw*0.5,y0+CH-2-Math.random()*3],
+                  [x+j(),y0+CH-j()],[x+2+Math.random()*3,y0+CH*0.5]];
+      const chips=[];
+      for(let k=0,n=Math.floor(Math.random()*4);k<n;k++){
+        const top=Math.random()<0.5, cx=x+10+Math.random()*(bw-20), cy=top? y0+4 : y0+CH-4, r=6+Math.random()*16;
+        const pts=[]; for(let q=0;q<7;q++){ const a=q/7*Math.PI*2; pts.push([cx+Math.cos(a)*r*(0.5+Math.random()*0.6), cy+Math.sin(a)*r*(0.35+Math.random()*0.4)]); }
+        chips.push(pts);
       }
+      const ang=(Math.random()-0.5)*1.2+(Math.random()<0.5?0.6:-0.6), strokes=[];
+      for(let k=0;k<70;k++){
+        const sx=x+Math.random()*bw, sy=y0+6+Math.random()*(CH-12), l=6+Math.random()*16;
+        strokes.push([sx,sy,sx+Math.cos(ang)*l,sy+Math.sin(ang)*l,Math.random()]);
+      }
+      const pits=[]; for(let k=0;k<30;k++) pits.push([x+Math.random()*bw,y0+4+Math.random()*(CH-8),0.6+Math.random()*1.8]);
+      const mottle=[]; for(let k=0;k<14;k++) mottle.push([x+Math.random()*bw,y0+Math.random()*CH,10+Math.random()*34,(Math.random()-0.5)*0.24]);
+      blocks.push({x,bw,y0,poly,chips,strokes,pits,mottle,t:44+Math.random()*26,warm:Math.random()*8,
+                   cx:x+bw*(0.3+Math.random()*0.4), cy:y0+CH*(0.3+Math.random()*0.4)});
       x+=bw;
     }
   }
-  /* tooling and grit on every face */
-  for(let i=0;i<9000;i++){
+  const damp=[]; for(let i=0;i<14;i++) damp.push([Math.random()*W,Math.random()*W,14+Math.random()*50,160+Math.random()*400]);
+  const salts=[]; for(let i=0;i<50;i++) salts.push([Math.random()*W,Math.random()*W,4+Math.random()*18]);
+  return {blocks,damp,salts,CH};
+})();
+function drawMasonry(g,w,h,bump){
+  const L=MAS_LAYOUT;
+  const wrapX=fn=>{ for(const ox of[0,-w,w]) fn(ox); };
+  const path=(pts,ox)=>{ g.beginPath(); pts.forEach(([px,py],i)=>i?g.lineTo(px+ox,py):g.moveTo(px+ox,py)); g.closePath(); };
+  g.fillStyle=bump? "#3a3a3a" : "#3a352e"; g.fillRect(0,0,w,h);
+  for(let i=0;i<(bump?4000:9000);i++){                           // the joints are sand and lime, not paint
     const v=Math.random();
-    g.fillStyle=v<0.5? `rgba(20,18,14,${0.08+Math.random()*0.16})` : `rgba(150,140,120,${0.05+Math.random()*0.1})`;
+    g.fillStyle=bump? `rgba(${v<0.5?20:70},${v<0.5?20:70},${v<0.5?20:70},0.5)`
+                    : (v<0.5? `rgba(30,27,22,0.3)` : `rgba(96,90,78,0.22)`);
     g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*2,1+Math.random()*2);
   }
-  /* damp coming down the face, and salts where it dried */
-  for(let i=0;i<10;i++){
-    const x=Math.random()*w, y=Math.random()*h, wd=10+Math.random()*30, ln=80+Math.random()*200;
-    for(const ox of[0,-w,w]) for(const oy of[0,-h]){
-      const gr=g.createLinearGradient(0,y+oy,0,y+oy+ln);
-      gr.addColorStop(0,"rgba(10,12,12,0)"); gr.addColorStop(0.3,"rgba(10,12,12,0.22)"); gr.addColorStop(1,"rgba(10,12,12,0)");
-      g.fillStyle=gr; g.fillRect(x+ox-wd/2,y+oy,wd,ln);
+  for(const b of L.blocks) wrapX(ox=>{
+    if(b.x+b.bw+ox<0||b.x+ox>w) return;
+    g.save(); path(b.poly,ox); g.clip();
+    /* the face: pillowed in relief, mottled in colour, a little lighter
+       toward its top where the light down the shaft falls */
+    const r=Math.max(b.bw,L.CH);
+    const gr=g.createRadialGradient(b.cx+ox,b.cy,4,b.cx+ox,b.cy,r*0.75);
+    if(bump){ gr.addColorStop(0,"#d8d8d8"); gr.addColorStop(1,"#a4a4a4"); }
+    else { const t=b.t; gr.addColorStop(0,`rgb(${t+10+b.warm|0},${t+6|0},${t-2|0})`); gr.addColorStop(1,`rgb(${t-10+b.warm|0},${t-14|0},${t-22|0})`); }
+    g.fillStyle=gr; g.fillRect(b.x+ox,b.y0,b.bw,L.CH);
+    /* stone: a mottle of soft patches and a fine grain, so the face is
+       rock and not a flat fill */
+    for(const [mx,my,mr,mv] of b.mottle){
+      const mg=g.createRadialGradient(mx+ox,my,0,mx+ox,my,mr);
+      const c=bump? (mv>0?"255,255,255":"0,0,0") : (mv>0?"150,140,122":"10,9,7");
+      mg.addColorStop(0,`rgba(${c},${Math.abs(mv)})`); mg.addColorStop(1,`rgba(${c},0)`);
+      g.fillStyle=mg; g.fillRect(mx+ox-mr,my-mr,mr*2,mr*2);
     }
+    if(!bump){
+      const lg=g.createLinearGradient(0,b.y0,0,b.y0+L.CH);
+      lg.addColorStop(0,"rgba(255,240,210,0.06)"); lg.addColorStop(1,"rgba(0,0,0,0.12)");
+      g.fillStyle=lg; g.fillRect(b.x+ox,b.y0,b.bw,L.CH);
+    }
+    /* the dressing: parallel chisel strokes and the pits between them */
+    for(const [x0,y0,x1,y1,k] of b.strokes){
+      g.strokeStyle= bump? `rgba(${k<0.6?90:210},${k<0.6?90:210},${k<0.6?90:210},0.22)`
+                         : (k<0.6? `rgba(14,12,10,0.07)` : `rgba(170,160,140,0.05)`);
+      g.lineWidth=0.9;
+      g.beginPath(); g.moveTo(x0+ox,y0); g.lineTo(x1+ox,y1); g.stroke();
+    }
+    for(const [px,py,pr] of b.pits){
+      g.fillStyle=bump? "rgba(60,60,60,0.6)" : "rgba(12,10,8,0.22)";
+      g.beginPath(); g.arc(px+ox,py,pr*0.6,0,7); g.fill();
+    }
+    g.restore();
+    /* spalled arrises: bites out of the edge, down toward the joint */
+    for(const c of b.chips){
+      path(c,ox);
+      g.fillStyle=bump? "rgba(78,78,78,1)" : `rgba(${b.t-18|0},${b.t-20|0},${b.t-24|0},1)`;
+      g.fill();
+    }
+  });
+  /* the fine grain of the stone: noise, not dots, and cheap */
+  addGrain(g,w,h,bump?[46,46,46]:[16,15,13]);
+  if(bump) return;
+  for(const [x,y,wd,ln] of L.damp) for(const ox of[0,-w,w]) for(const oy of[0,-h]){
+    const gr=g.createLinearGradient(0,y+oy,0,y+oy+ln);
+    gr.addColorStop(0,"rgba(10,12,12,0)"); gr.addColorStop(0.3,"rgba(10,12,12,0.24)"); gr.addColorStop(1,"rgba(10,12,12,0)");
+    g.fillStyle=gr; g.fillRect(x+ox-wd/2,y+oy,wd,ln);
   }
-  for(let i=0;i<30;i++){
-    const x=Math.random()*w, y=Math.random()*h, r=3+Math.random()*10;
+  for(const [x,y,r] of L.salts){
     const gr=g.createRadialGradient(x,y,0,x,y,r);
-    gr.addColorStop(0,"rgba(200,204,196,0.22)"); gr.addColorStop(1,"rgba(200,204,196,0)");
+    gr.addColorStop(0,"rgba(200,204,196,0.2)"); gr.addColorStop(1,"rgba(200,204,196,0)");
     g.fillStyle=gr; g.fillRect(x-r,y-r,r*2,r*2);
   }
-});
-/* loose earth: clods lit on top, pebbles, root hairs — all drawn wrapped */
-export const texSpoil=makeCanvas(256,256,(g,w,h)=>{
+}
+export const texShaftMasonry=makeCanvas(MAS_S,MAS_S,(g,w,h)=>drawMasonry(g,w,h,false));
+export const texShaftMasonryBump=makeCanvas(MAS_S,MAS_S,(g,w,h)=>drawMasonry(g,w,h,true));
+/* loose earth: soft blotches under clods lit on top, pebbles, root hairs,
+   all drawn wrapped. 512² for the same reason as the stone. */
+export const texSpoil=makeCanvas(512,512,(g,w,h)=>{
   g.fillStyle="#3a2b1c"; g.fillRect(0,0,w,h);
   const wrap=(x,y,fn)=>{ for(const ox of[0,-w,w]) for(const oy of[0,-h,h]) fn(x+ox,y+oy); };
-  for(let i=0;i<18;i++){
-    const x=Math.random()*w, y=Math.random()*h, r=20+Math.random()*50, dk=Math.random()<0.5;
+  for(let i=0;i<34;i++){
+    const x=Math.random()*w, y=Math.random()*h, r=40+Math.random()*100, dk=Math.random()<0.5;
     wrap(x,y,(px,py)=>{ const gr=g.createRadialGradient(px,py,1,px,py,r);
       gr.addColorStop(0,dk?"rgba(20,14,8,0.35)":"rgba(96,74,48,0.3)"); gr.addColorStop(1,"rgba(40,30,20,0)");
       g.fillStyle=gr; g.fillRect(px-r,py-r,r*2,r*2); });
   }
-  for(let i=0;i<380;i++){
-    const x=Math.random()*w, y=Math.random()*h, r=1+Math.random()*3.2;
+  for(let i=0;i<5000;i++){                                       // the fine grain of it
+    const v=Math.random();
+    g.fillStyle=v<0.5? `rgba(18,12,6,${0.15+Math.random()*0.2})` : `rgba(110,86,58,${0.1+Math.random()*0.15})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*1.5,1+Math.random()*1.5);
+  }
+  for(let i=0;i<1300;i++){
+    const x=Math.random()*w, y=Math.random()*h, r=1.2+Math.random()*4.5;
     const t=Math.random();
     wrap(x,y,(px,py)=>{
-      g.fillStyle=`rgba(18,12,6,${0.2+Math.random()*0.2})`; g.beginPath(); g.ellipse(px+0.8,py+1.2,r,r*0.7,0,0,7); g.fill();
+      g.fillStyle=`rgba(18,12,6,${0.2+Math.random()*0.2})`; g.beginPath(); g.ellipse(px+1,py+1.5,r,r*0.7,0,0,7); g.fill();
       g.fillStyle=t<0.8? `rgba(${70+Math.random()*24|0},${52+Math.random()*16|0},${34+Math.random()*12|0},0.7)`
-                       : `rgba(${88+Math.random()*24|0},${84+Math.random()*20|0},${76+Math.random()*16|0},0.75)`;
+                       : `rgba(${74+Math.random()*16|0},${66+Math.random()*14|0},${54+Math.random()*12|0},0.6)`;
       g.beginPath(); g.ellipse(px,py,r,r*0.7,Math.random()*3,0,7); g.fill();
     });
   }
-  g.strokeStyle="rgba(150,120,80,0.35)"; g.lineWidth=0.8;
-  for(let i=0;i<24;i++){
+  for(let i=0;i<26;i++){                                         // stones, each with a lit crown
+    const x=Math.random()*w, y=Math.random()*h, r=4+Math.random()*9, t=58+Math.random()*24;
+    wrap(x,y,(px,py)=>{
+      g.fillStyle="rgba(16,12,8,0.6)"; g.beginPath(); g.ellipse(px+1.5,py+2.5,r,r*0.75,0,0,7); g.fill();
+      const gr=g.createRadialGradient(px-r*0.3,py-r*0.4,1,px,py,r);
+      gr.addColorStop(0,`rgb(${t+14|0},${t+10|0},${t+4|0})`); gr.addColorStop(1,`rgb(${t-24|0},${t-26|0},${t-30|0})`);
+      g.fillStyle=gr; g.beginPath(); g.ellipse(px,py,r,r*0.75,Math.random()*3,0,7); g.fill();
+    });
+  }
+  g.strokeStyle="rgba(150,120,80,0.35)"; g.lineWidth=1;
+  for(let i=0;i<50;i++){
     let x=Math.random()*w, y=Math.random()*h, a=Math.random()*7;
     g.beginPath(); g.moveTo(x,y);
-    for(let k=0;k<8;k++){ a+=(Math.random()-0.5)*0.9; x+=Math.cos(a)*6; y+=Math.sin(a)*6; g.lineTo(x,y); }
+    for(let k=0;k<10;k++){ a+=(Math.random()-0.5)*0.9; x+=Math.cos(a)*9; y+=Math.sin(a)*9; g.lineTo(x,y); }
     g.stroke();
   }
 });
 /* the floor in section, top to bottom over the canvas height: carpet pile,
    underlay, screed, the structural slab with its rebar cut through, and the
    earth under it */
-export const texSlabSection=makeCanvas(512,64,(g,w,h)=>{
+export const texSlabSection=makeCanvas(1024,128,(g,w,h)=>{
   g.fillStyle="#4a4a48"; g.fillRect(0,0,w,h);
-  for(let x=0;x<w;x++){ g.fillStyle=`rgba(${60+Math.random()*30|0},${70+Math.random()*30|0},${86+Math.random()*30|0},1)`; g.fillRect(x,0,1,3+Math.random()*2); }
-  g.fillStyle="#1e1a16"; g.fillRect(0,5,w,3);
-  g.fillStyle="#7a766c"; g.fillRect(0,8,w,9);
-  for(let i=0;i<2400;i++){
+  for(let x=0;x<w;x++){ g.fillStyle=`rgba(${60+Math.random()*30|0},${70+Math.random()*30|0},${86+Math.random()*30|0},1)`; g.fillRect(x,0,1,6+Math.random()*4); }
+  g.fillStyle="#1e1a16"; g.fillRect(0,10,w,6);
+  g.fillStyle="#7a766c"; g.fillRect(0,16,w,18);
+  for(let i=0;i<9600;i++){
     g.fillStyle=Math.random()<0.5? "rgba(40,38,34,0.5)" : "rgba(160,154,140,0.4)";
-    g.fillRect(Math.random()*w,17+Math.random()*36,1+Math.random()*2,1+Math.random()*2);
+    g.fillRect(Math.random()*w,34+Math.random()*72,1+Math.random()*3,1+Math.random()*3);
   }
-  g.fillStyle="rgba(20,18,16,0.6)"; g.fillRect(0,17,w,1);
-  for(let x=18;x<w;x+=38){
-    g.fillStyle="#3a2210"; g.beginPath(); g.arc(x+Math.random()*6,36,2.6,0,7); g.fill();
-    g.fillStyle="rgba(120,60,20,0.5)"; g.beginPath(); g.arc(x+Math.random()*6,38,4,0,7); g.fill();
+  for(let i=0;i<260;i++){                                         // aggregate, cut through
+    const x=Math.random()*w, y=36+Math.random()*68, r=1.5+Math.random()*3.5;
+    g.fillStyle=`rgba(${110+Math.random()*50|0},${104+Math.random()*44|0},${92+Math.random()*40|0},0.9)`;
+    g.beginPath(); g.ellipse(x,y,r,r*0.7,Math.random()*3,0,7); g.fill();
   }
-  const e=g.createLinearGradient(0,50,0,64); e.addColorStop(0,"rgba(62,46,30,0)"); e.addColorStop(1,"rgba(62,46,30,1)");
-  g.fillStyle=e; g.fillRect(0,50,w,14);
-  for(let i=0;i<60;i++){ const x=Math.random()*w; g.fillStyle="rgba(20,16,12,0.5)"; g.fillRect(x,17,1+Math.random()*2,Math.random()*30); }
+  g.fillStyle="rgba(20,18,16,0.6)"; g.fillRect(0,34,w,2);
+  for(let x=36;x<w;x+=76){
+    const rx=x+Math.random()*12;
+    g.fillStyle="rgba(120,60,20,0.45)"; g.beginPath(); g.arc(rx,76,9,0,7); g.fill();
+    g.fillStyle="#3a2210"; g.beginPath(); g.arc(rx,72,5.2,0,7); g.fill();
+  }
+  const e=g.createLinearGradient(0,100,0,128); e.addColorStop(0,"rgba(62,46,30,0)"); e.addColorStop(1,"rgba(62,46,30,1)");
+  g.fillStyle=e; g.fillRect(0,100,w,28);
+  for(let i=0;i<120;i++){ const x=Math.random()*w; g.fillStyle="rgba(20,16,12,0.5)"; g.fillRect(x,34,1+Math.random()*2,Math.random()*60); }
 });
 /* ================= polythene: the film things are left wrapped in ==========
    The wrap was a box at 0.18 opacity with a flat blue-grey on it, which from

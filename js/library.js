@@ -26,7 +26,7 @@ import { makeCanvas, texLibWall, texLibCarpet, texLibCarpetBump, texLibCeil, tex
          texPages, texPagesAged, makeOpenPagesTexture, scaleBoxUV,
          texCork, texGhost, texClockFace, makePlaqueAtlas, texExitSign, texStaffSign,
          texWetFloor, makeCatalogTexture, CATALOG_COLS, CATALOG_ROWS, texPaperSheets, PAPER_UV,
-         texShaftMasonry, texSpoil, texSlabSection } from "./textures.js";
+         texShaftMasonry, texShaftMasonryBump, texSpoil, texSlabSection } from "./textures.js";
 import { makeElevator, ELEV, addInteractable } from "./props.js";
 import { makeDustSystem, makeDebris } from "./particles.js";
 import { sfxLightsOut, escalateLibraryAmbience, sfxComputerBoot, sfxComputerStatic } from "./audio.js";
@@ -2505,7 +2505,11 @@ function buildHole(hc,carpetMat){
   g.visible=false;
   const {IN,OUT,T}=STAIR, RC=HOLE_R-0.62;
   /* ---- the shaft wall, top down: floor section, earth, masonry ---- */
-  const secTex=texSlabSection.clone(); secTex.needsUpdate=true; secTex.repeat.set(4,1); secTex.wrapT=THREE.ClampToEdgeWrapping;
+  /* the shaft is walked at arm's length and seen along its curve, the
+     grazing angle an isotropic mip chain smears worst */
+  const ANI=Math.min(8,renderer.capabilities.getMaxAnisotropy());
+  const aniso=t=>{ t.anisotropy=ANI; t.needsUpdate=true; return t; };
+  const secTex=aniso(texSlabSection.clone()); secTex.repeat.set(4,1); secTex.wrapT=THREE.ClampToEdgeWrapping;
   /* the top two bands sit above where the haze begins; left plain they share programs */
   const secMat=new THREE.MeshPhongMaterial({map:secTex, specular:0x0c0c0c, shininess:4, side:THREE.BackSide});
   const SEC_H=0.5;
@@ -2517,7 +2521,7 @@ function buildHole(hc,carpetMat){
     geo.computeVertexNormals();
     const m=new THREE.Mesh(geo,secMat); m.position.set(hc.x,-SEC_H/2+0.001,hc.z); g.add(m);
   }
-  const earthTex=texSpoil.clone(); earthTex.needsUpdate=true; earthTex.repeat.set(7,2);
+  const earthTex=aniso(texSpoil.clone()); earthTex.repeat.set(7,2);
   const earthMat=new THREE.MeshPhongMaterial({map:earthTex, bumpMap:earthTex, bumpScale:0.05,
     specular:0x0a0806, shininess:4, side:THREE.BackSide});
   const EARTH_B=-2.7;
@@ -2534,17 +2538,38 @@ function buildHole(hc,carpetMat){
     geo.computeVertexNormals();
     const m=new THREE.Mesh(geo,earthMat); m.position.set(hc.x,(-SEC_H+EARTH_B)/2,hc.z); g.add(m);
   }
-  const masTex=texShaftMasonry.clone(); masTex.needsUpdate=true;
-  const MAS_H=HOLE_DEPTH+EARTH_B;
-  masTex.repeat.set(6,MAS_H/(8*STAIR_RISE/STAIR_STEPS));          // one course per tread
-  const masMat=hazed(new THREE.MeshPhongMaterial({map:masTex, bumpMap:masTex, bumpScale:0.07,
-    color:0x8c8a86, specular:0x101418, shininess:10, emissive:0x03060a, side:THREE.BackSide}));
+  /* The masonry is built course by course, not as one smooth tube: each
+     course its own ring, stood a few millimetres in or out of the next and
+     bellied a little round its length, so the light running down the shaft
+     catches every joint. Its bottom sits on a tread's rise, so every course
+     line is a tread line and the stair climbs the wall on the coursing. */
+  const COURSE=STAIR_RISE/STAIR_STEPS, NC=78, MAS_B=-0.02-NC*COURSE, MAS_T=EARTH_B+0.05, MAS_H=MAS_T-MAS_B;
+  const masTex=aniso(texShaftMasonry.clone()), masBump=aniso(texShaftMasonryBump.clone());
+  for(const t of[masTex,masBump]) t.repeat.set(6,MAS_H/(8*COURSE));
+  const masMat=hazed(new THREE.MeshPhongMaterial({map:masTex, bumpMap:masBump, bumpScale:0.045,
+    color:0x8c8a86, specular:0x1a1e24, shininess:14, emissive:0x03060a, side:THREE.BackSide}));
   {
-    const m=new THREE.Mesh(new THREE.CylinderGeometry(2.8,2.8,MAS_H,48,1,true),masMat);
-    m.position.set(hc.x,EARTH_B-MAS_H/2+0.05,hc.z); g.add(m);
+    const SEG=64, pos=[], uv=[], idx=[];
+    for(let c=0;c*COURSE<MAS_H;c++){
+      const y0=MAS_B+c*COURSE, y1=Math.min(MAS_T,y0+COURSE);
+      const rc=2.8+(Math.random()-0.5)*0.018, ph=Math.random()*9, amp=0.004+Math.random()*0.006;
+      const o=pos.length/3;
+      for(let i=0;i<=SEG;i++){
+        const u=i/SEG, a=u*Math.PI*2;
+        const r=rc+amp*Math.sin(a*3+ph)+amp*0.6*Math.sin(a*7+ph*1.7);
+        for(const y of[y0,y1]){ pos.push(hc.x+Math.cos(a)*r, y, hc.z+Math.sin(a)*r); uv.push(u,(y-MAS_B)/MAS_H); }
+      }
+      for(let i=0;i<SEG;i++){ const A=o+i*2; idx.push(A,A+1,A+2, A+1,A+3,A+2); }   // faces out: the material draws BackSide
+    }
+    const geo=new THREE.BufferGeometry();
+    geo.setAttribute("position",new THREE.Float32BufferAttribute(pos,3));
+    geo.setAttribute("uv",new THREE.Float32BufferAttribute(uv,2));
+    geo.setIndex(idx); geo.computeVertexNormals();
+    g.add(new THREE.Mesh(geo,masMat));
   }
   /* ---- the stair ---- */
-  const stepMat=hazed(new THREE.MeshPhongMaterial({map:texCaveRock, bumpMap:texCaveRock,
+  const stepTex=aniso(texCaveRock.clone());
+  const stepMat=hazed(new THREE.MeshPhongMaterial({map:stepTex, bumpMap:stepTex,
     bumpScale:0.05, color:0x6a6e70, emissive:0x070b10, specular:0x181c22, shininess:10}));
   const stair={a0:Math.PI/2, dir:1, rc:RC, rise:STAIR_RISE, steps:STAIR_STEPS,
                n:Math.round(4.5*STAIR_STEPS)};
@@ -2675,7 +2700,7 @@ function buildHole(hc,carpetMat){
     l.position.set(hc.x,y,hc.z); scene.add(l);
     holeLights.push({l,I});
   });
-  for(const t of[secTex,earthTex,masTex,dirtTex,texCaveRock,texSpoil]) renderer.initTexture(t);
+  for(const t of[secTex,earthTex,masTex,masBump,dirtTex,stepTex,texSpoil]) renderer.initTexture(t);
   scene.add(g);
   /* the plug: a carpet-matched disc hiding all of it until the dig */
   const plugGeo=new THREE.CircleGeometry(HOLE_R+0.14,44);
@@ -3781,7 +3806,7 @@ markShared(wainPanelMat,skirtMat,wireMat,ghostMat,corkMat,clockFaceMat,bakeliteM
            staffSignMat,darkWoodMat,doorGlassMat,...pinMats,
            texCork,texGhost,texClockFace,texExitSign,texStaffSign);
 markShared(deskShadeMat,closedCardMat,closedCardMat.map,MOUSE_GEO,BEZEL_GEO,filmBack,filmFront,texStretchFilm);
-markShared(ironMat,rootMat,jutelMat,concreteMat,shaftSilkMat,texShaftMasonry,texSpoil,texSlabSection);
+markShared(ironMat,rootMat,jutelMat,concreteMat,shaftSilkMat,texShaftMasonry,texShaftMasonryBump,texSpoil,texSlabSection);
 markShared(drawerHoleMat,cardMat,wetFloorMat,ropeMat,paperMat,greenGlassMat,pencilMat,LAMP_BASE_GEO,
            texWetFloor,texPaperSheets);
 markShared(texWrapFilm,texTape,texCartPaint,texMannequin,             // the graphics pass's own

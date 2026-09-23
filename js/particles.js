@@ -198,7 +198,14 @@ export function makeDebris(N,carpetTint){
     update(dt,floorAt){
       let dirty=false;
       for(const d of D){
-        if(!d.on||d.rest) continue;
+        if(!d.on) continue;
+        /* a piece at rest re-checks the ground under it: spoil that landed on
+           the carpet over the dig must drop when the floor there opens, not
+           hang where the carpet used to be */
+        if(d.rest){
+          if(floorAt(d.x,d.z)<d.y-d.hs-0.05){ d.rest=false; d.vx=d.vz=0; d.vy=0; }
+          else continue;
+        }
         dirty=true;
         d.vy-=(d.shred?3.4:9.5)*dt;
         if(d.shred){ const k=Math.pow(0.45,dt); d.vx*=k; d.vz*=k; d.vy=Math.max(d.vy,-1.6); }
