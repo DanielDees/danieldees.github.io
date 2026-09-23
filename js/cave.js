@@ -26,7 +26,7 @@ import { addInteractable } from "./props.js";
 import { stairTreadGeo, stairRailMeshes, STAIR } from "./library.js";
 import { die } from "./lifecycle.js";
 import { caveSurfaces, rippleNormals } from "./cavemats.js";
-import { scatterStones, stoneGeo } from "./caverocks.js";
+import { scatterStones, stoneGeo, cullStones } from "./caverocks.js";
 import { initDrips, releaseDrip, updateDrips, initSpores, updateSpores, initRockDust, puffRockDust, updateRockDust,
          initMist, updateMist, initShaftMotes, updateShaftMotes } from "./cavefx.js";
 import { makeClutch, updateClutch, initClutchFire, updateClutchFire, cocoonMaterial, cocoonGeo } from "./clutch.js";
@@ -66,6 +66,7 @@ export const CAVE={
   approachC:null, bridgeC:[],  // the fissure doorstep + bridge cells (rockfall protects these)
   streamCells:[], dripT:2.5,
   waterMat:null, causticMat:null,   // the stream's two drifting layers (surface / bed)
+  stones:null,                 // the loose-stone sector meshes (distance-culled each frame)
   shakeT:0,
 };
 
@@ -751,7 +752,7 @@ markShared(voidMat,texCaveRock,silkFloorMat,boneMat,clothMat,brassMat,
    the maps are thread-shaped now, so the highlight lands on the threads
    themselves; at the old strength every sheet turned into wet glass. */
 const silkMat=t=>new THREE.MeshPhongMaterial({map:t, transparent:true, depthWrite:false,
-  side:THREE.DoubleSide, color:0xc8ccce, emissive:0x141618, specular:0x5c6268, shininess:22});
+  side:THREE.DoubleSide, color:0xc8ccce, emissive:0x1a1d20, specular:0x6a7278, shininess:34});
 const webSheetMats=[silkMat(makeWebSheetTexture(false)),silkMat(makeWebSheetTexture(false))];
 const webTornMat  = silkMat(makeWebSheetTexture(true));
 const webFanMats  =[silkMat(makeCobwebTexture()),silkMat(makeCobwebTexture())];
@@ -805,7 +806,7 @@ function toadstoolGeo(rc,rs,hs,ch,annulus){
     B.push(fv(F_CAP,0.08+t*0.9));
   }
   P.push([0.001,hs+0.088+ch*1.01]); B.push(fv(F_CAP,1));
-  return latheFungus(P,B,18);
+  return latheFungus(P,B,rc<0.1? 10 : rc<0.18? 14 : 18);
 }
 /* a BRACKET: a half shelf grown out of the rock — thick where it meets the
    wall, thinning to a rounded margin, its top ringed with growth zones and
@@ -1075,7 +1076,7 @@ function stalagmiteGeo(r,h,lean=0.08){
     if(t>1-dome){ const u=(t-(1-dome))/dome; rad*=Math.sqrt(Math.max(0,1-u*u)); }
     pts.push(V2(rad,t*h));
   }
-  return dripNoise(new THREE.LatheGeometry(pts,14),Math.random()*10,lean,1);
+  return dripNoise(new THREE.LatheGeometry(pts,r<0.12? 8 : r<0.3? 11 : 14),Math.random()*10,lean,1);
 }
 /* a stalactite: flared at the vault, a carrot taper to a fine tip that
    ends in the drop it is growing from */
@@ -1089,7 +1090,7 @@ function stalactiteGeo(r,h,lean=0.06){
     if(i===N) rad=0.001;
     pts.push(V2(rad,t*h));
   }
-  const g=dripNoise(new THREE.LatheGeometry(pts,12),Math.random()*10,lean,0.8);
+  const g=dripNoise(new THREE.LatheGeometry(pts,r<0.1? 7 : r<0.25? 9 : 12),Math.random()*10,lean,0.8);
   g.rotateX(Math.PI);
   return g;
 }
@@ -2728,6 +2729,7 @@ export function buildCave(){
   {
     const st=scatterStones(scene,rockMat,{CW,CH,CELL,codeAt,cellToWorld3,worldToCell3,floorYAt,clearOf});
     for(const o of st.obstacles) CAVE.obstacles.push(o);
+    CAVE.stones=st.meshes;
   }
   /* ---- rubble piles over the sealed tunnels (and the fissure choke) ---- */
   /* a sealed tunnel is a chain of heaps; its talus keeps you off it */
@@ -3286,6 +3288,7 @@ export function updateCave(dt){
     if(!releaseDrip()&&AU.cave&&AU.cave.drip) AU.cave.drip();
   }
   updateDrips(dt);
+  if(CAVE.stones) cullStones(CAVE.stones,camera);
   updateSpores(dt,camera,STATE.lanternOn? 0.55+0.45*STATE.lanternCharge : 0);
   updateRockDust(dt,camera);
   updateMist(dt,camera);

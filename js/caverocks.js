@@ -117,7 +117,7 @@ export function scatterStones(scene,mat,q){
     const clumps=[rnd(),rnd()];
     const near=()=>{ const c=clumps[Math.random()<0.5?0:1], r=Math.pow(Math.random(),1.6)*1.3, a=Math.random()*7;
       return [c[0]+Math.cos(a)*r, c[1]+Math.sin(a)*r]; };
-    const nPeb=scree? 170 : 16+Math.floor(Math.random()*18);
+    const nPeb=scree? 150 : 9+Math.floor(Math.random()*11);
     for(let i=0;i<nPeb;i++){
       const [x,z]=walls.length&&Math.random()<0.35? foot() : (scree? rnd() : near());
       const cc=q.worldToCell3(x,z);
@@ -148,6 +148,9 @@ export function scatterStones(scene,mat,q){
       const geo=S[kind][Math.floor(Math.random()*S[kind].length)].clone();
       geo.boundingSphere=new THREE.Sphere(new THREE.Vector3(cxw,0,czw),SECTOR*q.CELL*0.75+2);
       const m=new THREE.InstancedMesh(geo,mat,arr.length);
+      /* a pebble is invisible long before the fog takes it: past this range
+         cullStones() stops drawing the sector (a block stays for longer) */
+      m.userData.cull={x:cxw, z:czw, r:SECTOR*q.CELL*0.71, range:kind==="block"? 58 : kind==="chip"? 36 : 28};
       arr.forEach((a,k)=>{
         _o.position.set(a.x,a.y,a.z); _o.rotation.set(a.rx,a.ry,a.rz);
         _o.scale.set(a.s*a.sx,a.s,a.s*a.sz); _o.updateMatrix(); m.setMatrixAt(k,_o.matrix);
@@ -157,4 +160,9 @@ export function scatterStones(scene,mat,q){
     }
   }
   return {meshes, obstacles:added};
+}
+/* per frame: sectors of small stone far from the eye are not drawn */
+export function cullStones(meshes,cam){
+  for(const m of meshes){ const c=m.userData.cull;
+    m.visible=Math.hypot(c.x-cam.position.x,c.z-cam.position.z)-c.r<c.range; }
 }

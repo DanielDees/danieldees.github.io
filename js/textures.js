@@ -3270,6 +3270,21 @@ function silkThread(g,x0,y0,x1,y1,a,lw,waver){
   }
   g.stroke();
 }
+/* DEW: beads of condensation strung along a thread — a short chain of
+   bright pinpoints with a dark rim, the thing that makes silk glitter when a
+   lamp swings past. Drawn in whatever space the canvas is scaled to. */
+function silkDew(g,w,h,chains){
+  for(let i=0;i<chains;i++){
+    const x=Math.random()*w, y=Math.random()*h, a=Math.random()*Math.PI*2, n=3+Math.floor(Math.random()*7);
+    const gap=2.2+Math.random()*3.5;
+    for(let k=0;k<n;k++){
+      const bx=x+Math.cos(a)*gap*k+(Math.random()-0.5)*0.6, by=y+Math.sin(a)*gap*k+(Math.random()-0.5)*0.6;
+      const r=0.35+Math.random()*0.75;
+      g.fillStyle=`rgba(40,46,48,${0.25+Math.random()*0.2})`; g.beginPath(); g.arc(bx,by,r*1.35,0,7); g.fill();
+      g.fillStyle=`rgba(236,244,246,${0.55+Math.random()*0.4})`; g.beginPath(); g.arc(bx,by,r,0,7); g.fill();
+    }
+  }
+}
 /* fade the border so a sheet dissolves instead of ending on the quad's edge */
 function silkFeather(g,w,h,inset){
   g.globalCompositeOperation="destination-out";
@@ -3289,8 +3304,10 @@ function silkFeather(g,w,h,inset){
    where the weave doubled back on itself. torn=true punches the big ragged
    pass-through something left when it went through (the squeeze veils). */
 export function makeWebSheetTexture(torn){
-  return silkClamp(makeCanvas(256,256,(g,w,h)=>{
-    g.clearRect(0,0,w,h);
+  /* 512 drawn in 256 units: the same web, twice as crisp */
+  return silkClamp(makeCanvas(512,512,(g,W,H)=>{
+    g.clearRect(0,0,W,H); g.scale(2,2);
+    const w=256, h=256;
     g.lineCap="round";
     /* 1. anchor lines: long, taut, spanning the sheet in two loose families */
     for(let L=0;L<2;L++){
@@ -3346,6 +3363,7 @@ export function makeWebSheetTexture(torn){
                     hy+Math.sin(a)*(r0-18-Math.random()*16)+(Math.random()-0.5)*12,
                  0.24+Math.random()*0.2, 0.6, 3);
     }
+    silkDew(g,w,h,torn? 8:16);
     silkFeather(g,w,h,26);
   }));
 }
@@ -3353,8 +3371,9 @@ export function makeWebSheetTexture(torn){
    dropping into sagging capture rows — the geometry pins that edge into a
    wall/ceiling junction, so the fan genuinely hangs off it. */
 export function makeCobwebTexture(){
-  return silkClamp(makeCanvas(256,256,(g,w,h)=>{
-    g.clearRect(0,0,w,h);
+  return silkClamp(makeCanvas(512,512,(g,W,H)=>{
+    g.clearRect(0,0,W,H); g.scale(2,2);
+    const w=256, h=256;
     g.lineCap="round";
     const cx=w*(0.35+Math.random()*0.3), cy=0;
     const n=11+Math.floor(Math.random()*6), angs=[];
@@ -3389,6 +3408,7 @@ export function makeCobwebTexture(){
       g.fillStyle=`rgba(190,193,190,${0.12+Math.random()*0.16})`;
       g.beginPath();g.arc(cx+(Math.random()-0.5)*w*0.8, Math.random()*h*0.75, 0.6+Math.random()*1.5,0,7);g.fill();
     }
+    silkDew(g,w,h*0.8,10);
     silkFeather(g,w,h,20);
   }));
 }
