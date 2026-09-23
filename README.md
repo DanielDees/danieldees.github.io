@@ -92,7 +92,7 @@ stay locked, so the guide never spoils what's coming.
 
 ## Changelog
 
-### v3.3.0 (2026-09-22)
+### v3.3.0 (2026-09-23)
 A graphics and presentation pass over THE END and THE NEST, plus a rewrite of the
 game's interface text. No AI, generation or objective changes.
 
