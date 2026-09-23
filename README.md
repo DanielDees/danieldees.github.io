@@ -9,8 +9,8 @@ one way down from each.
 
 Vanilla JS ES modules on three.js r128 from a CDN: **no build step, no package
 manager, no dependencies to install, and not a single image or audio file** —
-every texture is drawn at runtime into a 2D canvas and every sound is synthesized
-in the Web Audio API. Vibe-coded with Claude Fable 5 / Claude Mythos 5.
+every texture is drawn at runtime, into a 2D canvas or by a shader on the GPU, and
+every sound is synthesized in the Web Audio API. Vibe-coded with Claude Fable 5 / Claude Mythos 5.
 Per-level lore lives in [lore/](lore/).
 
 ## Run it locally
@@ -92,9 +92,73 @@ stay locked, so the guide never spoils what's coming.
 
 ## Changelog
 
-### v3.3.0 (2026-09-22)
-A graphics and presentation pass over THE END, plus a rewrite of the game's
-interface text. No AI, generation or objective changes.
+### v3.3.0 (2026-09-23)
+A graphics and presentation pass over THE END and THE NEST, plus a rewrite of the
+game's interface text. No AI, generation or objective changes.
+
+**THE NEST**
+- **Stone that looks like stone.** The cave's walls, vault, floor and dripstone
+  are generated on the GPU when you arrive: limestone with scalloped hollows, joints,
+  calcite veins, iron and manganese staining, pale flowstone and dark wet seeps; a
+  silt floor with ripple marks, drying cracks, bedded gravel and rimstone pools. All
+  of it is mapped by world position, so nothing stretches, and a wall at arm's
+  length has real relief instead of a grid of texels. Wet rock, flowstone and
+  puddles glisten under the lantern; dry rock doesn't. The walls and vault are one
+  smooth skin rather than a quilt of flat panels.
+- **Loose stone.** Pebbles gather in drifts, cobbles and fallen blocks pile at the
+  foot of the walls, and the scree is actually scree.
+- **Dripstone and water.** Stalagmites, stalactites and columns are grown ring by
+  ring the way water builds them: lumpy and never quite straight, with flow lobes,
+  runnels, popcorn where the drip splashes, grey calcite streaked down its length
+  and banded across it, and
+  their roots sunk into the floor or the vault instead of sitting on it. They come
+  as candles, cones, stacked plates and knobbly totems. Beads of water hang on the tips, and the drip you hear is
+  a drop you can see: it falls from a stalactite near you, splashes a ripple on the
+  floor or the stream, and the plink comes from where it landed. The stream ripples,
+  so the lantern breaks on it into glints.
+- **The fungus.** Wall brackets are half shelves grown out of the rock, with growth
+  rings on top and glowing pores underneath (they were flat discs). Toadstools are
+  matte with scaly caps and glowing gills, some with a torn veil on the stem; roots
+  are thin dark cords with a thread of light. Every colony near you sheds slowly
+  rising spores in its own colour, and they dim with it after a nest burns.
+- **The clutches.** Each nest is a heap of silk — dirty where it drags on the ground,
+  layered in loose sheets of thread, with the spent husks of the last brood sunk
+  into its foot and a few wrapped prey bundles — under a low heap of eggs lit from
+  inside, veined, with the curled shadow of what's in them. Loose silk spreads over
+  the whole nest floor, thick by the clutch and thinning to wisps (it was a flat grey
+  sheet cut off square at the edges of the grid). Burning one is a real fire: licking
+  flames, embers climbing out of it and smoke rolling off the top. The silk burns
+  away to an ash-grey heap, the eggs shrivel with their veins glowing orange for a
+  while, and a scorch mark stays on the floor.
+- **Webs you see by lantern-light.** Orb webs are strung across corners and between
+  formations, cobweb tangles hang among the stalactites, and a tent of threads rises
+  over every clutch. They are real threads: nearly invisible in the dark, they flare
+  where the lantern catches them, the capture spiral glitters with beads of glue, and
+  each web billows a little in the draught.
+- **The chasm** falls away as cliffs into mist and a cold glow far below, and the
+  bridge is a natural stone arch with broken rock along its edges (it was a flat
+  plank over a sheer blade of wall).
+- **Collapses** are heaps of rubble filling the tunnel with a slope of broken blocks
+  spilling out, and a dust cloud rolls out when one comes down. A cleared collapse
+  leaves its rubble on the floor. Cocoons are wrapped bodies in crossing silk with a
+  fuzz of loose thread over them (they were glossy, and read as brass).
+- **The lantern in your hand.** The crank lantern is a real storm lantern — fuel drum,
+  glass globe on a wire guard, brass cap and bail, the crank on the side — lying by
+  the corpse and then held in your hand at the bottom of the screen: it swings as you
+  walk, lags when you turn, its flame breathes, and the crank turns while you wind
+  it. Its light now comes from where you're holding it. Dust hangs in its glow.
+- **The corpse and the journal.** The journal lies open on handwritten pages with a
+  sketch of the way down; the skull has a brow, cheekbones and teeth; the body is
+  half bound in silk.
+- **The hatchlings** look like their mother: a proper abdomen with bristles, a
+  mapped carapace, jointed legs darkening to the claw — in her colouring, bleached
+  pale.
+- **The way in and the way out.** The shaft you arrive through wears the library
+  shaft's masonry. The opened chimney is a rock bore climbed on slabs set into the
+  wall, with a shaft of pale light and dust turning in it.
+- **Webs** are crisper, with beads of dew that catch the lantern.
+
+**THE END**
 - **The library draws in a tenth of the calls.** The room was ~2,400 separate
   meshes — about a thousand of them books at two draw calls each — so the library
   issued 1,300–3,300 draw calls a frame. Every static opaque mesh is now regrouped
@@ -151,6 +215,8 @@ interface text. No AI, generation or objective changes.
   the hole. The dust is a new particle system: one draw call, lit from above, fading
   into the floor instead of cutting through it, and turning from carpet grey to earth
   as the dig gets through the floor.
+
+**Everywhere**
 - **Plainer interface text.** The title screen, How to Play (was "Field Notes"),
   Options, pause, death and win screens, objectives, prompts and level titles are
   rewritten in plain language, and Options no longer carries a paragraph under every

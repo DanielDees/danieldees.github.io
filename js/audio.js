@@ -1078,14 +1078,15 @@ export function startCaveAmbience(){
     src.start();
     cave.streamGain=g;
   }
-  /* one drip: a bright plink and its two fading answers from elsewhere */
-  cave.drip=()=>{
+  /* one drip: a bright plink and its two fading answers from elsewhere.
+     A drop you can see passes where it landed (pan) and how near (vol). */
+  cave.drip=(pan=rand(-0.9,0.9),vol=1)=>{
     if(!STATE.playing||STATE.paused||STATE.level!==2) return;
-    const tt=C.currentTime, pan=rand(-0.9,0.9), f0=rand(1700,3400);
+    const tt=C.currentTime, f0=rand(1700,3400);
     [[0,1,pan],[rand(0.14,0.22),0.4,-pan*0.6],[rand(0.3,0.45),0.15,pan*0.3]].forEach(([at,v,p])=>{
       const o=C.createOscillator();o.type="sine";o.frequency.setValueAtTime(f0,tt+at);
       o.frequency.exponentialRampToValueAtTime(f0*0.6,tt+at+0.07);
-      const g=C.createGain();env(g,tt+at,0.002,0.05*v,0.24);
+      const g=C.createGain();env(g,tt+at,0.002,0.05*v*vol,0.24);
       const pn=C.createStereoPanner?C.createStereoPanner():null;
       o.connect(g);
       if(pn){pn.pan.value=p;g.connect(pn);pn.connect(AU.sfx);}else g.connect(AU.sfx);

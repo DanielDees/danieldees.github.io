@@ -151,17 +151,20 @@ export function clearLevelScene(){
    (default true) recomputes every static object's world matrix each frame.
    mergeStatic collapses many identical-material static meshes into one; freeze
    stops their per-frame matrix work. */
-function concatGeos(geos){
+export function concatGeos(geos){
   let vc=0, ic=0;
   /* extrusions and lathes arrive non-indexed; they index themselves in order */
   for(const g of geos){ vc+=g.attributes.position.count; ic+=g.index? g.index.count : g.attributes.position.count; }
   const pos=new Float32Array(vc*3), nor=new Float32Array(vc*3), uv=new Float32Array(vc*2);
   const idx=(vc>65535? new Uint32Array(ic):new Uint16Array(ic));
+  /* vertex colour rides along when any part has it; the parts without it are white */
+  const col=geos.some(g=>g.attributes.color)? new Float32Array(vc*3).fill(1) : null;
   let vo=0, io=0;
   for(const g of geos){
     pos.set(g.attributes.position.array, vo*3);
     nor.set(g.attributes.normal.array, vo*3);
     uv.set(g.attributes.uv.array, vo*2);
+    if(col&&g.attributes.color&&g.attributes.color.itemSize===3) col.set(g.attributes.color.array, vo*3);
     const n=g.attributes.position.count;
     if(g.index){ const gi=g.index.array; for(let i=0;i<gi.length;i++) idx[io+i]=gi[i]+vo; io+=gi.length; }
     else { for(let i=0;i<n;i++) idx[io+i]=vo+i; io+=n; }
@@ -171,6 +174,7 @@ function concatGeos(geos){
   geo.setAttribute("position",new THREE.BufferAttribute(pos,3));
   geo.setAttribute("normal",new THREE.BufferAttribute(nor,3));
   geo.setAttribute("uv",new THREE.BufferAttribute(uv,2));
+  if(col) geo.setAttribute("color",new THREE.BufferAttribute(col,3));
   geo.setIndex(new THREE.BufferAttribute(idx,1));
   return geo;
 }

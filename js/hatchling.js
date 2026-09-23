@@ -12,11 +12,27 @@ import { CAVE, cellAt3, hatchBlocked, worldToCell3, cellToWorld3, surfaceNoiseGa
          floorYAt } from "./cave.js";
 import { inBeam } from "./lantern.js";
 import { AU, panTo, sfxHatchTap, startLatchScreech } from "./audio.js";
+import { texSpiderAbd, texSpiderCarapace, texSpiderLimb, makeCanvas } from "./textures.js";
 
 export const HATCH=[];
-const paleMat=new THREE.MeshPhongMaterial({color:0xcfc4b0, specular:0x3a362c, shininess:20});
+/* pale, not white: their mother's chitin maps under a bone-white tint, so
+   the markings and the pores of her body are there, washed out; a waxy
+   sheen, since they are new. The legs darken toward the tips in vertex
+   colour, the way hers do. */
+/* her maps are near-black; theirs are the same drawing screened up to bone,
+   so the pattern survives the bleaching instead of being tinted into mud */
+const bleach=(src,lift)=>{ const im=src.image;
+  const t=makeCanvas(im.width,im.height,(g,w,h)=>{ g.drawImage(im,0,0);
+    g.globalCompositeOperation="screen"; g.fillStyle=lift; g.fillRect(0,0,w,h); });
+  t.wrapS=src.wrapS; t.wrapT=src.wrapT; return t; };
+const paleMat=new THREE.MeshPhongMaterial({map:bleach(texSpiderAbd,"rgb(168,158,140)"), color:0xd6ccb8,
+  specular:0x2e2a24, shininess:48});
+const paleCar=new THREE.MeshPhongMaterial({map:bleach(texSpiderCarapace,"rgb(160,150,132)"), color:0xcac0aa,
+  specular:0x2a261e, shininess:40});
 const paleDark=new THREE.MeshPhongMaterial({color:0x9a9080, specular:0x2a261e, shininess:14});
-markShared(paleMat,paleDark);
+const paleLeg=new THREE.MeshPhongMaterial({map:bleach(texSpiderLimb,"rgb(160,150,132)"), color:0xcfc4ae,
+  specular:0x2a261e, shininess:34, vertexColors:true});
+markShared(paleMat,paleCar,paleDark,paleLeg,paleMat.map,paleCar.map,paleLeg.map);
 
 const BODY_Y=0.19;
 /* A spider leg is a KNEE, not a stick: the femur rises out of the hip, the
@@ -31,12 +47,19 @@ const KNEE_H=Math.cos(FEM_A)*FEM_L, KNEE_V=Math.sin(FEM_A)*FEM_L;
 const TIB_L=0.32, TIB_A=-Math.asin(Math.min(1,(BODY_Y+KNEE_V-0.017)/TIB_L));
 function hatchLegGeo(){
   const L=FEM_L+TIB_L;
-  const g=new THREE.CylinderGeometry(0.0125,0.005,L,5,9);
-  const pos=g.attributes.position;
+  const g=new THREE.CylinderGeometry(1,1,L,6,18);
+  const pos=g.attributes.position, col=[];
   const d1=[Math.cos(FEM_A),Math.sin(FEM_A)], d2=[Math.cos(TIB_A),Math.sin(TIB_A)];
+  /* the section: thick at the hip, a swelling at the knee, a fine claw */
+  const rad=s=>{ const k=s/L;
+    let r=0.0135-0.004*k-0.0065*Math.pow(k,2.5);
+    r+=0.0035*Math.exp(-Math.pow((s-FEM_L)/0.018,2));
+    return Math.max(0.0018,r); };
   for(let i=0;i<pos.count;i++){
-    const x=pos.getX(i), y=pos.getY(i)+L/2, z=pos.getZ(i);
-    const s=clamp(y,0,L);
+    const x0=pos.getX(i), y=pos.getY(i)+L/2, z0=pos.getZ(i);
+    const s=clamp(y,0,L), r=rad(s), x=x0*r, z=z0*r;
+    const k=s/L, dk=0.95-0.5*Math.pow(k,1.6)-0.12*Math.exp(-Math.pow((s-FEM_L)/0.02,2));
+    col.push(dk,dk*0.97,dk*0.93);
     /* walk the polyline: out along the femur, then down the tibia */
     let h,v,d;
     if(s<=FEM_L){ h=d1[0]*s; v=d1[1]*s; d=d1; }
@@ -45,6 +68,8 @@ function hatchLegGeo(){
        its section through the bend instead of pinching at the knee */
     pos.setXYZ(i, h+x*d[1], v-x*d[0], z);
   }
+  g.setAttribute("color",new THREE.Float32BufferAttribute(col,3));
+  const uv=g.attributes.uv; for(let i=0;i<uv.count;i++) uv.setY(i,uv.getY(i)*0.35);  // 0.5m of leg, not 1.5
   g.computeVertexNormals();
   return g;
 }
@@ -131,11 +156,42 @@ function buildFace(){
 }
 const [EYE_GEO,FACE_GEO]=buildFace();
 
+/* the abdomen is a LATHE along the body — narrow at the waist, full behind
+   it, drawn to the spinnerets — not a sphere; mapped front-to-rear with u=0.5
+   on the back, the contract the matriarch's maps are drawn to. A coat of
+   short bristles leans back along it. */
+function hatchAbdGeo(){
+  const pr=[[0.0,0.028],[0.03,0.07],[0.08,0.112],[0.14,0.13],[0.20,0.126],[0.26,0.10],[0.30,0.064],
+            [0.325,0.030],[0.335,0.012],[0.338,0.001]];
+  const g=new THREE.LatheGeometry(pr.map(([y,r])=>new THREE.Vector2(Math.max(r,0.001),y)),18,Math.PI);
+  g.rotateX(-Math.PI/2); g.scale(1,0.86,1);
+  g.translate(0,BODY_Y+0.03,-0.02);
+  const hair=[];
+  const P=g.attributes.position, N=g.attributes.normal;
+  g.computeVertexNormals();
+  for(let i=0;i<46;i++){
+    const k=Math.floor(Math.random()*P.count);
+    const n=new THREE.Vector3(N.getX(k),N.getY(k),N.getZ(k));
+    if(n.y<-0.3) continue;                          // the belly is bare
+    const p=new THREE.Vector3(P.getX(k),P.getY(k),P.getZ(k));
+    const dir=n.clone().add(new THREE.Vector3(0,0,-0.8)).normalize();
+    const len=0.012+Math.random()*0.014;
+    const sp=new THREE.Mesh(new THREE.CylinderGeometry(0.0004,0.0016,len,3));
+    sp.geometry.translate(0,len/2,0);
+    sp.position.copy(p); sp.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),dir);
+    hair.push(sp);
+  }
+  const hg=mergeStatic(hair,paleMat).geometry;
+  for(const h of hair) h.geometry.dispose();
+  return [g,hg];
+}
+const [ABD_GEO,ABD_HAIR]=hatchAbdGeo();
+const CEPH_GEO=new THREE.SphereGeometry(0.09,14,10).rotateX(-Math.PI/2);
+markShared(ABD_GEO,ABD_HAIR,CEPH_GEO);
 function makeHatchMesh(){
   const g=new THREE.Group();
-  const abd=new THREE.Mesh(new THREE.SphereGeometry(0.13,10,8),paleMat);
-  abd.scale.set(1,0.9,1.3); abd.position.set(0,BODY_Y+0.02,-0.13); g.add(abd);
-  const ceph=new THREE.Mesh(new THREE.SphereGeometry(0.09,9,7),paleMat);
+  g.add(new THREE.Mesh(ABD_GEO,paleMat), new THREE.Mesh(ABD_HAIR,paleMat));
+  const ceph=new THREE.Mesh(CEPH_GEO,paleCar);
   ceph.scale.set(1,0.8,1); ceph.position.set(0,BODY_Y,0.08); g.add(ceph);
   g.add(new THREE.Mesh(EYE_GEO,eyeMat));
   g.add(new THREE.Mesh(FACE_GEO,paleDark));
@@ -148,7 +204,7 @@ function makeHatchMesh(){
     hip.rotation.y=-phi;
     /* the pose lives in the geometry now; fem only lifts the foot clear */
     const fem=new THREE.Group(); hip.add(fem);
-    fem.add(new THREE.Mesh(LEG_GEO,paleDark));
+    fem.add(new THREE.Mesh(LEG_GEO,paleLeg));
     g.add(hip);
     legs.push({hip,fem,basePhi:phi,phase:(i%2===0)===(side===0)?0:Math.PI});
   }
