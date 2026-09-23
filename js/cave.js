@@ -27,7 +27,8 @@ import { stairTreadGeo, stairRailMeshes, STAIR } from "./library.js";
 import { die } from "./lifecycle.js";
 import { caveSurfaces } from "./cavemats.js";
 import { scatterStones, stoneGeo } from "./caverocks.js";
-import { initDrips, releaseDrip, updateDrips, initSpores, updateSpores, initRockDust, puffRockDust, updateRockDust } from "./cavefx.js";
+import { initDrips, releaseDrip, updateDrips, initSpores, updateSpores, initRockDust, puffRockDust, updateRockDust,
+         initMist, updateMist } from "./cavefx.js";
 import { makeClutch, updateClutch, initClutchFire, updateClutchFire, cocoonMaterial, cocoonGeo } from "./clutch.js";
 import { renderObjectives, toast } from "./ui.js";
 import { AU, sfxRockfall, sfxIgnite, startClutchFire, panTo } from "./audio.js";
@@ -1272,6 +1273,89 @@ function strandMesh(ax,ay,az,bx,by,bz,wdt){
   return m;
 }
 
+/* ---------------- the chasm and its bridge ---------------- */
+/* the cliff rows, finer near the lip where you can see them */
+const CHASM_Y=[0,-0.35,-0.9,-1.7,-2.8,-4.2,-6,-8.2,-10.8,-13.8,-17];
+/* the cliffs' relief: none at the lip (it welds to the floor), swelling
+   into overhangs and bays as the rock falls away */
+function chasmField(x,y,z){
+  /* kept LOW-frequency: a face whose neighbouring vertices swing further
+     apart than their spacing folds over itself, and a fold in a lit cliff is
+     a black blade hanging in the air */
+  const a=Math.min(1,-y/0.9)*Math.min(0.75,0.2-y*0.07)*Math.min(1,(y+17)/3);   // none at the lip or the pit floor
+  return {
+    x:a*(Math.sin(x*0.61+y*0.23+z*0.37)*0.7+Math.sin(x*1.3-y*0.4+z*1.1)*0.3),
+    z:a*(Math.sin(z*0.57-y*0.27+x*0.29+1.3)*0.7+Math.sin(z*1.2+y*0.45-x*1.0+0.7)*0.3),
+  };
+}
+/* one cell of the chasm (or of the air under the bridge): the pit floor far
+   below, and a cliff on every side that is not more chasm */
+function chasmCell(acc,x,y,p){
+  const E=CELL/2, yB=CHASM_Y[CHASM_Y.length-1];
+  acc.quad([p.x-E,yB,p.z+E],[p.x+E,yB,p.z+E],[p.x+E,yB,p.z-E],[p.x-E,yB,p.z-E],
+    [0,1,0],[[0,1],[1,1],[1,0],[0,0]]);
+  for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){
+    const nt=codeAt(x+dx,y+dy);
+    if(nt===5||nt===6) continue;
+    const rx=-dy, rz=dx, COLS=3;
+    const V=CHASM_Y.map(yy=>{ const row=[];
+      for(let i=0;i<=COLS;i++){
+        const tt=i/COLS*2-1, px=p.x+dx*E+rx*E*tt, pz=p.z+dy*E+rz*E*tt, F=chasmField(px,yy,pz);
+        row.push([px+F.x,yy,pz+F.z]);
+      }
+      return row; });
+    for(let r=0;r<V.length-1;r++)for(let i=0;i<COLS;i++){
+      const a=V[r][i], b=V[r][i+1], c=V[r+1][i+1], d=V[r+1][i];
+      acc.triF(a,b,c,[[0,0],[1,0],[1,1]],[-dx,0,-dy]);
+      acc.triF(a,c,d,[[0,0],[1,1],[0,1]],[-dx,0,-dy]);
+    }
+  }
+}
+/* The bridge was a floor with nothing under it — and from the side the pit
+   walls ran straight down either flank, so it was a sheer blade 14m deep.
+   It is a natural ARCH now: flanks that drop to an underside thin at the
+   middle and thickening into the cliffs it springs from. Its top edges are
+   the bridge floor's own points (locked at 0), so it welds. */
+function buildBridge(acc){
+  const cells=[]; for(let y=0;y<CH;y++)for(let x=0;x<CW;x++) if(grid3[y][x]===6) cells.push({x,y});
+  if(!cells.length) return;
+  const E=CELL/2, xc=cellToWorld3(cells[0].x,cells[0].y).x;
+  const zN=Math.min(...cells.map(c=>cellToWorld3(c.x,c.y).z))-E, zS=Math.max(...cells.map(c=>cellToWorld3(c.x,c.y).z))+E;
+  const zc=(zN+zS)/2, half=(zS-zN)/2;
+  /* the flanks and the underside run 0.6m on into the cliffs at each end, so
+     no displacement can pull them short of the rock they spring from */
+  const zA=zN-0.6, zB=zS+0.6;
+  const under=z=>-(1.25+8.5*Math.pow(Math.min(1.15,Math.abs(z-zc)/half),2.6));
+  const NZ=cells.length*3, NR=7, NX=6;
+  const flankPt=(sx,z,k)=>{                       // k: 0 at the deck edge, 1 at the underside
+    const yy=under(z)*k, F=chasmField(xc+sx*E,yy,z);
+    return [xc+sx*E+F.x*0.7+sx*0.25*Math.sin(k*Math.PI)*(1-Math.abs(z-zc)/half*0.5),yy,z+F.z*0.4];
+  };
+  for(const sx of[-1,1]){
+    for(let j=0;j<NZ;j++)for(let r=0;r<NR;r++){
+      const z0=zA+j/NZ*(zB-zA), z1=zA+(j+1)/NZ*(zB-zA), k0=r/NR, k1=(r+1)/NR;
+      const a=flankPt(sx,z0,k0), b=flankPt(sx,z1,k0), c=flankPt(sx,z1,k1), d=flankPt(sx,z0,k1);
+      acc.triF(a,b,c,[[0,0],[1,0],[1,1]],[sx,0,0]); acc.triF(a,c,d,[[0,0],[1,1],[0,1]],[sx,0,0]);
+    }
+  }
+  const underPt=(i,z)=>{ const L=flankPt(-1,z,1), R=flankPt(1,z,1), t=i/NX;
+    const x=L[0]+(R[0]-L[0])*t;
+    return [x, under(z)-0.35*Math.sin(t*Math.PI)*(1-0.6*Math.abs(z-zc)/half)+0.12*Math.sin(x*3.1+z*2.3), z]; };
+  for(let j=0;j<NZ;j++)for(let i=0;i<NX;i++){
+    const z0=zA+j/NZ*(zB-zA), z1=zA+(j+1)/NZ*(zB-zA);
+    const a=underPt(i,z0), b=underPt(i+1,z0), c=underPt(i+1,z1), d=underPt(i,z1);
+    acc.triF(a,b,c,[[0,0],[1,0],[1,1]],[0,-1,0]); acc.triF(a,c,d,[[0,0],[1,1],[0,1]],[0,-1,0]);
+  }
+  /* broken rock along both edges of the deck, where the lips were */
+  const S=rubbleShapes(), blocks=[];
+  for(const sx of[-1,1]) for(let i=0;i<22;i++){
+    const z=rand(zN+0.3,zS-0.3), x=xc+sx*(E-rand(0.08,0.45)), s=rand(0.12,0.34);
+    const m=new THREE.Mesh(S[Math.floor(Math.random()*S.length)]);
+    m.position.set(x,s*0.35,z); m.scale.set(s*rand(0.9,1.4),s,s*rand(0.9,1.5));
+    m.rotation.set(rand(-0.4,0.4),Math.random()*7,rand(-0.4,0.4)); blocks.push(m);
+  }
+  scene.add(mergeStatic(blocks,rockMat));
+}
 /* The rock's relief lives in its maps, and a flat normal per facet only drew
    the tessellation on top of it: a wall read as panels. Every vertex here is
    a function of world position alone, so the corners two facets share are
@@ -1321,6 +1405,12 @@ class QuadAcc{
   triNC(p1,p2,p3,n1,n2,n3,uvs,cols){
     this.triN(p1,p2,p3,n1,n2,n3,uvs);
     for(const c of cols) this.col.push(c[0],c[1],c[2]);
+  }
+  /* tri(), wound so its face normal points along `want` */
+  triF(p1,p2,p3,uvs,want){
+    const ux=p2[0]-p1[0],uy=p2[1]-p1[1],uz=p2[2]-p1[2], vx=p3[0]-p1[0],vy=p3[1]-p1[1],vz=p3[2]-p1[2];
+    const d=(uy*vz-uz*vy)*want[0]+(uz*vx-ux*vz)*want[1]+(ux*vy-uy*vx)*want[2];
+    if(d<0) this.tri(p1,p3,p2,[uvs[0],uvs[2],uvs[1]]); else this.tri(p1,p2,p3,uvs);
   }
   /* one triangle with its own computed face normal — the vault's facets */
   tri(p1,p2,p3,uvs){
@@ -1533,20 +1623,12 @@ export function buildCave(){
     if(t===1) continue;
     const p=cellToWorld3(x,y);
     if(t===5){
-      /* the chasm: a floor far below, walls falling to it (the rim floor
-         corners are locked to 0, so the lip meets the ground exactly) */
-      const u0=(p.x-E)/UVm, u1=(p.x+E)/UVm, v0=(p.z-E)/UVm, v1=(p.z+E)/UVm;
-      pAcc.quad([p.x-E,-14,p.z+E],[p.x+E,-14,p.z+E],[p.x+E,-14,p.z-E],[p.x-E,-14,p.z-E],
-        [0,1,0],[[u0,v1],[u1,v1],[u1,v0],[u0,v0]]);
-      for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){
-        const nt=codeAt(x+dx,y+dy);
-        if(nt===5) continue;
-        const sx=p.x+dx*E, sz=p.z+dy*E;
-        const ax=dy!==0? p.x-E : sx, az=dx!==0? p.z-E : sz;
-        const bx=dy!==0? p.x+E : sx, bz=dx!==0? p.z+E : sz;
-        pAcc.quad([ax,0,az],[bx,0,bz],[bx,-14,bz],[ax,-14,az],
-          [-dx,0,-dy],[[0,0],[1,0],[1,3.5],[0,3.5]]);
-      }
+      /* the chasm: CLIFFS, not four flat panels. Each face is a grid whose
+         top row is the lip's own floor points (locked at 0, so it welds) and
+         whose relief grows with depth; every vertex is a function of world
+         position, so neighbouring faces meet at their corners. The bridge's
+         flanks are built with the bridge. */
+      chasmCell(pAcc,x,y,p);
     } else {
       /* the floor: 3×3 sub-quads riding floorYAt (fine enough that the mesh
          and the exact ground function never visibly disagree), SMOOTH-shaded
@@ -1555,6 +1637,8 @@ export function buildCave(){
          A squeeze goes to 4×4 to match ITS vault and wall count — at a fixed
          3 the wall's bottom edge and the floor's edge sampled the same line
          at different x/z and split open along the crawl. */
+      /* under the bridge the chasm goes on: its cliffs and its floor too */
+      if(t===6) chasmCell(pAcc,x,y,p);
       const S=t===2? 4:3;
       for(let j=0;j<S;j++)for(let i=0;i<S;i++){
         const x0=p.x-E+i*CELL/S, x1=x0+CELL/S;
@@ -1566,14 +1650,6 @@ export function buildCave(){
                   [uv(x0,z1),uv(x1,z1),uv(x1,z0)]);
         fAcc.triN(q(x0,z1),q(x1,z0),q(x0,z0), nq(x0,z1),nq(x1,z0),nq(x0,z0),
                   [uv(x0,z1),uv(x1,z0),uv(x0,z0)]);
-      }
-      if(t===6){
-        /* low stone lips so the bridge reads as a bridge */
-        for(const sx of[-1,1]){
-          const lip=p.x+sx*(E-0.16);
-          wAcc.quad([lip,0,p.z-E],[lip,0.34,p.z-E],[lip,0.34,p.z+E],[lip,0,p.z+E],
-            [-sx,0,0],[[0,0],[0,0.1],[1,0.1],[1,0]]);
-        }
       }
     }
     /* the vault over this cell: faceted sub-tris on ceilYAt, crag-jittered
@@ -1640,7 +1716,8 @@ export function buildCave(){
     }
   }
   const floor=fAcc.mesh(floorMat); scene.add(floor);
-  const pit=pAcc.mesh(pitMat); scene.add(pit);
+  buildBridge(pAcc);
+  const pit=pAcc.mesh(pitMat); smoothShade(pit.geometry,0.2); scene.add(pit);
   /* the walls and the vault are one skin, welded vertex for vertex */
   const walls=wAcc.mesh(rockMat); smoothShade(walls.geometry); scene.add(walls);
   /* ---- the stream's water: a lens, not a sheet (see texCaustic above) ---- */
@@ -1733,19 +1810,17 @@ export function buildCave(){
     water.userData.animated=true;               // its matrix never moves; its maps do
     scene.add(water);
   }
-  /* ---- the chasm breathes a cold haze with no bottom in it ---- */
+  /* ---- the chasm breathes: mist rising out of it (cavefx.js) ---- */
   {
-    for(const[hy,op,col]of[[-2.5,0.10,0x143843],[-6,0.24,0x11333f],[-10,0.45,0x0d2b36]]){
-      const acc=new QuadAcc();
-      for(let y=0;y<CH;y++)for(let x=0;x<CW;x++){
-        if(grid3[y][x]!==5&&grid3[y][x]!==6) continue;
-        const p=cellToWorld3(x,y);
-        acc.quad([p.x-E,hy,p.z+E],[p.x+E,hy,p.z+E],[p.x+E,hy,p.z-E],[p.x-E,hy,p.z-E],
-          [0,1,0],[[0,1],[1,1],[1,0],[0,0]]);
-      }
-      if(!acc.vc) continue;
-      scene.add(acc.mesh(new THREE.MeshBasicMaterial({color:col, transparent:true,
-        opacity:op, depthWrite:false, side:THREE.DoubleSide})));
+    const voids=[];
+    for(let y=0;y<CH;y++)for(let x=0;x<CW;x++) if(grid3[y][x]===5) voids.push(cellToWorld3(x,y));
+    initMist(voids);
+    /* something far down there gives off a cold light: enough to stand the
+       cliffs, the arch and the mist against, never enough to show a bottom.
+       In the scene from the build, like every light the cave owns. */
+    if(voids.length){
+      const cx=voids.reduce((a,c)=>a+c.x,0)/voids.length, cz=voids.reduce((a,c)=>a+c.z,0)/voids.length;
+      const l=new THREE.PointLight(0x3f8fa0,1.6,30,1.4); l.position.set(cx,-15,cz); scene.add(l);
     }
   }
   /* ---- silk floor sheets around the nests: a skin over the real floor ---- */
@@ -3087,4 +3162,5 @@ export function updateCave(dt){
   updateDrips(dt);
   updateSpores(dt,camera,STATE.lanternOn? 0.55+0.45*STATE.lanternCharge : 0);
   updateRockDust(dt,camera);
+  updateMist(dt,camera);
 }

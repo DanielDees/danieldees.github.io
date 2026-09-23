@@ -11,7 +11,7 @@
    that makes a stalactite read as wet from across a chamber is the pinpoint
    of lantern caught at its end. */
 import { rand, clamp } from "./utils.js";
-import { scene, markShared } from "./scene.js";
+import { scene, camera, markShared } from "./scene.js";
 import { STATE } from "./state.js";
 import { AU, panTo } from "./audio.js";
 import { makeMoteSystem, makeDustSystem } from "./particles.js";
@@ -216,3 +216,36 @@ export function puffRockDust(x,z,top,faces){
   }
 }
 export function updateRockDust(dt,camera){ if(RD.sys) RD.sys.update(dt,camera); }
+
+/* ---------------- the chasm's breath ----------------
+   It was three flat translucent sheets laid across the pit, which from the
+   lip read exactly as what they were: panes. Now cold mist rises out of the
+   dark in slow soft billows that thin as they near the lip, so the depth is
+   something the air is doing rather than a colour at the bottom. */
+const MI={sys:null, voids:[], t:0};
+export function initMist(voids){
+  MI.voids=voids; MI.t=0;
+  if(!voids.length) return;
+  MI.sys=makeDustSystem(110);
+  const u=MI.sys.mesh.material.uniforms;
+  u.uLight.value=0.5; u.uFloor.value=-40;             // it lives below the floor line
+  scene.add(MI.sys.mesh);
+  /* already breathing when you arrive: run it forward before the first frame */
+  for(let i=0;i<60;i++){ mistPuff(); mistPuff(); MI.sys.update(0.4,camera); }
+}
+function mistPuff(){
+  const c=MI.voids[Math.floor(Math.random()*MI.voids.length)];
+  const x=c.x+rand(-2,2), z=c.z+rand(-2,2), y=rand(-9,-2.5);
+  const life=rand(14,24);
+  MI.sys.spawn(x,y,z, rand(-0.12,0.12),rand(0.12,0.3),rand(-0.12,0.12),
+    rand(3.6,6.0),rand(1.3,1.7),life,rand(0.035,0.07),1.6,
+    Math.random()<0.5?0x6f9aa6:0x5d8a96,0.9,0.04);
+}
+export function updateMist(dt,camera){
+  if(!MI.sys) return;
+  const near=MI.voids.some(c=>Math.hypot(c.x-STATE.pos.x,c.z-STATE.pos.z)<45);
+  if(!near) return;
+  MI.t-=dt;
+  while(MI.t<=0){ MI.t+=0.22; mistPuff(); }
+  MI.sys.update(dt,camera);
+}

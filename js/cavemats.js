@@ -358,7 +358,7 @@ export function caveSurfaces(){
   SURF={rock, floor, drip,
     rockMat:surfMat(rock,rockOpts),
     /* the chasm's walls: the same rock, sinking into the cold as it falls */
-    pitMat:surfMat(rock,Object.assign({},rockOpts,{fade:[-1.0,-11.0,1.0], deep:0x02070a})),
+    pitMat:surfMat(rock,Object.assign({},rockOpts,{fade:[-1.5,-15.0,0.92], deep:0x0a1d24})),
     floorMat:surfMat(floor,{planar:true, tile:4.0, ftile:0.6,
       spec:0x464c50, shin:80, dry:0.0, wetDark:0, fineK:0.4, aoK:0.75}),
     dripMat:surfMat(drip,{tile:2.0, ftile:0.9, spec:0x262c30, shin:26,
