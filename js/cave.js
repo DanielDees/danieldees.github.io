@@ -1134,9 +1134,11 @@ function stumpGeo(r,h){
    a saucer turned over */
 function moundGeo(r,squash){
   const H=r*squash, pts=[];
-  for(const[k,y]of[[1.14,-0.04],[1.0,0.05],[0.86,0.28],[0.66,0.58],[0.42,0.84],[0.18,0.97],[0,1]])
-    pts.push(V2(r*k*(k>0&&k<1.1? rand(0.94,1.06):1), H*y));
-  return dripNoise(new THREE.LatheGeometry(pts,16),Math.random()*10,0,0.9);
+  /* the edge runs out thin and dives under the floor, so no rim of it can
+     stand up and draw the lathe's polygon on the ground */
+  for(const[k,y]of[[1.2,-0.10],[1.08,-0.01],[0.96,0.10],[0.82,0.30],[0.64,0.58],[0.42,0.84],[0.18,0.97],[0,1]])
+    pts.push(V2(r*k*(k>0&&k<1.1? rand(0.94,1.06):1), y<0? y : H*y));
+  return dripNoise(new THREE.LatheGeometry(pts,26),Math.random()*10,0,0.9);
 }
 /* a drapery curtain: wave-folded sheet, folds deepening to a scalloped hem.
    Built in the XY plane, top edge at y=+hgt/2, hanging root pinned there. */
