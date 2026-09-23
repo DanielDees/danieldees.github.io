@@ -3154,6 +3154,7 @@ function rockfall(evIdx){
 /* a corridor brought down mid-level: the heap, and the dust it throws out */
 function makeRubbleAt(cx,cy){
   const g=rubbleHeap(cx,cy);
+  for(const o of g.userData.obs) CAVE.obstacles.push(o);   // it falls ≥10m from you, never on you
   puffRockDust(g.userData.x,g.userData.z,g.userData.top,g.userData.faces);
   return g;
 }
