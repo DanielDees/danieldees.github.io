@@ -1123,19 +1123,63 @@ export const texLibCeil = makeCanvas(256,256,(g,w,h)=>{
     g.fillRect(Math.random()*w,Math.random()*h,Math.random()*22+4,1.5);
   }
 });
-/* worn dark walnut for the stacks; a warmer oak for tables & the desk */
+/* worn dark walnut for the stacks; a warmer oak for tables & the desk.
+   Grain runs down the image (v). It was 420 straight dashes, which is what
+   made every board read as painted MDF: timber grain is continuous and it
+   WANDERS, so each line here is one stroke the full height of the canvas,
+   drifting on whole sine cycles so it meets itself across the v seam. No
+   knots — this tiles every 0.9m, and a knot would stamp itself down every
+   board in the building on that pitch. */
 function woodTex(base,dark,light){
-  return makeCanvas(256,256,(g,w,h)=>{
+  return makeCanvas(512,512,(g,w,h)=>{
     g.fillStyle=base;g.fillRect(0,0,w,h);
-    for(let i=0;i<420;i++){             // long vertical grain
-      const x=Math.random()*w, l=20+Math.random()*120;
-      g.fillStyle=`rgba(${Math.random()<0.5?dark:light},${0.10+Math.random()*0.18})`;
-      g.fillRect(x,Math.random()*h,1+Math.random()*1.6,l);
+    const wrapX=(x,fn)=>{ fn(x); if(x<60) fn(x+w); if(x>w-60) fn(x-w); };
+    /* board-to-board tone: planks cut from different trees */
+    for(let i=0;i<6;i++){
+      const x0=Math.random()*w, bw=50+Math.random()*140, a=0.04+Math.random()*0.07;
+      const col=Math.random()<0.5? dark:light;
+      wrapX(x0,x=>{
+        const gr=g.createLinearGradient(x-bw/2,0,x+bw/2,0);
+        gr.addColorStop(0,`rgba(${col},0)`); gr.addColorStop(0.5,`rgba(${col},${a})`); gr.addColorStop(1,`rgba(${col},0)`);
+        g.fillStyle=gr; g.fillRect(x-bw/2,0,bw,h);
+      });
     }
-    for(let i=0;i<26;i++){              // scuffs and chips
-      g.fillStyle=`rgba(16,11,7,${0.08+Math.random()*0.16})`;
-      g.save();g.translate(Math.random()*w,Math.random()*h);g.rotate((Math.random()-0.5)*0.8);
-      g.fillRect(0,0,4+Math.random()*22,1+Math.random()*2);g.restore();
+    /* the grain itself */
+    for(let i=0;i<300;i++){
+      const x0=Math.random()*w, amp=1+Math.random()*5, cyc=1+Math.floor(Math.random()*2),
+            ph=Math.random()*7, ph2=Math.random()*7;
+      const col=Math.random()<0.6? dark:light;
+      g.strokeStyle=`rgba(${col},${0.05+Math.random()*0.16})`;
+      g.lineWidth=0.6+Math.random()*1.8;
+      wrapX(x0,xx=>{
+        g.beginPath();
+        for(let y=0;y<=h;y+=8){
+          const x=xx+Math.sin(y/h*Math.PI*2*cyc+ph)*amp+Math.sin(y/h*Math.PI*2*(cyc+2)+ph2)*amp*0.35;
+          y? g.lineTo(x,y) : g.moveTo(x,y);
+        }
+        g.stroke();
+      });
+    }
+    /* pores, laid along the grain */
+    for(let i=0;i<3200;i++){
+      g.fillStyle=`rgba(${dark},${0.05+Math.random()*0.12})`;
+      g.fillRect(Math.random()*w,Math.random()*h,1,2+Math.random()*6);
+    }
+    /* handling: soft lighter wear and darker grime, no edges anywhere */
+    for(let i=0;i<10;i++){
+      const x0=Math.random()*w, y0=Math.random()*h, r=30+Math.random()*90;
+      const col=Math.random()<0.5? "16,11,7" : light;
+      wrapX(x0,x=>{
+        const gr=g.createRadialGradient(x,y0,1,x,y0,r);
+        gr.addColorStop(0,`rgba(${col},${0.04+Math.random()*0.06})`); gr.addColorStop(1,`rgba(${col},0)`);
+        g.fillStyle=gr; g.fillRect(x-r,y0-r,r*2,r*2);
+      });
+    }
+    /* scratches across the grain, thin and pale */
+    for(let i=0;i<40;i++){
+      g.strokeStyle=`rgba(${light},${0.06+Math.random()*0.1})`; g.lineWidth=0.7;
+      const x=Math.random()*w, y=Math.random()*h, a=(Math.random()-0.5)*1.2+Math.PI/2, l=6+Math.random()*30;
+      g.beginPath(); g.moveTo(x,y); g.lineTo(x+Math.sin(a)*l,y+Math.cos(a)*l*0.3); g.stroke();
     }
   });
 }
@@ -1169,25 +1213,42 @@ export const texBeige = makeCanvas(128,128,(g,w,h)=>{
 });
 /* a keyboard, drawn rather than built: ~90 keycaps of real geometry on a
    prop you only ever see from standing height is ninety draws of nothing */
+/* the board's layout in canvas px ([x,y,w,h] per key, on a 256×96 canvas):
+   the keycaps in makeVintagePC are built from this same table, so a legend
+   can never sit off the cap it is printed on */
+export const KB_LAYOUT=(()=>{
+  const k=[];
+  for(let i=0;i<12;i++) k.push([6+i*15,5,13,9]);                 // function row
+  for(let r=0;r<4;r++){                                            // the main block, stepped
+    const x0=6+[0,4,7,10][r], n=[13,12,11,10][r];
+    for(let i=0;i<n;i++) k.push([x0+i*13,18+r*13,12,12]);
+    const xe=x0+n*13; k.push([xe,18+r*13,186-xe,12]);              // backspace, enter, shift
+  }
+  k.push([6,70,20,12],[28,70,16,12],[46,70,94,12],[142,70,16,12],[160,70,26,12]);
+  for(let i=0;i<5;i++)for(let j=0;j<4;j++) k.push([194+j*15,18+i*13,14,12]);   // the pad
+  return k;
+})();
+const KB_LEGEND="1234567890QWERTYUIOPASDFGHJKLZXCVBNM";
 export function makeKeyboardTexture(){
   return makeCanvas(256,96,(g,w,h)=>{
     g.fillStyle="#8e8672";g.fillRect(0,0,w,h);
-    const key=(x,y,kw,kh)=>{
-      g.fillStyle="#2b2822";g.fillRect(x,y,kw,kh);            // the well
-      g.fillStyle="#b9b099";g.fillRect(x+1,y+1,kw-2,kh-3);    // the cap
+    g.textAlign="center"; g.textBaseline="middle";
+    KB_LAYOUT.forEach(([x,y,kw,kh],i)=>{
+      g.fillStyle="#2b2822";g.fillRect(x,y,kw,kh);                // the well
+      const dark=kw>20||i<12;
+      g.fillStyle=dark?"#9e9580":"#bdb49c";g.fillRect(x+1,y+1,kw-2,kh-2);   // the cap
       g.fillStyle="rgba(255,252,242,0.35)";g.fillRect(x+1,y+1,kw-2,1);
-      g.fillStyle="rgba(40,36,28,0.30)";g.fillRect(x+1,y+kh-3,kw-2,1);
-    };
-    /* function row, then the four main rows stepped like a real board */
-    for(let i=0;i<12;i++) key(8+i*14,7,11,9);
-    const rows=[[8,20,15,13],[8,34,14,14],[12,48,13,14],[8,62,13,13]];
-    rows.forEach(([x0,y,n,kw])=>{ for(let i=0;i<n;i++) key(x0+i*(kw+2),y,kw,12); });
-    key(70,77,86,12);                                          // spacebar
-    key(30,77,26,12); key(170,77,26,12);
-    for(let i=0;i<4;i++)for(let j=0;j<4;j++) key(196+j*14,20+i*14,12,12);  // the pad
-    for(let i=0;i<3;i++){                                      // status LEDs
+      g.fillStyle="rgba(40,36,28,0.35)";g.fillRect(x+1,y+kh-2,kw-2,1);
+      /* legends, and the shine on the ones people used */
+      if(kw<20&&i>=12){
+        g.fillStyle="rgba(40,36,28,0.75)"; g.font="bold 7px Arial";
+        g.fillText(KB_LEGEND[(i-12)%KB_LEGEND.length],x+kw/2,y+kh/2);
+      }
+      if(Math.random()<0.25){ g.fillStyle="rgba(255,250,230,0.12)"; g.fillRect(x+2,y+2,kw-4,kh-4); }
+    });
+    for(let i=0;i<3;i++){                                          // status LEDs
       g.fillStyle=["#2a3a24","#2a3a24","#3a3320"][i];
-      g.fillRect(200+i*10,8,6,4);
+      g.fillRect(202+i*12,7,7,4);
     }
   });
 }
@@ -1300,7 +1361,18 @@ export const BOOK_TITLES=[
   ["FORGOTTEN RETURNS","C. WREN"],
   ["A FIELD GUIDE TO ABSENCE","I. MERCER"],
   ["THE SHELVER'S HYMNAL","CHOIR OF ∅"],
+  ["ROOMS I HAVE WAITED IN","A. PELL"],
+  ["AFTER HOURS","N. GRAYE"],
+  ["THE EMPTY POOL","R. SAYLE"],
+  ["A HISTORY OF CORRIDORS","T. LOOM"],
+  ["FLUORESCENCE","DR. P. FINCH"],
+  ["THE WAITING ROOM","E. VOSS"],
+  ["CARPET, A MEMOIR","S. OKEN"],
+  ["STILL LIFE WITH CHAIR","A. PELL"],
 ];
+/* Dewey-ish classes for the spine labels, keyed loosely to nothing */
+const CALL_CLASS=["001.9","028.1","133.2","152.4","153.7","306.4","364.1","398.2",
+  "720.9","747.8","808.8","823.9","910.4","914.2","028.7","616.8"];
 /* muted cloth and leather bindings */
 export const BOOK_BASES=[[110,44,38],[84,36,32],[52,74,54],[40,58,70],[66,54,90],
   [112,86,46],[72,52,36],[48,42,38],[120,104,70],[58,66,82],[96,62,50],[44,54,44]];
@@ -1317,7 +1389,30 @@ function fitText(g,txt,x,y,maxW,size,minSize,font){
    spine strip matches the spine's real arc width and the front plate
    matches the board's real aspect — text maps 1:1 with no stretching.
    Returns {tex, uv} with the design's own region windows. */
-export function makeBookCoverTexture(title,author,base,motif,vol,bh,btx,bd){
+/* the library's own mark on a spine: a typed class number and the first
+   letters of the author, on a sticker gone the colour of old teeth. It is
+   the one detail that says LIBRARY rather than bookshop. */
+function callLabel(g,author,x0,sw,yBot,sans){
+  const lw=sw-8, lh=Math.min(46,Math.max(30,Math.round(sw*0.9)));
+  const x=x0+4, y=yBot-lh;
+  const age=Math.random();
+  g.save();
+  g.shadowColor="rgba(0,0,0,0)";
+  g.fillStyle=age<0.5?"#e6dfcb":age<0.85?"#d8cba4":"#c9b98a";
+  g.fillRect(x,y,lw,lh);
+  g.fillStyle="rgba(90,70,40,0.18)"; g.fillRect(x,y+lh-3,lw,3);          // grime along its foot
+  g.strokeStyle="rgba(60,48,28,0.35)"; g.lineWidth=1; g.strokeRect(x+0.5,y+0.5,lw-1,lh-1);
+  const surname=author.replace(/^(DR\.|[A-Z]\.)\s*/g,"").replace(/[^A-Z]/g,"")||"ANO";
+  g.fillStyle="rgba(30,26,20,0.9)"; g.textAlign="center"; g.textBaseline="middle";
+  const fs=Math.max(9,Math.min(13,Math.round(lw*0.27)));
+  g.font=`bold ${fs}px ${sans? "Arial":"Courier New"}`;
+  g.fillText(CALL_CLASS[Math.floor(Math.random()*CALL_CLASS.length)],x+lw/2,y+lh*0.32);
+  g.fillText(surname.slice(0,3),x+lw/2,y+lh*0.70);
+  g.restore();
+  return y;
+}
+export function makeBookCoverTexture(title,author,base,motif,vol,bh,btx,bd,style="cloth"){
+  if(style==="paperback"||style==="jacket") return makePrintedCoverTexture(title,author,base,motif,bh,btx,bd,style);
   const H=384, ppm=H/bh;
   const spineW=Math.max(30,Math.round(btx*1.3*ppm));   // ≈ the arc's unrolled width
   const frontW=Math.round(bd*ppm), plainW=40, gd=8;
@@ -1341,13 +1436,14 @@ export function makeBookCoverTexture(title,author,base,motif,vol,bh,btx,bd){
       g.fillStyle=giltDim;g.fillRect(5,by,spineW-10,3);
     }
     g.fillStyle=gilt;g.textAlign="center";g.textBaseline="middle";
-    g.save();g.translate(spineW*0.52,h/2);g.rotate(Math.PI/2);
+    g.save();g.translate(spineW*0.52,h/2-16);g.rotate(Math.PI/2);
     g.shadowColor=shadow;g.shadowOffsetX=1;g.shadowOffsetY=1;g.shadowBlur=0;
-    fitText(g,title,0,1,h-160,Math.min(32,Math.round(spineW*0.5)),14,serif);
+    fitText(g,title,0,1,h-200,Math.min(32,Math.round(spineW*0.5)),14,serif);   // clear of the call label
     g.restore();
+    const labelTop=Math.random()<0.85? callLabel(g,author,0,spineW,h-56,false) : h-56;
     if(vol){
       g.font=`bold ${Math.min(20,Math.round(spineW*0.34))}px Georgia`;
-      g.fillStyle=giltDim;g.fillText(vol,spineW/2,h-66);
+      g.fillStyle=giltDim;g.fillText(vol,spineW/2,labelTop-14);
     }
     g.restore();
     /* ---- front cover plate ---- */
@@ -1420,6 +1516,101 @@ export function makeBookCoverTexture(title,author,base,motif,vol,bh,btx,bd){
   t.minFilter=THREE.LinearFilter;
   t.generateMipmaps=false;
   return {tex:t, uv:{
+    spine:[0,spineW/W],
+    front:[(spineW+gd)/W,(spineW+gd+frontW)/W],
+    plain:[(W-plainW+4)/W,(W-4)/W],
+  }};
+}
+/* paperbacks and dust jackets: PRINTED, not tooled — flat ink on coated
+   stock, bleached along the spine where the shelf light fell on it, and on
+   a paperback the white creases a read spine gets, which are most of what
+   says it was ever opened. Same canvas layout and return shape as the cloth
+   bindings, so buildBookDesign maps either the same way. */
+const PRINT_BASES=[[196,160,70],[70,120,126],[192,112,92],[214,200,168],
+  [112,140,170],[150,70,60],[60,70,90],[176,176,150],[120,150,110]];
+function makePrintedCoverTexture(title,author,base,motif,bh,btx,bd,style){
+  const H=384, ppm=H/bh;
+  const spineW=Math.max(24,Math.round(btx*(style==="paperback"?1.02:1.3)*ppm));
+  const frontW=Math.round(bd*ppm), plainW=40, gd=8;
+  const W=spineW+gd+frontW+gd+plainW;
+  const pb=style==="paperback";
+  const [br,bg,bb]=PRINT_BASES[Math.floor(Math.random()*PRINT_BASES.length)];
+  const t=makeCanvas(W,H,(g,w,h)=>{
+    g.fillStyle=`rgb(${br},${bg},${bb})`; g.fillRect(0,0,w,h);
+    for(let i=0;i<w*h/90;i++){
+      const v=Math.random()<0.5?-12:12;
+      g.fillStyle=`rgba(${br+v},${bg+v},${bb+v},0.08)`; g.fillRect(Math.random()*w,Math.random()*h,1,1);
+    }
+    const ink="rgba(24,22,20,0.9)", paper="rgba(236,228,206,0.96)";
+    const acc=`rgb(${Math.max(0,br-80)},${Math.max(0,bg-80)},${Math.max(0,bb-70)})`;
+    const font=pb? ["bold","Arial, Helvetica, sans-serif"] : ["bold","Georgia, 'Times New Roman', serif"];
+    /* ---- spine ---- */
+    g.save(); g.beginPath(); g.rect(0,0,spineW,h); g.clip();
+    if(!pb){ g.fillStyle=acc; g.fillRect(0,0,spineW,38); g.fillRect(0,h-34,spineW,34); }
+    g.fillStyle=pb? ink : paper; g.textAlign="center"; g.textBaseline="middle";
+    g.save(); g.translate(spineW*0.52,h/2-18); g.rotate(Math.PI/2);
+    fitText(g,title,0,1,h-190,Math.min(26,Math.round(spineW*0.55)),11,font);
+    g.restore();
+    /* the publisher's mark */
+    g.fillStyle=pb? ink : paper;
+    g.beginPath(); g.arc(spineW/2,20,Math.min(8,spineW*0.22),0,7); g.fill();
+    if(pb) for(let i=0,n=3+Math.floor(Math.random()*6);i<n;i++){
+      const y=26+Math.random()*(h-52);
+      g.strokeStyle=`rgba(242,238,226,${0.35+Math.random()*0.35})`; g.lineWidth=1+Math.random();
+      g.beginPath(); g.moveTo(0,y); g.lineTo(spineW,y+(Math.random()-0.5)*8); g.stroke();
+    }
+    if(Math.random()<0.85) callLabel(g,author,0,spineW,h-44,true);
+    g.restore();
+    /* ---- front ---- */
+    const fx=spineW+gd, fw=frontW, cx=fx+fw/2;
+    g.save(); g.beginPath(); g.rect(fx,0,fw,h); g.clip();
+    const lines=t=>{ const out=[]; let ln="";
+      for(const wd of t.split(" ")){ const tl=ln? ln+" "+wd:wd;
+        if(g.measureText(tl).width>fw-44&&ln){ out.push(ln); ln=wd; } else ln=tl; }
+      if(ln) out.push(ln); return out; };
+    if(pb){
+      g.fillStyle=paper; g.fillRect(fx+10,24,fw-20,112);
+      g.fillStyle=ink; g.font=`bold 24px Arial`;
+      let y=58; for(const l of lines(title).slice(0,3)){ fitText(g,l,cx,y,fw-40,24,12,font); y+=27; }
+      g.font="bold 13px Arial"; g.fillStyle="rgba(24,22,20,0.7)"; fitText(g,author,cx,y+4,fw-40,13,9,font);
+    } else {
+      g.fillStyle=acc; g.fillRect(fx,0,fw,46); g.fillRect(fx,h-46,fw,46);
+      g.fillStyle=paper; g.font="bold 28px Georgia";
+      let y=100; for(const l of lines(title).slice(0,4)){ fitText(g,l,cx,y,fw-36,28,13,font); y+=32; }
+      g.fillRect(cx-fw*0.2,y-8,fw*0.4,2);
+      g.font="bold 15px Georgia"; fitText(g,author,cx,h-22,fw-36,15,10,font);
+    }
+    /* one flat graphic, the kind a paperback line used for a whole series */
+    const my=pb? h*0.66 : h*0.63, s=fw/190;
+    g.save(); g.translate(cx,my); g.scale(s,s);
+    g.strokeStyle=pb? ink : paper; g.fillStyle=pb? ink : paper; g.lineWidth=3;
+    if(motif===0){ for(let r=10;r<=46;r+=12){ g.beginPath(); g.arc(0,0,r,0,7); g.stroke(); } }
+    else if(motif===1){ g.strokeRect(-18,-40,36,72); g.fillRect(-18,-40,36,72*0.12); }
+    else if(motif===2){ for(let i=0;i<5;i++) g.fillRect(-50,-36+i*16,100,6); }
+    else if(motif===3){ for(let i=0;i<4;i++)for(let j=0;j<4;j++) if((i+j)%2) g.fillRect(-40+i*20,-40+j*20,20,20); }
+    else if(motif===4){ g.fillRect(-2,-50,4,90); g.beginPath(); g.arc(0,-50,9,0,7); g.fill(); }
+    else { g.beginPath(); let sx=-44,sy=-34; for(let i=0;i<5;i++){ g.lineTo(sx,sy); sx+=18; g.lineTo(sx,sy); sy+=16; } g.stroke(); }
+    g.restore();
+    g.restore();
+    /* sun on the spine for thirty years */
+    const fade=g.createLinearGradient(0,0,spineW*1.8,0);
+    fade.addColorStop(0,"rgba(238,228,204,0.22)"); fade.addColorStop(1,"rgba(238,228,204,0)");
+    g.fillStyle=fade; g.fillRect(0,0,spineW*1.8,h);
+    if(!pb) for(let i=0;i<7;i++){                         // the jacket has torn along its head
+      const x=Math.random()*w, ww=6+Math.random()*22;
+      g.fillStyle="rgba(38,30,22,0.6)";
+      g.beginPath(); g.moveTo(x,0); g.lineTo(x+ww,0); g.lineTo(x+ww*(0.3+Math.random()*0.5),3+Math.random()*12); g.closePath(); g.fill();
+    }
+    for(let i=0;i<60;i++){                                // rubbed corners and edges
+      g.fillStyle=`rgba(240,234,220,${0.06+Math.random()*0.12})`;
+      const ex=Math.random()<0.5? Math.random()*16 : w-Math.random()*16;
+      g.fillRect(ex,Math.random()*h,1+Math.random()*3,2+Math.random()*7);
+    }
+  });
+  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping;
+  t.minFilter=THREE.LinearFilter;
+  t.generateMipmaps=false;
+  return {tex:t, gloss:pb, uv:{
     spine:[0,spineW/W],
     front:[(spineW+gd)/W,(spineW+gd+frontW)/W],
     plain:[(W-plainW+4)/W,(W-4)/W],
@@ -1785,265 +1976,639 @@ export function makePosterTexture(){
   return t;
 }
 
-/* framed wall art: nine families of almost-library artwork, each grown
-   fresh per call — things that COULD hang in a library, off by just one
-   degree.
-   The frame and the mat used to be PRINTED into this canvas, which is the
-   flattest thing a picture can be: a moulding is a profile catching a light
-   from above, and a printed one is a brown border. Both are geometry now
-   (makeFramedArt), so the whole canvas is the PLATE — which also triples the
-   pixels the image itself gets: at 256 across a 0.72m sight size this runs
-   ~355 px/m, against ~200 for the old inset. */
-export function makeArtTexture(){
-  const type=Math.floor(Math.random()*9);
-  const t=makeCanvas(256,320,(g,w,h)=>{
-    const x0=0,y0=0,iw=w,ih=h;
-    const ink="rgba(40,34,24,0.85)";
-    if(type===0){
-      /* MAP OF THE COLLECTION: floor-plan dots and corridors to nowhere */
-      g.fillStyle="#a89c80";g.fillRect(x0,y0,iw,ih);
-      g.strokeStyle="rgba(60,50,34,0.7)";g.lineWidth=1.6;
-      const pts=[];
-      for(let i=0;i<13;i++) pts.push([x0+18+Math.random()*(iw-36),y0+40+Math.random()*(ih-76)]);
-      for(let i=0;i<16;i++){
-        const a=pts[Math.floor(Math.random()*pts.length)],b=pts[Math.floor(Math.random()*pts.length)];
-        g.beginPath();g.moveTo(a[0],a[1]);g.lineTo(b[0],a[1]);g.lineTo(b[0],b[1]);g.stroke();
-      }
-      /* the rooms the corridors serve — hatched, and none of them square-on */
-      g.strokeStyle="rgba(60,50,34,0.45)";g.lineWidth=1;
-      for(let i=0;i<7;i++){
-        const rx=x0+16+Math.random()*(iw-70), ry=y0+38+Math.random()*(ih-100);
-        const rw=22+Math.random()*44, rh=18+Math.random()*36;
-        g.strokeRect(rx,ry,rw,rh);
-        for(let hx=rx+4;hx<rx+rw;hx+=5){
-          g.beginPath();g.moveTo(hx,ry+rh);g.lineTo(hx+rh*0.5,ry);g.stroke();
-        }
-      }
-      for(const p of pts){ g.fillStyle="rgba(60,50,34,0.85)";g.beginPath();g.arc(p[0],p[1],3.4,0,7);g.fill(); }
-      g.fillStyle="rgba(150,40,30,0.9)";g.font="bold 15px Courier New";g.textAlign="center";
-      const yx=x0+30+Math.random()*(iw-60), yy=y0+50+Math.random()*(ih-110);
-      g.fillText("✕",yx,yy);
-      g.font="bold 12px Courier New";
-      g.fillText("YOU WERE HERE",yx,yy+15);
-      g.fillStyle=ink;g.font="bold 15px Courier New";
-      g.fillText("MAP OF THE COLLECTION",x0+iw/2,y0+22);
-      g.font="9px Courier New";g.fillStyle="rgba(40,34,24,0.55)";
-      g.fillText("SCALE: ONE FLOOR TO ONE FLOOR",x0+iw/2,y0+ih-12);
-    } else if(type===1){
-      /* a donor portrait with nothing where the face goes */
-      g.fillStyle="#2a241d";g.fillRect(x0,y0,iw,ih);
-      const cx=x0+iw/2;
-      const gr=g.createRadialGradient(cx,y0+ih*0.38,8,cx,y0+ih*0.38,ih*0.45);
-      gr.addColorStop(0,"rgba(120,104,76,0.35)");gr.addColorStop(1,"rgba(120,104,76,0)");
-      g.fillStyle=gr;g.fillRect(x0,y0,iw,ih);
-      g.fillStyle="#13100c";
-      g.beginPath();g.ellipse(cx,y0+ih*0.34,iw*0.16,ih*0.15,0,0,7);g.fill();   // head
-      g.beginPath();g.ellipse(cx,y0+ih*0.78,iw*0.32,ih*0.3,0,Math.PI,0);g.fill(); // shoulders
-      /* a collar and a high stock, so the silhouette is dressed rather than
-         a snowman: two pale wedges meeting under where the chin would be */
-      g.fillStyle="rgba(196,186,164,0.62)";
-      for(const s of[-1,1]){
-        g.beginPath();g.moveTo(cx,y0+ih*0.49);
-        g.lineTo(cx+s*iw*0.11,y0+ih*0.56);g.lineTo(cx+s*iw*0.03,y0+ih*0.66);g.closePath();g.fill();
-      }
-      /* the only light in the painting falls where the face should be, and
-         finds nothing there */
-      const fg=g.createRadialGradient(cx,y0+ih*0.34,1,cx,y0+ih*0.34,iw*0.17);
-      fg.addColorStop(0,"rgba(150,132,98,0.30)");fg.addColorStop(1,"rgba(150,132,98,0)");
-      g.fillStyle=fg;g.beginPath();g.ellipse(cx,y0+ih*0.34,iw*0.17,ih*0.16,0,0,7);g.fill();
-      g.fillStyle="#8a7340";g.fillRect(x0+iw*0.16,y0+ih-30,iw*0.68,19);        // brass plaque
-      g.fillStyle="rgba(60,48,22,0.5)";g.fillRect(x0+iw*0.16,y0+ih-30,iw*0.68,2);
-      g.fillStyle="#241c10";g.font="bold 12px Courier New";g.textAlign="center";
-      g.fillText(["THE FIRST LIBRARIAN","HEAD ARCHIVIST, 19∅∅","OUR FOUNDER","PATRON OF QUIET",
-                  "KEEPER OF THE LOWER STACK"][Math.floor(Math.random()*5)],
-        x0+iw/2,y0+ih-16);
-    } else if(type===2){
-      /* botanical plate: a specimen with labels pointing at nothing */
-      g.fillStyle="#cfc6a8";g.fillRect(x0,y0,iw,ih);
-      g.strokeStyle="rgba(50,70,40,0.8)";g.lineWidth=2;
-      const sx=x0+iw/2;
-      g.beginPath();g.moveTo(sx,y0+ih-20);
-      g.bezierCurveTo(sx-10,y0+ih*0.6,sx+12,y0+ih*0.4,sx-4,y0+24);g.stroke();
-      g.fillStyle="rgba(58,82,46,0.75)";
-      for(let i=0;i<5;i++){
-        const ly=y0+30+i*(ih-70)/5, s=(i%2?1:-1);
-        g.save();g.translate(sx+s*6,ly);g.rotate(s*(0.5+Math.random()*0.4));
-        g.beginPath();g.ellipse(0,0,16+Math.random()*8,6,0,0,7);g.fill();g.restore();
-      }
-      g.strokeStyle="rgba(40,34,24,0.6)";g.lineWidth=1;
-      g.fillStyle=ink;g.font="11px Courier New";g.textAlign="left";
-      const labels=["fig. ∅","leaf (?)","hrs.","stem, late","do not water","rootstock, absent"];
-      for(let i=0;i<5;i++){
-        const ly=y0+44+Math.random()*(ih-100), tx=Math.random()<0.5? x0+6: x0+iw-64;
-        g.beginPath();g.moveTo(tx<sx?tx+56:tx,ly);
-        g.lineTo(sx+(Math.random()-0.5)*76,ly+(Math.random()-0.5)*38);g.stroke();
-        g.fillText(labels[Math.floor(Math.random()*labels.length)],tx,ly+3);
-      }
-      g.textAlign="center";g.font="italic 13px Courier New";
-      g.fillText("SPECIMEN: HOURS, PERENNIAL",x0+iw/2,y0+ih-12);
-    } else if(type===3){
-      /* an acuity chart that tests something else */
-      g.fillStyle="#d8d2c0";g.fillRect(x0,y0,iw,ih);
-      const rows=["SH","HUSH","QUIETLY","RETURNALL","THEENDTHEEND","sshhhhhhhhhhh"];
-      let yy=y0+46;
-      g.fillStyle=ink;g.textAlign="center";
-      rows.forEach((r,i)=>{
-        g.font=`bold ${Math.max(7,38-i*6)}px Courier New`;
-        g.fillText(r.split("").join(" "),x0+iw/2,yy);
-        yy+=Math.max(17,44-i*5);
-      });
-      g.strokeStyle="rgba(40,34,24,0.4)";g.lineWidth=1;
-      g.beginPath();g.moveTo(x0+16,y0+ih-32);g.lineTo(x0+iw-16,y0+ih-32);g.stroke();
-      g.font="10px Courier New";
-      g.fillText("IF YOU CAN READ THIS ROW IT HEARD YOU",x0+iw/2,y0+ih-14);
-    } else if(type===4){
-      /* nocturne: hills, a moon, no library anywhere in sight */
-      const gr=g.createLinearGradient(0,y0,0,y0+ih);
-      gr.addColorStop(0,"#11151d");gr.addColorStop(0.65,"#2a3140");gr.addColorStop(1,"#3a4252");
-      g.fillStyle=gr;g.fillRect(x0,y0,iw,ih);
-      const mx=x0+iw*(0.25+Math.random()*0.5), my=y0+ih*0.24;
-      const mg=g.createRadialGradient(mx,my,2,mx,my,44);       // its own halo in the haze
-      mg.addColorStop(0,"rgba(214,210,190,0.34)");mg.addColorStop(1,"rgba(214,210,190,0)");
-      g.fillStyle=mg;g.beginPath();g.arc(mx,my,44,0,7);g.fill();
-      g.fillStyle="rgba(214,210,190,0.88)";
-      g.beginPath();g.arc(mx,my,13,0,7);g.fill();
-      for(let i=0;i<4;i++){
-        g.fillStyle=`rgba(${10+i*6},${12+i*6},${16+i*7},0.95)`;
-        g.beginPath();g.moveTo(x0,y0+ih);
-        for(let xx=0;xx<=iw;xx+=6)
-          g.lineTo(x0+xx,y0+ih*(0.52+i*0.11)+Math.sin(xx*0.045+i*9)*10+Math.sin(xx*0.14+i*3)*3);
-        g.lineTo(x0+iw,y0+ih);g.closePath();g.fill();
-      }
-      g.fillStyle="#8a7340";g.fillRect(x0+iw*0.22,y0+ih-22,iw*0.56,15);
-      g.fillStyle="#241c10";g.font="bold 10px Courier New";g.textAlign="center";
-      g.fillText("VIEW FROM THE STACKS",x0+iw/2,y0+ih-11);
-    } else if(type===5){
-      /* the staff photograph. Rows of them, and every face has gone —
-         not scratched out, just never developed */
-      g.fillStyle="#3a3126";g.fillRect(x0,y0,iw,ih);
-      const vg=g.createRadialGradient(x0+iw/2,y0+ih*0.45,10,x0+iw/2,y0+ih*0.45,ih*0.62);
-      vg.addColorStop(0,"rgba(178,158,120,0.5)");vg.addColorStop(1,"rgba(178,158,120,0)");
-      g.fillStyle=vg;g.fillRect(x0,y0,iw,ih);
-      for(let row=0;row<3;row++){
-        const n=5+row, by=y0+ih*(0.34+row*0.19), sc=1+row*0.1;
-        for(let i=0;i<n;i++){
-          const px=x0+iw*(i+0.5)/n+(Math.random()-0.5)*5;
-          g.fillStyle="rgba(24,20,15,0.92)";
-          g.beginPath();g.ellipse(px,by+26*sc,iw*0.075*sc,ih*0.075*sc,0,Math.PI,0);g.fill();  // shoulders
-          g.beginPath();g.ellipse(px,by,iw*0.036*sc,ih*0.034*sc,0,0,7);g.fill();              // head
-          /* the face: a soft smear of the paper's own tone, no features */
-          const hg=g.createRadialGradient(px,by,0.5,px,by,iw*0.034*sc);
-          hg.addColorStop(0,"rgba(196,176,138,0.62)");hg.addColorStop(1,"rgba(196,176,138,0)");
-          g.fillStyle=hg;g.beginPath();g.arc(px,by,iw*0.034*sc,0,7);g.fill();
-        }
-      }
-      g.fillStyle="rgba(232,222,196,0.85)";g.font="italic 12px Courier New";g.textAlign="center";
-      g.fillText("STAFF OF THE READING ROOM",x0+iw/2,y0+26);
-      g.font="10px Courier New";g.fillStyle="rgba(232,222,196,0.6)";
-      g.fillText("(names on reverse)",x0+iw/2,y0+ih-16);
-    } else if(type===6){
-      /* the building in section — and it has one floor too many at the
-         bottom, unlabelled, with no stair drawn to it */
-      g.fillStyle="#dbd3bc";g.fillRect(x0,y0,iw,ih);
-      const bx=x0+26, bw=iw-52, top=y0+44, fl=7, fh=(ih-96)/fl;
-      g.strokeStyle="rgba(40,34,24,0.8)";g.lineWidth=1.4;
-      g.strokeRect(bx,top,bw,fh*fl);
-      for(let i=1;i<fl;i++){
-        g.beginPath();g.moveTo(bx,top+fh*i);g.lineTo(bx+bw,top+fh*i);g.stroke();
-      }
-      /* shelving hatched into every floor but the last */
-      g.strokeStyle="rgba(40,34,24,0.35)";g.lineWidth=0.8;
-      for(let i=0;i<fl-1;i++)
-        for(let sx2=bx+8;sx2<bx+bw-8;sx2+=9){
-          g.beginPath();g.moveTo(sx2,top+fh*i+fh-4);g.lineTo(sx2,top+fh*i+5);g.stroke();
-        }
-      /* the stair: it stops one floor short */
-      g.strokeStyle="rgba(40,34,24,0.75)";g.lineWidth=1.2;
-      for(let i=0;i<fl-1;i++){
-        g.beginPath();g.moveTo(bx+bw*0.62,top+fh*(i+1));
-        g.lineTo(bx+bw*0.80,top+fh*i);g.stroke();
-      }
-      g.fillStyle=ink;g.font="10px Courier New";g.textAlign="right";
-      for(let i=0;i<fl-1;i++) g.fillText(`${fl-1-i}`,bx-6,top+fh*i+fh*0.62);
-      g.fillStyle="rgba(150,40,30,0.8)";g.fillText("?",bx-6,top+fh*(fl-1)+fh*0.62);
-      g.textAlign="center";g.fillStyle=ink;g.font="bold 13px Courier New";
-      g.fillText("LONGITUDINAL SECTION",x0+iw/2,y0+24);
-      g.font="9px Courier New";g.fillStyle="rgba(40,34,24,0.55)";
-      g.fillText("DRAWING ∅ OF ∅ · NOT TO SCALE",x0+iw/2,y0+ih-14);
-    } else if(type===7){
-      /* a certificate whose recipient line was never filled in */
-      g.fillStyle="#e2d9bd";g.fillRect(x0,y0,iw,ih);
-      g.strokeStyle="rgba(122,98,48,0.8)";g.lineWidth=2.5;
-      g.strokeRect(x0+14,y0+14,iw-28,ih-28);
-      g.lineWidth=0.9;g.strokeRect(x0+21,y0+21,iw-42,ih-42);
-      g.fillStyle="rgba(60,50,28,0.9)";g.textAlign="center";
-      g.font="bold 17px Courier New";
-      g.fillText("AWARDED",x0+iw/2,y0+58);
-      g.font="italic 12px Courier New";g.fillStyle="rgba(60,50,28,0.7)";
-      for(const[i,ln]of["for service to the collection,","rendered without interruption,",
-                        "for the whole of the hours."].entries())
-        g.fillText(ln,x0+iw/2,y0+84+i*17);
-      /* the blank the name goes on, and the pen that never came */
-      g.strokeStyle="rgba(60,50,28,0.6)";g.lineWidth=1;
-      g.beginPath();g.moveTo(x0+34,y0+164);g.lineTo(x0+iw-34,y0+164);g.stroke();
-      g.beginPath();g.moveTo(x0+52,y0+ih-52);g.lineTo(x0+iw-52,y0+ih-52);g.stroke();
-      g.font="9px Courier New";g.fillStyle="rgba(60,50,28,0.55)";
-      g.fillText("signature of the head librarian",x0+iw/2,y0+ih-38);
-      /* the seal: a wax disc with a ring of teeth, pressed off-centre */
-      const sx3=x0+iw*0.28, sy3=y0+ih-92;
-      g.fillStyle="rgba(126,44,32,0.85)";
-      g.beginPath();
-      for(let k=0;k<=28;k++){
-        const a=k/28*Math.PI*2, rr=22*(k%2?0.86:1);
-        k? g.lineTo(sx3+Math.cos(a)*rr,sy3+Math.sin(a)*rr) : g.moveTo(sx3+Math.cos(a)*rr,sy3+Math.sin(a)*rr);
-      }
-      g.closePath();g.fill();
-      g.fillStyle="rgba(74,22,16,0.7)";g.beginPath();g.arc(sx3,sy3,13,0,7);g.fill();
-      g.fillStyle="rgba(216,190,150,0.75)";g.font="bold 11px Courier New";
-      g.fillText("∅",sx3,sy3+4);
-    } else {
-      /* in memoriam: an engraved list of the fallen, and it is one name,
-         over and over, all the way down the plate */
-      const gr2=g.createLinearGradient(x0,y0,x0+iw,y0+ih);
-      gr2.addColorStop(0,"#5e5334");gr2.addColorStop(0.45,"#8a7a4a");gr2.addColorStop(1,"#4e452c");
-      g.fillStyle=gr2;g.fillRect(x0,y0,iw,ih);
-      for(let i=0;i<900;i++){                    // the brush of a rolled brass plate
-        g.fillStyle=`rgba(${Math.random()<0.5?60:210},${Math.random()<0.5?54:196},${Math.random()<0.5?34:150},0.06)`;
-        g.fillRect(Math.random()*w,Math.random()*h,10+Math.random()*40,1);
-      }
-      const name=["A. WREN","M. HOLLOWAY","E. VASS","J. ODELL","R. QUAY"][Math.floor(Math.random()*5)];
-      g.textAlign="center";
-      /* engraving = a dark cut with a bright lip below it */
-      const cut=(txt,cy,fs)=>{
-        g.font=`bold ${fs}px Courier New`;
-        g.fillStyle="rgba(30,24,10,0.8)";g.fillText(txt,x0+iw/2,cy);
-        g.fillStyle="rgba(246,236,196,0.30)";g.fillText(txt,x0+iw/2,cy+1.2);
-      };
-      cut("IN MEMORIAM",y0+40,18);
-      g.fillStyle="rgba(30,24,10,0.5)";g.fillRect(x0+42,y0+50,iw-84,1.5);
-      for(let i=0;i<10;i++) cut(name,y0+80+i*22,13);
-      cut("· AND THE REST ·",y0+ih-22,11);
+/* ================= the paintings =================
+   Most of what hangs here is OIL PAINTINGS OF EMPTY PLACES: a reading room
+   with every lamp lit and nobody at the tables, a corridor of shut doors, a
+   drained pool, a stair going down, a field with one pole in it. That is the
+   aesthetic of the floor in one sentence — a place built for people with
+   none in it — and a wall of them reads as the building remembering itself.
+   The old set was mostly jokes (an acuity chart that says HUSH), and a joke
+   on a wall stops being unsettling the second time you read it.
+   A painting is not a drawing: the composition is laid in flat, then the
+   FINISH does the work (oilFinish) — brush marks laid by soft-light strokes
+   that lighten and darken whatever paint is under them without having to
+   read the canvas back, a canvas weave, varnish gone amber and thicker at
+   the edges, and craquelure. `size` picks the canvas: at 0.5–2.4m of sight
+   size a single resolution was either wasted or smeared. `land` turns the
+   canvas to landscape; makeFramedArt sizes the plate off it. */
+const ART_PX={s:[256,320],m:[384,480],l:[512,640]};
+const rgbs=(c,a)=>`rgba(${c[0]|0},${c[1]|0},${c[2]|0},${a})`;
+const mix3=(a,b,k)=>[a[0]+(b[0]-a[0])*k,a[1]+(b[1]-a[1])*k,a[2]+(b[2]-a[2])*k];
+function poly(g,pts,fill){ g.beginPath(); pts.forEach(([x,y],i)=>i?g.lineTo(x,y):g.moveTo(x,y)); g.closePath(); g.fillStyle=fill; g.fill(); }
+function glow(g,x,y,r,c,a){
+  const gr=g.createRadialGradient(x,y,0,x,y,r);
+  gr.addColorStop(0,rgbs(c,a)); gr.addColorStop(1,rgbs(c,0));
+  g.fillStyle=gr; g.fillRect(x-r,y-r,r*2,r*2);
+}
+/* the brush, the weave, the varnish and the cracks — over any composition */
+function oilFinish(g,w,h,flow){
+  const k=w/256;
+  g.save();
+  g.globalCompositeOperation="soft-light";
+  for(let i=0;i<Math.round(1100*k*k);i++){
+    const x=Math.random()*w, y=Math.random()*h;
+    const a=flow(x/w,y/h)+(Math.random()-0.5)*0.35, l=(4+Math.random()*14)*k;
+    g.strokeStyle=Math.random()<0.5? `rgba(255,248,230,${0.04+Math.random()*0.08})`
+                                    : `rgba(10,8,6,${0.04+Math.random()*0.08})`;
+    g.lineWidth=(1.5+Math.random()*3)*k; g.lineCap="round";
+    g.beginPath(); g.moveTo(x,y); g.lineTo(x+Math.cos(a)*l,y+Math.sin(a)*l); g.stroke();
+  }
+  g.globalCompositeOperation="source-over";
+  /* canvas weave, fine and even */
+  g.fillStyle="rgba(0,0,0,0.045)";
+  for(let x=0;x<w;x+=2*k) g.fillRect(x,0,0.7*k,h);
+  for(let y=0;y<h;y+=2*k) g.fillRect(0,y,w,0.7*k);
+  /* varnish: amber, pooled thicker toward the frame */
+  g.globalCompositeOperation="multiply";
+  g.fillStyle="rgba(236,206,150,0.32)"; g.fillRect(0,0,w,h);
+  const vg=g.createRadialGradient(w/2,h/2,Math.min(w,h)*0.3,w/2,h/2,Math.hypot(w,h)*0.6);
+  vg.addColorStop(0,"rgba(255,255,255,1)"); vg.addColorStop(1,"rgba(178,154,116,1)");
+  g.fillStyle=vg; g.fillRect(0,0,w,h);
+  g.globalCompositeOperation="source-over";
+  /* craquelure: short kinked cells, barely there */
+  for(let i=0;i<Math.round(220*k);i++){
+    let px=Math.random()*w, py=Math.random()*h, a=Math.random()*7;
+    g.strokeStyle=`rgba(30,22,12,${0.08+Math.random()*0.12})`; g.lineWidth=0.6*k;
+    g.beginPath(); g.moveTo(px,py);
+    for(let s=0;s<3;s++){ a+=(Math.random()-0.5)*1.8; px+=Math.cos(a)*(3+Math.random()*7)*k; py+=Math.sin(a)*(3+Math.random()*7)*k; g.lineTo(px,py); }
+    g.stroke();
+  }
+  g.restore();
+}
+/* one-point perspective for the interiors: X across, Y down from the eye,
+   Z into the picture */
+const persp=(vx,vy,f)=>(X,Y,Z)=>[vx+X*f/Z, vy+Y*f/Z];
+
+function paintReadingRoom(g,w,h){
+  const vx=w*(0.44+Math.random()*0.12), vy=h*0.44, P=persp(vx,vy,w*0.8);
+  const Zb=26, eye=1.6, Wd=5.2, Ht=3.4;
+  const wall=[74,62,46], ceil=[30,26,22], floor=[46,56,66];
+  poly(g,[P(-Wd,-Ht+eye,1.2),P(Wd,-Ht+eye,1.2),P(Wd,-Ht+eye,Zb),P(-Wd,-Ht+eye,Zb)],rgbs(ceil,1));
+  poly(g,[P(-Wd,eye,1.2),P(Wd,eye,1.2),P(Wd,eye,Zb),P(-Wd,eye,Zb)],rgbs(floor,1));
+  for(const s of[-1,1]) poly(g,[P(s*Wd,-Ht+eye,1.2),P(s*Wd,-Ht+eye,Zb),P(s*Wd,eye,Zb),P(s*Wd,eye,1.2)],rgbs(mix3(wall,[0,0,0],0.25),1));
+  const [bx0,by0]=P(-Wd,-Ht+eye,Zb), [bx1,by1]=P(Wd,eye,Zb);
+  g.fillStyle=rgbs(mix3(wall,[0,0,0],0.4),1); g.fillRect(bx0,by0,bx1-bx0,by1-by0);
+  /* shelves down both walls: dark bands of spines */
+  for(const s of[-1,1]) for(let z=2;z<Zb;z+=1.6){
+    poly(g,[P(s*Wd*0.995,-Ht+eye+0.5,z),P(s*Wd*0.995,-Ht+eye+0.5,z+1.4),P(s*Wd*0.995,eye-0.2,z+1.4),P(s*Wd*0.995,eye-0.2,z)],"rgba(26,18,12,0.7)");
+    for(let b=0;b<4;b++){ const yy=-Ht+eye+0.7+b*0.62;
+      poly(g,[P(s*Wd*0.99,yy,z),P(s*Wd*0.99,yy,z+1.4),P(s*Wd*0.99,yy+0.05,z+1.4),P(s*Wd*0.99,yy+0.05,z)],"rgba(120,90,52,0.35)"); }
+  }
+  /* the tables, back to front, each with its lamp still on */
+  const rows=[-2.2,2.2];
+  for(let z=Zb-2;z>=3;z-=3.2) for(const X of rows){
+    const tY=eye-0.76;
+    poly(g,[P(X-0.9,tY,z-0.7),P(X+0.9,tY,z-0.7),P(X+0.9,tY,z+0.7),P(X-0.9,tY,z+0.7)],"rgba(86,58,32,1)");
+    poly(g,[P(X-0.9,tY,z-0.7),P(X+0.9,tY,z-0.7),P(X+0.9,tY+0.08,z-0.7),P(X-0.9,tY+0.08,z-0.7)],"rgba(46,30,16,1)");
+    for(const lx of[-0.7,0.7]){ const[a,b]=P(X+lx,tY+0.08,z-0.66),[c,d]=P(X+lx,eye,z-0.66); g.strokeStyle="rgba(30,20,12,0.9)"; g.lineWidth=Math.max(1,w*0.3/z/10); g.beginPath(); g.moveTo(a,b); g.lineTo(c,d); g.stroke(); }
+    const [lx,ly]=P(X,tY-0.35,z), rr=w*0.5/z;
+    glow(g,lx,ly+rr*0.6,rr*4.2,[255,210,140],0.35);
+    g.fillStyle="rgba(40,110,70,1)"; g.beginPath(); g.ellipse(lx,ly,rr*0.9,rr*0.42,0,0,7); g.fill();
+    g.fillStyle="rgba(255,232,170,0.9)"; g.fillRect(lx-rr*0.5,ly+rr*0.25,rr,rr*0.15);
+  }
+  oilFinish(g,w,h,(u,v)=>v>0.46? 0 : Math.PI/2*(u<0.5?1:-1)*0.3);
+}
+function paintCorridor(g,w,h){
+  const vx=w*(0.47+Math.random()*0.06), vy=h*0.47, P=persp(vx,vy,w*0.7);
+  const Zb=46, eye=1.6, Wd=1.3, Ht=2.7;
+  const paper=[150,138,78], ceil=[118,112,82], floor=[92,80,50];
+  poly(g,[P(-Wd,-Ht+eye,0.9),P(Wd,-Ht+eye,0.9),P(Wd,-Ht+eye,Zb),P(-Wd,-Ht+eye,Zb)],rgbs(ceil,1));
+  poly(g,[P(-Wd,eye,0.9),P(Wd,eye,0.9),P(Wd,eye,Zb),P(-Wd,eye,Zb)],rgbs(floor,1));
+  for(const s of[-1,1]) poly(g,[P(s*Wd,-Ht+eye,0.9),P(s*Wd,-Ht+eye,Zb),P(s*Wd,eye,Zb),P(s*Wd,eye,0.9)],rgbs(mix3(paper,[0,0,0],s<0?0.12:0.22),1));
+  /* the far end, a door, a crack of light under it */
+  const [bx0,by0]=P(-Wd,-Ht+eye,Zb), [bx1,by1]=P(Wd,eye,Zb);
+  g.fillStyle=rgbs(mix3(paper,[0,0,0],0.35),1); g.fillRect(bx0,by0,bx1-bx0,by1-by0);
+  const [dx0,dy0]=P(-0.45,eye-2.05,Zb), [dx1,dy1]=P(0.45,eye,Zb);
+  g.fillStyle="rgba(58,44,26,1)"; g.fillRect(dx0,dy0,dx1-dx0,dy1-dy0);
+  g.fillStyle="rgba(255,244,200,0.8)"; g.fillRect(dx0,dy1-Math.max(1,(dy1-dy0)*0.03),dx1-dx0,Math.max(1,(dy1-dy0)*0.03));
+  /* doors down both sides, all shut */
+  for(const s of[-1,1]) for(let z=3+Math.random()*2;z<Zb-3;z+=5.5){
+    poly(g,[P(s*Wd*0.99,eye-2.05,z),P(s*Wd*0.99,eye-2.05,z+0.95),P(s*Wd*0.99,eye,z+0.95),P(s*Wd*0.99,eye,z)],"rgba(84,62,36,0.95)");
+    const [kx,ky]=P(s*Wd*0.98,eye-1.0,z+(s>0?0.15:0.8)); g.fillStyle="rgba(200,170,90,0.9)"; g.fillRect(kx-1,ky-1,2,2);
+  }
+  /* the ceiling panels, every one of them lit */
+  for(let z=2;z<Zb;z+=4){
+    const q=[P(-0.45,-Ht+eye,z),P(0.45,-Ht+eye,z),P(0.45,-Ht+eye,z+1.2),P(-0.45,-Ht+eye,z+1.2)];
+    poly(g,q,"rgba(250,246,214,0.95)");
+    const [cx,cy]=P(0,-Ht+eye,z+0.6); glow(g,cx,cy,w*0.6/z*3,[255,248,200],0.25);
+  }
+  oilFinish(g,w,h,(u,v)=>Math.abs(v-0.47)>Math.abs(u-0.5)*0.9? 0 : Math.PI/2);
+}
+function paintPool(g,w,h){
+  const vx=w*(0.4+Math.random()*0.2), vy=h*0.34, P=persp(vx,vy,w*0.75);
+  const eye=1.7, Zb=30, Wd=6;
+  const tile=[196,214,210], deep=[112,150,154];
+  g.fillStyle=rgbs([150,160,158],1); g.fillRect(0,0,w,h);
+  /* the back wall with its high windows full of flat white */
+  const [bx0,by0]=P(-Wd,eye-7,Zb), [bx1,by1]=P(Wd,eye,Zb);
+  g.fillStyle="rgba(170,178,172,1)"; g.fillRect(bx0,by0,bx1-bx0,by1-by0);
+  for(let i=0;i<5;i++){ const x0=-Wd+0.8+i*2.3; const[a,b]=P(x0,eye-6.5,Zb),[c,d]=P(x0+1.4,eye-3.8,Zb);
+    g.fillStyle="rgba(240,244,236,0.95)"; g.fillRect(a,b,c-a,d-b); }
+  /* the deck, then the basin cut into it — drained */
+  poly(g,[P(-Wd,eye,1),P(Wd,eye,1),P(Wd,eye,Zb),P(-Wd,eye,Zb)],rgbs(tile,1));
+  const bd=eye+1.8, x0=-3.6, x1=3.6, z0=4, z1=24;
+  poly(g,[P(x0,bd,z0),P(x1,bd,z0),P(x1,bd,z1),P(x0,bd,z1)],rgbs(deep,1));
+  poly(g,[P(x0,eye,z1),P(x1,eye,z1),P(x1,bd,z1),P(x0,bd,z1)],rgbs(mix3(deep,[255,255,255],0.2),1));
+  for(const s of[-1,1]){ const X=s<0?x0:x1; poly(g,[P(X,eye,z0),P(X,eye,z1),P(X,bd,z1),P(X,bd,z0)],rgbs(mix3(deep,[0,0,0],s<0?0.1:0.25),1)); }
+  /* the grout, in perspective, on everything */
+  g.strokeStyle="rgba(60,80,82,0.35)"; g.lineWidth=Math.max(0.6,w/512);
+  for(let x=x0;x<=x1;x+=0.6){ const[a,b]=P(x,bd,z0),[c,d]=P(x,bd,z1); g.beginPath(); g.moveTo(a,b); g.lineTo(c,d); g.stroke(); }
+  for(let z=z0;z<=z1;z+=0.6){ const[a,b]=P(x0,bd,z),[c,d]=P(x1,bd,z); g.beginPath(); g.moveTo(a,b); g.lineTo(c,d); g.stroke(); }
+  for(let z=1.5;z<Zb;z+=0.9){ const[a,b]=P(-Wd,eye,z),[c,d]=P(Wd,eye,z); if(z>z0&&z<z1){ const[e,f]=P(x0,eye,z),[gx,hy]=P(x1,eye,z); g.beginPath(); g.moveTo(a,b); g.lineTo(e,f); g.moveTo(gx,hy); g.lineTo(c,d); g.stroke(); } else { g.beginPath(); g.moveTo(a,b); g.lineTo(c,d); g.stroke(); } }
+  /* one ladder, down into nothing */
+  const lz=9, lx=x1;
+  for(const dz of[-0.25,0.25]){ const[a,b]=P(lx-0.1,eye-0.9,lz+dz),[c,d]=P(lx-0.25,bd,lz+dz); g.strokeStyle="rgba(210,214,212,0.95)"; g.lineWidth=Math.max(1.2,w*0.6/lz/10); g.beginPath(); g.moveTo(a,b); g.lineTo(c,d); g.stroke(); }
+  /* a little standing water in the deep end, reflecting the windows */
+  const[wa,wb]=P(x0+0.4,bd-0.01,z1-4),[wc,wd]=P(x1-0.4,bd-0.01,z1-0.3);
+  g.fillStyle="rgba(210,226,222,0.35)"; g.fillRect(wa,wb,wc-wa,Math.max(2,wd-wb));
+  oilFinish(g,w,h,(u,v)=>v<0.34? 0 : Math.PI/2);
+}
+function paintField(g,w,h){
+  const hy=h*(0.6+Math.random()*0.08);
+  const sky=g.createLinearGradient(0,0,0,hy);
+  sky.addColorStop(0,"#2c3440"); sky.addColorStop(0.6,"#6a6c70"); sky.addColorStop(1,"#c8a888");
+  g.fillStyle=sky; g.fillRect(0,0,w,hy);
+  const gnd=g.createLinearGradient(0,hy,0,h);
+  gnd.addColorStop(0,"#3a3e2c"); gnd.addColorStop(1,"#1c1e16");
+  g.fillStyle=gnd; g.fillRect(0,hy,w,h-hy);
+  /* a far tree line, flat as a cut-out */
+  g.fillStyle="rgba(34,38,34,0.95)"; g.beginPath(); g.moveTo(0,hy);
+  for(let x=0;x<=w;x+=w/60) g.lineTo(x,hy-(3+Math.random()*9)*w/256*(0.5+0.5*Math.sin(x*0.02)));
+  g.lineTo(w,hy); g.closePath(); g.fill();
+  /* the pole, the wires, and the one light */
+  const px=w*(0.6+Math.random()*0.2), top=hy-h*0.42;
+  g.strokeStyle="rgba(22,20,18,0.95)"; g.lineWidth=w*0.012;
+  g.beginPath(); g.moveTo(px,hy+h*0.06); g.lineTo(px,top); g.stroke();
+  g.lineWidth=w*0.008; g.beginPath(); g.moveTo(px-w*0.07,top+h*0.03); g.lineTo(px+w*0.07,top+h*0.03); g.stroke();
+  g.lineWidth=Math.max(0.8,w*0.0025);
+  for(const dx of[-0.07,0.07]){ g.beginPath(); g.moveTo(px+dx*w,top+h*0.03);
+    g.quadraticCurveTo(px+dx*w-w*0.35,top+h*0.09,-w*0.05,top+h*0.06); g.stroke(); }
+  glow(g,px+w*0.04,top+h*0.07,w*0.22,[255,200,120],0.35);
+  g.fillStyle="rgba(255,226,170,0.95)"; g.beginPath(); g.arc(px+w*0.04,top+h*0.07,w*0.012,0,7); g.fill();
+  oilFinish(g,w,h,(u,v)=>v<0.6? 0 : (Math.random()-0.5)*0.4);
+}
+function paintStairwell(g,w,h){
+  /* looking down a stone stair into the dark — and there is a colour at the bottom */
+  g.fillStyle="#1c1a18"; g.fillRect(0,0,w,h);
+  const vx=w*0.5, vy=h*0.88, n=16;
+  for(let i=n-1;i>=0;i--){
+    const t=i/n, y=h*0.05+t*(vy-h*0.05)*0.96, hw=w*(0.46-t*0.34), th=h*0.05*(1-t*0.7);
+    const c=Math.round(118-t*96);
+    g.fillStyle=`rgb(${c},${c-6},${c-14})`; g.fillRect(vx-hw,y,hw*2,th);
+    g.fillStyle=`rgba(0,0,0,${0.35+t*0.4})`; g.fillRect(vx-hw,y+th*0.75,hw*2,th*0.4);
+  }
+  for(const s of[-1,1]){
+    g.fillStyle="rgba(58,52,44,0.95)";
+    g.beginPath(); g.moveTo(s<0?0:w,0); g.lineTo(vx+s*w*0.46,h*0.05); g.lineTo(vx+s*w*0.12,vy); g.lineTo(s<0?0:w,h); g.closePath(); g.fill();
+  }
+  glow(g,vx,vy,w*0.3,[70,150,200],0.45);
+  const dark=g.createLinearGradient(0,h*0.45,0,h); dark.addColorStop(0,"rgba(0,0,0,0)"); dark.addColorStop(1,"rgba(0,0,0,0.55)");
+  g.fillStyle=dark; g.fillRect(0,0,w,h);
+  glow(g,vx,vy,w*0.12,[120,200,240],0.35);
+  oilFinish(g,w,h,()=>0);
+}
+function paintDoorway(g,w,h){
+  /* a room papered in yellow stripes, a doorway, and nothing through it */
+  const stripe=[188,170,96], dk=[160,142,78];
+  for(let x=0;x<w;x+=w/12){ g.fillStyle=rgbs((x/(w/12))%2<1? stripe:dk,1); g.fillRect(x,0,w/12+1,h); }
+  const fl=h*0.8;
+  g.fillStyle="#6c6040"; g.fillRect(0,fl,w,h-fl);
+  g.fillStyle="#3c3220"; g.fillRect(0,fl-h*0.025,w,h*0.025);
+  const dw=w*0.3, dx=w*(0.35+Math.random()*0.1), dt=h*0.3;
+  g.fillStyle="#8a7a50"; g.fillRect(dx-w*0.02,dt-h*0.02,dw+w*0.04,fl-dt+h*0.02);
+  const dg=g.createLinearGradient(0,dt,0,fl); dg.addColorStop(0,"#0a0906"); dg.addColorStop(1,"#1a160e");
+  g.fillStyle=dg; g.fillRect(dx,dt,dw,fl-dt);
+  glow(g,w*0.5,0,w*0.6,[255,250,210],0.4);
+  oilFinish(g,w,h,()=>Math.PI/2);
+}
+function paintChair(g,w,h){
+  /* an empty chair in an empty room, and the light from a window you can't see */
+  const hz=h*0.62;
+  g.fillStyle="#5a5448"; g.fillRect(0,0,w,hz);
+  g.fillStyle="#3a3228"; g.fillRect(0,hz,w,h-hz);
+  g.fillStyle="#2a241c"; g.fillRect(0,hz-h*0.02,w,h*0.02);
+  poly(g,[[w*0.08,hz+h*0.02],[w*0.46,hz+h*0.02],[w*0.72,h],[w*0.02,h]],"rgba(240,226,190,0.30)");
+  poly(g,[[w*0.1,h*0.1],[w*0.38,h*0.12],[w*0.36,hz-h*0.08],[w*0.12,hz-h*0.1]],"rgba(240,230,200,0.22)");
+  const cx=w*(0.55+Math.random()*0.1), cy=hz+h*0.2, s=w/256;
+  g.fillStyle="#2a1c10"; g.strokeStyle="#2a1c10"; g.lineWidth=4*s;
+  g.fillRect(cx-26*s,cy-6*s,52*s,8*s);
+  for(const lx of[-24,22]){ g.beginPath(); g.moveTo(cx+lx*s,cy); g.lineTo(cx+lx*s,cy+44*s); g.stroke(); }
+  for(const lx of[-16,16]){ g.beginPath(); g.moveTo(cx+lx*s,cy); g.lineTo(cx+lx*s*1.1,cy+36*s); g.stroke(); }
+  g.beginPath(); g.moveTo(cx-22*s,cy); g.lineTo(cx-24*s,cy-60*s); g.moveTo(cx+18*s,cy); g.lineTo(cx+20*s,cy-60*s); g.stroke();
+  g.fillRect(cx-24*s,cy-62*s,44*s,7*s); g.fillRect(cx-23*s,cy-40*s,42*s,4*s);
+  g.fillStyle="rgba(0,0,0,0.3)"; g.beginPath(); g.ellipse(cx-10*s,cy+46*s,44*s,6*s,0,0,7); g.fill();
+  oilFinish(g,w,h,(u,v)=>v<0.62? Math.PI/2 : 0);
+}
+function paintPortrait(g,w,h){
+  /* a donor portrait, with nothing where the face goes */
+  const cx=w/2;
+  const bg=g.createRadialGradient(cx,h*0.36,4,cx,h*0.4,h*0.7);
+  bg.addColorStop(0,"#4a3e2c"); bg.addColorStop(1,"#15110c");
+  g.fillStyle=bg; g.fillRect(0,0,w,h);
+  g.fillStyle="#120e0a";
+  g.beginPath(); g.ellipse(cx,h*0.86,w*0.40,h*0.34,0,Math.PI,0); g.fill();
+  g.beginPath(); g.moveTo(cx-w*0.07,h*0.46); g.lineTo(cx+w*0.07,h*0.46); g.lineTo(cx+w*0.09,h*0.58); g.lineTo(cx-w*0.09,h*0.58); g.fill();
+  g.beginPath(); g.ellipse(cx,h*0.33,w*0.14,h*0.14,0,0,7); g.fill();
+  g.fillStyle="rgba(206,196,172,0.7)";
+  for(const s of[-1,1]){ g.beginPath(); g.moveTo(cx,h*0.52); g.lineTo(cx+s*w*0.12,h*0.58); g.lineTo(cx+s*w*0.03,h*0.70); g.closePath(); g.fill(); }
+  glow(g,cx,h*0.33,w*0.16,[168,146,108],0.32);
+  const hands=Math.random()<0.5;
+  if(hands){ g.fillStyle="rgba(150,126,96,0.5)"; g.beginPath(); g.ellipse(cx,h*0.9,w*0.09,h*0.03,0,0,7); g.fill(); }
+  oilFinish(g,w,h,(u,v)=>v<0.55? Math.PI/2+(u-0.5)*0.8 : 0.3*(u-0.5));
+}
+function paintNocturne(g,w,h){
+  const gr=g.createLinearGradient(0,0,0,h);
+  gr.addColorStop(0,"#11151d"); gr.addColorStop(0.65,"#2a3140"); gr.addColorStop(1,"#3a4252");
+  g.fillStyle=gr; g.fillRect(0,0,w,h);
+  const mx=w*(0.25+Math.random()*0.5), my=h*0.24;
+  glow(g,mx,my,w*0.2,[214,210,190],0.34);
+  g.fillStyle="rgba(214,210,190,0.9)"; g.beginPath(); g.arc(mx,my,w*0.05,0,7); g.fill();
+  for(let i=0;i<4;i++){
+    g.fillStyle=`rgba(${10+i*6},${12+i*6},${16+i*7},0.95)`;
+    g.beginPath(); g.moveTo(0,h);
+    for(let xx=0;xx<=w;xx+=w/40) g.lineTo(xx,h*(0.52+i*0.11)+Math.sin(xx/w*11+i*9)*h*0.03+Math.sin(xx/w*36+i*3)*h*0.01);
+    g.lineTo(w,h); g.closePath(); g.fill();
+  }
+  /* one lit window, far off, on nothing */
+  const lx=w*(0.2+Math.random()*0.6), ly=h*0.63;
+  g.fillStyle="rgba(255,214,140,0.9)"; g.fillRect(lx,ly,w*0.012,w*0.012);
+  glow(g,lx,ly,w*0.05,[255,200,120],0.25);
+  oilFinish(g,w,h,()=>0);
+}
+/* the few documents that stay: the collection map, the building in
+   section with one floor too many, the staff photograph whose faces never
+   developed, and a certificate nobody was ever given */
+function docMap(g,w,h,k){
+  const ink="rgba(40,34,24,0.85)";
+  g.fillStyle="#a89c80"; g.fillRect(0,0,w,h);
+  g.strokeStyle="rgba(60,50,34,0.7)"; g.lineWidth=1.6*k;
+  const pts=[]; for(let i=0;i<13;i++) pts.push([18*k+Math.random()*(w-36*k),40*k+Math.random()*(h-76*k)]);
+  for(let i=0;i<16;i++){ const a=pts[Math.floor(Math.random()*pts.length)],b=pts[Math.floor(Math.random()*pts.length)];
+    g.beginPath(); g.moveTo(a[0],a[1]); g.lineTo(b[0],a[1]); g.lineTo(b[0],b[1]); g.stroke(); }
+  g.strokeStyle="rgba(60,50,34,0.45)"; g.lineWidth=k;
+  for(let i=0;i<7;i++){ const rx=16*k+Math.random()*(w-70*k), ry=38*k+Math.random()*(h-100*k), rw=(22+Math.random()*44)*k, rh=(18+Math.random()*36)*k;
+    g.strokeRect(rx,ry,rw,rh); for(let hx=rx+4*k;hx<rx+rw;hx+=5*k){ g.beginPath(); g.moveTo(hx,ry+rh); g.lineTo(hx+rh*0.5,ry); g.stroke(); } }
+  for(const p of pts){ g.fillStyle="rgba(60,50,34,0.85)"; g.beginPath(); g.arc(p[0],p[1],3.4*k,0,7); g.fill(); }
+  g.fillStyle=ink; g.textAlign="center"; g.font=`bold ${15*k}px Courier New`;
+  g.fillText("MAP OF THE COLLECTION",w/2,22*k);
+  g.font=`${9*k}px Courier New`; g.fillStyle="rgba(40,34,24,0.55)";
+  g.fillText("SCALE: ONE FLOOR TO ONE FLOOR",w/2,h-12*k);
+}
+function docSection(g,w,h,k){
+  const ink="rgba(40,34,24,0.85)";
+  g.fillStyle="#dbd3bc"; g.fillRect(0,0,w,h);
+  const bx=26*k, bw=w-52*k, top=44*k, fl=7, fh=(h-96*k)/fl;
+  g.strokeStyle="rgba(40,34,24,0.8)"; g.lineWidth=1.4*k; g.strokeRect(bx,top,bw,fh*fl);
+  for(let i=1;i<fl;i++){ g.beginPath(); g.moveTo(bx,top+fh*i); g.lineTo(bx+bw,top+fh*i); g.stroke(); }
+  g.strokeStyle="rgba(40,34,24,0.35)"; g.lineWidth=0.8*k;
+  for(let i=0;i<fl-1;i++) for(let sx=bx+8*k;sx<bx+bw-8*k;sx+=9*k){ g.beginPath(); g.moveTo(sx,top+fh*i+fh-4*k); g.lineTo(sx,top+fh*i+5*k); g.stroke(); }
+  g.strokeStyle="rgba(40,34,24,0.75)"; g.lineWidth=1.2*k;
+  for(let i=0;i<fl-1;i++){ g.beginPath(); g.moveTo(bx+bw*0.62,top+fh*(i+1)); g.lineTo(bx+bw*0.80,top+fh*i); g.stroke(); }
+  g.fillStyle=ink; g.font=`${10*k}px Courier New`; g.textAlign="right";
+  for(let i=0;i<fl-1;i++) g.fillText(`${fl-1-i}`,bx-6*k,top+fh*i+fh*0.62);
+  g.fillStyle="rgba(150,40,30,0.8)"; g.fillText("?",bx-6*k,top+fh*(fl-1)+fh*0.62);
+  g.textAlign="center"; g.fillStyle=ink; g.font=`bold ${13*k}px Courier New`;
+  g.fillText("LONGITUDINAL SECTION",w/2,24*k);
+  g.font=`${9*k}px Courier New`; g.fillStyle="rgba(40,34,24,0.55)";
+  g.fillText("DRAWING ∅ OF ∅ · NOT TO SCALE",w/2,h-14*k);
+}
+function docStaff(g,w,h,k){
+  g.fillStyle="#3a3126"; g.fillRect(0,0,w,h);
+  glow(g,w/2,h*0.45,h*0.62,[178,158,120],0.5);
+  for(let row=0;row<3;row++){
+    const n=5+row, by=h*(0.34+row*0.19), sc=1+row*0.1;
+    for(let i=0;i<n;i++){
+      const px=w*(i+0.5)/n+(Math.random()-0.5)*5*k;
+      g.fillStyle="rgba(24,20,15,0.92)";
+      g.beginPath(); g.ellipse(px,by+26*k*sc,w*0.075*sc,h*0.075*sc,0,Math.PI,0); g.fill();
+      g.beginPath(); g.ellipse(px,by,w*0.036*sc,h*0.034*sc,0,0,7); g.fill();
+      glow(g,px,by,w*0.034*sc,[196,176,138],0.62);
     }
-    /* every plate is behind glass in a building that has been damp for
-       longer than anyone: foxing on the paper, and a bloom of dust across
-       the inside of the glazing */
-    for(let i=0;i<9;i++){
-      const fx=Math.random()*w,fy=Math.random()*h,r=8+Math.random()*30;
-      const fg2=g.createRadialGradient(fx,fy,1,fx,fy,r);
-      fg2.addColorStop(0,`rgba(108,80,38,${0.05+Math.random()*0.11})`);
-      fg2.addColorStop(1,"rgba(108,80,38,0)");
-      g.fillStyle=fg2;g.beginPath();g.arc(fx,fy,r,0,7);g.fill();
+  }
+  g.fillStyle="rgba(232,222,196,0.85)"; g.font=`italic ${12*k}px Courier New`; g.textAlign="center";
+  g.fillText("STAFF OF THE READING ROOM",w/2,26*k);
+  /* silver gone to mirror at the edges, the way old prints do */
+  const sv=g.createRadialGradient(w/2,h/2,Math.min(w,h)*0.3,w/2,h/2,Math.hypot(w,h)*0.55);
+  sv.addColorStop(0,"rgba(160,170,180,0)"); sv.addColorStop(1,"rgba(150,160,170,0.28)");
+  g.fillStyle=sv; g.fillRect(0,0,w,h);
+}
+function docCertificate(g,w,h,k){
+  g.fillStyle="#e2d9bd"; g.fillRect(0,0,w,h);
+  g.strokeStyle="rgba(122,98,48,0.8)"; g.lineWidth=2.5*k; g.strokeRect(14*k,14*k,w-28*k,h-28*k);
+  g.lineWidth=0.9*k; g.strokeRect(21*k,21*k,w-42*k,h-42*k);
+  g.fillStyle="rgba(60,50,28,0.9)"; g.textAlign="center"; g.font=`bold ${17*k}px Courier New`;
+  g.fillText("AWARDED",w/2,58*k);
+  g.font=`italic ${12*k}px Courier New`; g.fillStyle="rgba(60,50,28,0.7)";
+  ["for service to the collection,","rendered without interruption,","for the whole of the hours."]
+    .forEach((ln,i)=>g.fillText(ln,w/2,(84+i*17)*k));
+  g.strokeStyle="rgba(60,50,28,0.6)"; g.lineWidth=k;
+  g.beginPath(); g.moveTo(34*k,164*k); g.lineTo(w-34*k,164*k); g.stroke();
+  g.beginPath(); g.moveTo(52*k,h-52*k); g.lineTo(w-52*k,h-52*k); g.stroke();
+  const sx=w*0.28, sy=h-92*k;
+  g.fillStyle="rgba(126,44,32,0.85)"; g.beginPath();
+  for(let q=0;q<=28;q++){ const a=q/28*Math.PI*2, rr=22*k*(q%2?0.86:1); q? g.lineTo(sx+Math.cos(a)*rr,sy+Math.sin(a)*rr) : g.moveTo(sx+Math.cos(a)*rr,sy+Math.sin(a)*rr); }
+  g.closePath(); g.fill();
+}
+const PAINTINGS=[paintReadingRoom,paintCorridor,paintPool,paintField,paintStairwell,
+                 paintDoorway,paintChair,paintPortrait,paintNocturne];
+/* landscape-shaped subjects, which want a landscape plate */
+const LANDSCAPE=new Set([paintReadingRoom,paintPool,paintField,paintNocturne,paintCorridor]);
+const DOCS=[docMap,docSection,docStaff,docCertificate];
+/* {tex, land}. `land` says which way round the plate wants hanging. */
+export function makeArtTexture(size="m",pickLand){
+  const paint=Math.random()<0.8;
+  const fn=paint? PAINTINGS[Math.floor(Math.random()*PAINTINGS.length)] : DOCS[Math.floor(Math.random()*DOCS.length)];
+  const land=pickLand===undefined? LANDSCAPE.has(fn) : pickLand;
+  const [pw,ph]=ART_PX[size]||ART_PX.m;
+  const [w,h]=land? [ph,pw] : [pw,ph];
+  const t=makeCanvas(w,h,(g,W,H)=>{
+    if(paint) fn(g,W,H);
+    else {
+      fn(g,W,H,Math.min(W,H)/256);
+      /* paper under glass for decades: foxing and a bloom of dust */
+      for(let i=0;i<9;i++) glow(g,Math.random()*W,Math.random()*H,(8+Math.random()*30)*W/256,[108,80,38],0.05+Math.random()*0.11);
+      const dust=g.createLinearGradient(0,0,0,H);
+      dust.addColorStop(0,"rgba(196,190,172,0.12)"); dust.addColorStop(0.4,"rgba(196,190,172,0.02)"); dust.addColorStop(1,"rgba(60,54,44,0.10)");
+      g.fillStyle=dust; g.fillRect(0,0,W,H);
     }
-    const dust=g.createLinearGradient(0,0,0,h);
-    dust.addColorStop(0,"rgba(196,190,172,0.12)");
-    dust.addColorStop(0.4,"rgba(196,190,172,0.02)");
-    dust.addColorStop(1,"rgba(60,54,44,0.10)");
-    g.fillStyle=dust;g.fillRect(0,0,w,h);
   });
   t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.minFilter=THREE.LinearFilter; t.generateMipmaps=false;
-  return t;
+  return {tex:t, land, paint};
 }
 
+/* ================= THE END: the room's furniture =================
+   Everything the reading room is furnished with that isn't a book: the
+   noticeboards, the clocks, the section plaques on the pilasters, the one
+   EXIT sign, the card catalogue, the wet-floor sign, and the paper. */
+export const texCork=makeCanvas(256,256,(g,w,h)=>{
+  g.fillStyle="#8a6a44"; g.fillRect(0,0,w,h);
+  for(let i=0;i<5200;i++){
+    const v=Math.random();
+    g.fillStyle=v<0.4? `rgba(60,42,24,${0.2+Math.random()*0.3})` : v<0.8? `rgba(170,136,92,${0.2+Math.random()*0.3})`
+                     : `rgba(40,28,16,${0.3+Math.random()*0.4})`;
+    const r=0.6+Math.random()*1.8;
+    g.beginPath(); g.arc(Math.random()*w,Math.random()*h,r,0,7); g.fill();
+  }
+  for(let i=0;i<60;i++){                        // pin holes where notices used to be
+    g.fillStyle="rgba(20,14,8,0.7)"; g.fillRect(Math.random()*w,Math.random()*h,1.4,1.4);
+  }
+});
+/* where a frame hung for forty years and doesn't any more: the paint under
+   it stayed the colour the room used to be, and dust drew the top edge */
+export const texGhost=makeCanvas(128,160,(g,w,h)=>{
+  g.clearRect(0,0,w,h);
+  for(let i=0;i<14;i++){
+    const inset=i*1.1;
+    g.fillStyle=`rgba(222,214,190,${0.02})`;
+    g.fillRect(8+inset,8+inset,w-16-inset*2,h-16-inset*2);
+  }
+  g.fillStyle="rgba(48,40,30,0.30)"; g.fillRect(9,8,w-18,2);
+  g.fillStyle="rgba(48,40,30,0.12)"; g.fillRect(9,10,w-18,3);
+});
+texGhost.wrapS=texGhost.wrapT=THREE.ClampToEdgeWrapping;
+/* the clock face. Every clock in the building is stopped at the same
+   minute — the hands are geometry, so this carries only the dial. */
+export const texClockFace=makeCanvas(256,256,(g,w,h)=>{
+  const c=w/2;
+  g.fillStyle="#1a1814"; g.fillRect(0,0,w,h);
+  const dial=g.createRadialGradient(c,c*0.9,10,c,c,c);
+  dial.addColorStop(0,"#e8e0c8"); dial.addColorStop(1,"#c8bc98");
+  g.fillStyle=dial; g.beginPath(); g.arc(c,c,c-4,0,7); g.fill();
+  g.strokeStyle="#1c1a16";
+  for(let i=0;i<60;i++){
+    const a=i/60*Math.PI*2, r0=i%5? c-18 : c-28;
+    g.lineWidth=i%5? 1.5:4;
+    g.beginPath(); g.moveTo(c+Math.sin(a)*r0,c-Math.cos(a)*r0); g.lineTo(c+Math.sin(a)*(c-12),c-Math.cos(a)*(c-12)); g.stroke();
+  }
+  g.fillStyle="#1c1a16"; g.font="bold 26px Arial"; g.textAlign="center"; g.textBaseline="middle";
+  for(let i=1;i<=12;i++){ const a=i/12*Math.PI*2; g.fillText(String(i),c+Math.sin(a)*(c-48),c-Math.cos(a)*(c-48)); }
+  g.font="bold 11px Arial"; g.fillStyle="rgba(28,26,22,0.7)"; g.fillText("STANDARD TIME",c,c+40);
+  const age=g.createRadialGradient(c,c,c*0.4,c,c,c);
+  age.addColorStop(0,"rgba(120,96,50,0)"); age.addColorStop(1,"rgba(120,96,50,0.3)");
+  g.fillStyle=age; g.beginPath(); g.arc(c,c,c-4,0,7); g.fill();
+});
+texClockFace.wrapS=texClockFace.wrapT=THREE.ClampToEdgeWrapping;
+/* enamel section plates for the pilasters, all in one atlas so forty of
+   them draw as one. PLAQUE_UV(i) gives cell i's window. */
+export const PLAQUE_COLS=8, PLAQUE_ROWS=6;
+export function makePlaqueAtlas(labels){
+  const cw=128, ch=80;
+  const t=makeCanvas(cw*PLAQUE_COLS,ch*PLAQUE_ROWS,(g,w,h)=>{
+    g.fillStyle="#1f2e28"; g.fillRect(0,0,w,h);
+    labels.forEach((lb,i)=>{
+      const x=(i%PLAQUE_COLS)*cw, y=Math.floor(i/PLAQUE_COLS)*ch;
+      g.fillStyle="#24382f"; g.fillRect(x+2,y+2,cw-4,ch-4);
+      g.strokeStyle="rgba(214,204,170,0.8)"; g.lineWidth=2.5; g.strokeRect(x+7,y+7,cw-14,ch-14);
+      g.fillStyle="rgba(222,212,178,0.92)"; g.textAlign="center"; g.textBaseline="middle";
+      g.font="bold 11px Arial"; g.fillText(lb[0],x+cw/2,y+23);
+      g.font="bold 30px Arial"; g.fillText(lb[1],x+cw/2,y+50);
+      for(let k=0;k<30;k++){                     // chipped enamel
+        g.fillStyle=`rgba(${Math.random()<0.6?"70,58,40":"20,18,14"},${0.3+Math.random()*0.5})`;
+        const ex=Math.random()<0.5? x+3+Math.random()*10 : x+cw-13+Math.random()*10;
+        g.fillRect(ex,y+3+Math.random()*(ch-6),1+Math.random()*3,1+Math.random()*3);
+      }
+    });
+  });
+  t.wrapS=t.wrapT=THREE.ClampToEdgeWrapping; t.anisotropy=4;
+  return {tex:t, uv:i=>{ const c=i%PLAQUE_COLS, r=Math.floor(i/PLAQUE_COLS);
+    return [c/PLAQUE_COLS, 1-(r+1)/PLAQUE_ROWS, (c+1)/PLAQUE_COLS, 1-r/PLAQUE_ROWS]; }};
+}
+/* an EXIT sign over a door that doesn't open */
+export const texExitSign=makeCanvas(256,96,(g,w,h)=>{
+  g.fillStyle="#140404"; g.fillRect(0,0,w,h);
+  g.fillStyle="#ff3a26"; g.font="bold 64px Arial"; g.textAlign="center"; g.textBaseline="middle";
+  g.fillText("EXIT",w/2,h/2+3);
+  g.fillStyle="rgba(0,0,0,0.35)";
+  for(let y=0;y<h;y+=3) g.fillRect(0,y,w,1);
+});
+texExitSign.wrapS=texExitSign.wrapT=THREE.ClampToEdgeWrapping;
+export const texStaffSign=makeCanvas(256,96,(g,w,h)=>{
+  g.fillStyle="#d8d0b8"; g.fillRect(0,0,w,h);
+  g.strokeStyle="#2a2620"; g.lineWidth=4; g.strokeRect(6,6,w-12,h-12);
+  g.fillStyle="#2a2620"; g.font="bold 34px Arial"; g.textAlign="center"; g.textBaseline="middle";
+  g.fillText("STAFF ONLY",w/2,h/2+2);
+  for(let i=0;i<8;i++){ const x=Math.random()*w,y=Math.random()*h,r=6+Math.random()*20;
+    const gr=g.createRadialGradient(x,y,1,x,y,r); gr.addColorStop(0,"rgba(110,82,40,0.18)"); gr.addColorStop(1,"rgba(110,82,40,0)");
+    g.fillStyle=gr; g.fillRect(x-r,y-r,r*2,r*2); }
+});
+texStaffSign.wrapS=texStaffSign.wrapT=THREE.ClampToEdgeWrapping;
+/* the wet-floor sign: the most out-of-place object in a carpeted library,
+   which is exactly why it is here */
+export const texWetFloor=makeCanvas(256,384,(g,w,h)=>{
+  g.fillStyle="#d8b020"; g.fillRect(0,0,w,h);
+  g.fillStyle="#141414"; g.font="bold 40px Arial"; g.textAlign="center"; g.textBaseline="middle";
+  g.fillText("CAUTION",w/2,52);
+  g.beginPath(); g.moveTo(w/2,92); g.lineTo(w/2+70,212); g.lineTo(w/2-70,212); g.closePath();
+  g.lineWidth=9; g.strokeStyle="#141414"; g.stroke();
+  g.font="bold 64px Arial"; g.fillText("!",w/2,172);
+  g.font="bold 32px Arial"; g.fillText("WET FLOOR",w/2,262);
+  g.font="bold 16px Arial"; g.fillText("PISO MOJADO",w/2,300);
+  for(let i=0;i<40;i++){ g.fillStyle=`rgba(90,70,20,${0.1+Math.random()*0.2})`;
+    g.fillRect(Math.random()*w,Math.random()*h,2+Math.random()*16,1+Math.random()*2); }
+  const dirt=g.createLinearGradient(0,h*0.6,0,h); dirt.addColorStop(0,"rgba(60,48,20,0)"); dirt.addColorStop(1,"rgba(60,48,20,0.35)");
+  g.fillStyle=dirt; g.fillRect(0,0,w,h);
+});
+/* the card catalogue's drawer bank: sixty drawers in oak, each with its
+   brass label frame and pull. Drawn, not built — sixty real drawers are
+   sixty boxes you only ever see from a metre away */
+export const CATALOG_COLS=6, CATALOG_ROWS=10;
+export function makeCatalogTexture(){
+  return makeCanvas(384,512,(g,w,h)=>{
+    const dw=w/CATALOG_COLS, dh=h/CATALOG_ROWS;
+    g.fillStyle="#3a2816"; g.fillRect(0,0,w,h);
+    const L="ABCDEFGHIJKLMNOPRSTW";
+    for(let r=0;r<CATALOG_ROWS;r++)for(let c=0;c<CATALOG_COLS;c++){
+      const x=c*dw+3, y=r*dh+3, ww=dw-6, hh=dh-6;
+      const tone=0.9+Math.random()*0.2;
+      g.fillStyle=`rgb(${118*tone|0},${84*tone|0},${50*tone|0})`; g.fillRect(x,y,ww,hh);
+      for(let k=0;k<14;k++){ g.fillStyle=`rgba(40,26,12,${0.08+Math.random()*0.12})`; g.fillRect(x+Math.random()*ww,y,1,hh); }
+      g.fillStyle="rgba(255,230,190,0.18)"; g.fillRect(x,y,ww,2);
+      g.fillStyle="rgba(0,0,0,0.35)"; g.fillRect(x,y+hh-2,ww,2);
+      /* the brass frame, the card in it, and the pull under it */
+      const fx=x+ww*0.22, fy=y+hh*0.18, fw=ww*0.56, fh=hh*0.3;
+      g.fillStyle="#8a7038"; g.fillRect(fx-2,fy-2,fw+4,fh+4);
+      g.fillStyle=Math.random()<0.12? "#2a1e10" : "#ddd2b4"; g.fillRect(fx,fy,fw,fh);
+      const i=(r*CATALOG_COLS+c)%L.length;
+      g.fillStyle="rgba(40,34,24,0.85)"; g.font="bold 10px Courier New"; g.textAlign="center"; g.textBaseline="middle";
+      g.fillText(`${L[i]}–${L[Math.min(L.length-1,i+1)]}`,fx+fw/2,fy+fh/2+1);
+      g.fillStyle="#6c5628"; g.beginPath(); g.ellipse(x+ww/2,y+hh*0.72,ww*0.14,hh*0.1,0,0,7); g.fill();
+      g.fillStyle="#2a2010"; g.beginPath(); g.ellipse(x+ww/2,y+hh*0.75,ww*0.1,hh*0.05,0,0,7); g.fill();
+    }
+  });
+}
+/* loose paper: four kinds on one canvas — a typed page, a ruled form, an
+   index card, a torn notebook sheet. PAPER_UV[i] is each one's window. */
+export const texPaperSheets=makeCanvas(512,512,(g,w,h)=>{
+  const cell=(x,y,cw,ch,fn)=>{ g.save(); g.beginPath(); g.rect(x,y,cw,ch); g.clip(); fn(x,y,cw,ch); g.restore(); };
+  cell(0,0,256,256,(x,y,cw,ch)=>{
+    g.fillStyle="#d6ceb6"; g.fillRect(x,y,cw,ch);
+    g.fillStyle="rgba(40,36,30,0.55)";
+    for(let l=0;l<22;l++) g.fillRect(x+26,y+30+l*9,(cw-52)*(l%7===6?0.4:0.8+Math.random()*0.2),2);
+  });
+  cell(256,0,256,256,(x,y,cw,ch)=>{
+    g.fillStyle="#cfd2c4"; g.fillRect(x,y,cw,ch);
+    g.strokeStyle="rgba(60,80,110,0.45)"; g.lineWidth=1;
+    for(let l=0;l<14;l++){ g.beginPath(); g.moveTo(x+14,y+40+l*14); g.lineTo(x+cw-14,y+40+l*14); g.stroke(); }
+    g.beginPath(); g.moveTo(x+cw*0.4,y+34); g.lineTo(x+cw*0.4,y+ch-20); g.stroke();
+    g.fillStyle="rgba(40,36,30,0.7)"; g.font="bold 12px Arial"; g.fillText("RETURN SLIP",x+14,y+22);
+  });
+  cell(0,256,256,256,(x,y,cw,ch)=>{
+    g.fillStyle="#e2dcc6"; g.fillRect(x,y,cw,ch);
+    g.strokeStyle="rgba(170,60,50,0.5)"; g.beginPath(); g.moveTo(x+10,y+46); g.lineTo(x+cw-10,y+46); g.stroke();
+    g.strokeStyle="rgba(60,90,130,0.3)";
+    for(let l=0;l<10;l++){ g.beginPath(); g.moveTo(x+10,y+66+l*18); g.lineTo(x+cw-10,y+66+l*18); g.stroke(); }
+    g.fillStyle="rgba(30,28,24,0.75)"; g.font="bold 14px Courier New"; g.fillText("823.9  VOS",x+14,y+32);
+  });
+  cell(256,256,256,256,(x,y,cw,ch)=>{
+    g.fillStyle="#d8d4c2"; g.fillRect(x,y,cw,ch);
+    g.strokeStyle="rgba(80,110,150,0.35)";
+    for(let l=0;l<16;l++){ g.beginPath(); g.moveTo(x,y+24+l*14); g.lineTo(x+cw,y+24+l*14); g.stroke(); }
+    g.fillStyle="rgba(30,34,60,0.55)";
+    for(let l=0;l<8;l++){ let px=x+20; while(px<x+cw-30){ const ww=6+Math.random()*24; g.fillRect(px,y+36+l*28,ww,1.6); px+=ww+6+Math.random()*10; } }
+  });
+  for(let i=0;i<20;i++){ const x=Math.random()*w,y=Math.random()*h,r=8+Math.random()*30;
+    const gr=g.createRadialGradient(x,y,1,x,y,r); gr.addColorStop(0,"rgba(110,82,40,0.14)"); gr.addColorStop(1,"rgba(110,82,40,0)");
+    g.fillStyle=gr; g.fillRect(x-r,y-r,r*2,r*2); }
+});
+export const PAPER_UV=[[0.02,0.52,0.48,0.98],[0.52,0.52,0.98,0.98],[0.02,0.02,0.48,0.48],[0.52,0.02,0.98,0.48]];
+/* ================= the way down =================
+   The shaft behind the desk, from the top: the floor in SECTION (carpet,
+   underlay, screed, a slab with its rebar cut), then the earth the
+   librarian dug through, then the dressed stone of a stair that was down
+   there long before the library was built over it. */
+/* ashlar: eight courses to the tile, each course one tread's rise, so the
+   stair climbs the wall on the coursing. Blocks wrap across u. */
+export const texShaftMasonry=makeCanvas(512,512,(g,w,h)=>{
+  g.fillStyle="#2c2822"; g.fillRect(0,0,w,h);                   // the mortar, weathered back
+  const CH=h/8;
+  for(let c=0;c<8;c++){
+    let x=Math.random()*w; const x0=x;
+    while(x<x0+w){
+      const bw=Math.min(130+Math.random()*120,x0+w-x);
+      const t=46+Math.random()*26, warm=Math.random()*8;
+      for(const ox of[0,-w]){
+        const bx=x+ox+2, by=c*CH+2+Math.random()*2, ww=bw-4, hh=CH-4-Math.random()*2;
+        if(bx+ww<0||bx>w) continue;
+        const gr=g.createLinearGradient(0,by,0,by+hh);
+        gr.addColorStop(0,`rgb(${t+14+warm|0},${t+10|0},${t+2|0})`);
+        gr.addColorStop(0.5,`rgb(${t+warm|0},${t-3|0},${t-12|0})`);
+        gr.addColorStop(1,`rgb(${t-18+warm|0},${t-22|0},${t-28|0})`);
+        g.fillStyle=gr; g.fillRect(bx,by,ww,hh);
+      }
+      x+=bw;
+    }
+  }
+  /* tooling and grit on every face */
+  for(let i=0;i<9000;i++){
+    const v=Math.random();
+    g.fillStyle=v<0.5? `rgba(20,18,14,${0.08+Math.random()*0.16})` : `rgba(150,140,120,${0.05+Math.random()*0.1})`;
+    g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*2,1+Math.random()*2);
+  }
+  /* damp coming down the face, and salts where it dried */
+  for(let i=0;i<10;i++){
+    const x=Math.random()*w, y=Math.random()*h, wd=10+Math.random()*30, ln=80+Math.random()*200;
+    for(const ox of[0,-w,w]) for(const oy of[0,-h]){
+      const gr=g.createLinearGradient(0,y+oy,0,y+oy+ln);
+      gr.addColorStop(0,"rgba(10,12,12,0)"); gr.addColorStop(0.3,"rgba(10,12,12,0.22)"); gr.addColorStop(1,"rgba(10,12,12,0)");
+      g.fillStyle=gr; g.fillRect(x+ox-wd/2,y+oy,wd,ln);
+    }
+  }
+  for(let i=0;i<30;i++){
+    const x=Math.random()*w, y=Math.random()*h, r=3+Math.random()*10;
+    const gr=g.createRadialGradient(x,y,0,x,y,r);
+    gr.addColorStop(0,"rgba(200,204,196,0.22)"); gr.addColorStop(1,"rgba(200,204,196,0)");
+    g.fillStyle=gr; g.fillRect(x-r,y-r,r*2,r*2);
+  }
+});
+/* loose earth: clods lit on top, pebbles, root hairs — all drawn wrapped */
+export const texSpoil=makeCanvas(256,256,(g,w,h)=>{
+  g.fillStyle="#3a2b1c"; g.fillRect(0,0,w,h);
+  const wrap=(x,y,fn)=>{ for(const ox of[0,-w,w]) for(const oy of[0,-h,h]) fn(x+ox,y+oy); };
+  for(let i=0;i<18;i++){
+    const x=Math.random()*w, y=Math.random()*h, r=20+Math.random()*50, dk=Math.random()<0.5;
+    wrap(x,y,(px,py)=>{ const gr=g.createRadialGradient(px,py,1,px,py,r);
+      gr.addColorStop(0,dk?"rgba(20,14,8,0.35)":"rgba(96,74,48,0.3)"); gr.addColorStop(1,"rgba(40,30,20,0)");
+      g.fillStyle=gr; g.fillRect(px-r,py-r,r*2,r*2); });
+  }
+  for(let i=0;i<380;i++){
+    const x=Math.random()*w, y=Math.random()*h, r=1+Math.random()*3.2;
+    const t=Math.random();
+    wrap(x,y,(px,py)=>{
+      g.fillStyle=`rgba(18,12,6,${0.2+Math.random()*0.2})`; g.beginPath(); g.ellipse(px+0.8,py+1.2,r,r*0.7,0,0,7); g.fill();
+      g.fillStyle=t<0.8? `rgba(${70+Math.random()*24|0},${52+Math.random()*16|0},${34+Math.random()*12|0},0.7)`
+                       : `rgba(${88+Math.random()*24|0},${84+Math.random()*20|0},${76+Math.random()*16|0},0.75)`;
+      g.beginPath(); g.ellipse(px,py,r,r*0.7,Math.random()*3,0,7); g.fill();
+    });
+  }
+  g.strokeStyle="rgba(150,120,80,0.35)"; g.lineWidth=0.8;
+  for(let i=0;i<24;i++){
+    let x=Math.random()*w, y=Math.random()*h, a=Math.random()*7;
+    g.beginPath(); g.moveTo(x,y);
+    for(let k=0;k<8;k++){ a+=(Math.random()-0.5)*0.9; x+=Math.cos(a)*6; y+=Math.sin(a)*6; g.lineTo(x,y); }
+    g.stroke();
+  }
+});
+/* the floor in section, top to bottom over the canvas height: carpet pile,
+   underlay, screed, the structural slab with its rebar cut through, and the
+   earth under it */
+export const texSlabSection=makeCanvas(512,64,(g,w,h)=>{
+  g.fillStyle="#4a4a48"; g.fillRect(0,0,w,h);
+  for(let x=0;x<w;x++){ g.fillStyle=`rgba(${60+Math.random()*30|0},${70+Math.random()*30|0},${86+Math.random()*30|0},1)`; g.fillRect(x,0,1,3+Math.random()*2); }
+  g.fillStyle="#1e1a16"; g.fillRect(0,5,w,3);
+  g.fillStyle="#7a766c"; g.fillRect(0,8,w,9);
+  for(let i=0;i<2400;i++){
+    g.fillStyle=Math.random()<0.5? "rgba(40,38,34,0.5)" : "rgba(160,154,140,0.4)";
+    g.fillRect(Math.random()*w,17+Math.random()*36,1+Math.random()*2,1+Math.random()*2);
+  }
+  g.fillStyle="rgba(20,18,16,0.6)"; g.fillRect(0,17,w,1);
+  for(let x=18;x<w;x+=38){
+    g.fillStyle="#3a2210"; g.beginPath(); g.arc(x+Math.random()*6,36,2.6,0,7); g.fill();
+    g.fillStyle="rgba(120,60,20,0.5)"; g.beginPath(); g.arc(x+Math.random()*6,38,4,0,7); g.fill();
+  }
+  const e=g.createLinearGradient(0,50,0,64); e.addColorStop(0,"rgba(62,46,30,0)"); e.addColorStop(1,"rgba(62,46,30,1)");
+  g.fillStyle=e; g.fillRect(0,50,w,14);
+  for(let i=0;i<60;i++){ const x=Math.random()*w; g.fillStyle="rgba(20,16,12,0.5)"; g.fillRect(x,17,1+Math.random()*2,Math.random()*30); }
+});
 /* ================= polythene: the film things are left wrapped in ==========
    The wrap was a box at 0.18 opacity with a flat blue-grey on it, which from
    any angle is a CUBE OF FOG — a solid you can partly see through, not a

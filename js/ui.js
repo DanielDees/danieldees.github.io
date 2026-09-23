@@ -67,13 +67,13 @@ function objRows(){
   if(STATE.level===2){
     const allLit=STATE.clutchesLit>=4;
     const rows=[
-      {txt:"Find a light", done:STATE.hasLantern, active:!STATE.hasLantern},
-      {txt:"Burn the brood", have:STATE.clutchesLit, total:4,
+      {txt:"Find a light source", done:STATE.hasLantern, active:!STATE.hasLantern},
+      {txt:"Burn the egg clutches", have:STATE.clutchesLit, total:4,
        done:allLit, active:STATE.hasLantern&&!allLit},
     ];
     /* the fissure only exists once the cave has opened it — no spoilers */
-    if(allLit) rows.push({txt:"Climb the fissure", done:STATE.won, active:!STATE.won,
-                          guide:STATE.guide, guideName:"COLD AIR"});
+    if(allLit) rows.push({txt:"Climb out through the crack", done:STATE.won, active:!STATE.won,
+                          guide:STATE.guide, guideName:"WAY OUT"});
     return rows;
   }
   if(STATE.level===1){
@@ -83,17 +83,17 @@ function objRows(){
     const rows=[
       {txt:"Find the floppy disks", have:STATE.discsFound, total,
        done:allFound, active:!allFound},
-      {txt:"Feed them to the terminal", have:STATE.discsDelivered, total,
+      {txt:"Bring them to the terminal", have:STATE.discsDelivered, total,
        done:allFed, active:(allFound&&!allFed)||STATE.discsCarried>0},
     ];
     /* the dig only exists once it has happened — no spoilers in the log */
-    if(STATE.holeOpen) rows.push({txt:"Enter the hole", done:STATE.won, active:!STATE.won,
-                                  guide:STATE.guide, guideName:"THE HOLE"});
+    if(STATE.holeOpen) rows.push({txt:"Go down the stairs", done:STATE.won, active:!STATE.won,
+                                  guide:STATE.guide, guideName:"STAIRS"});
     return rows;
   }
   const L0=[
     {txt:"Collect almond water", have:STATE.bottles, total:3},
-    {txt:"Find a fuse for the breaker"},
+    {txt:"Find the fuse"},
     {txt:"Restore power at the breaker"},
     {txt:"Call the exit elevator"},
   ];
@@ -148,7 +148,7 @@ export function renderObjectives(force=false){
   /* the status strip */
   let chips="";
   if(STATE.level===2&&STATE.frenzyT>0) chips+=`<span class="chip warn">FRENZY</span>`;
-  if(STATE.level===1&&STATE.discsCarried>0) chips+=`<span class="chip">CARRYING ${STATE.discsCarried}</span>`;
+  if(STATE.level===1&&STATE.discsCarried>0) chips+=`<span class="chip">DISKS ${STATE.discsCarried}</span>`;
   if(STATE.level===0&&STATE.powerOn) chips+=`<span class="chip">POWER ON</span>`;
   const strip=`<span>${fmtClock(STATE.time)}</span><span>DEATHS ${STATE.deaths}</span>${chips}`;
   if(ui.stats.innerHTML!==strip) ui.stats.innerHTML=strip;
@@ -167,7 +167,7 @@ export function anyOverlayOpen(){
          !ui.win.classList.contains("hide");
 }
 
-/* ---------------- the field notes ----------------
+/* ---------------- how to play ----------------
    a tabbed guide: one screen of one topic beats five screens of prose, and
    the floors you have not reached keep their pages sealed so the guide can
    never spoil a level transition. */
@@ -232,16 +232,16 @@ export function toggleSound(fromPause=false){
   }
 }
 /* the single MENU [ESC] HUD button opens the pause sheet, which already
-   links out to the field notes and Options */
+   links out to How to Play and Options */
 export function openPause(){
   ui.how.classList.add("hide"); ui.sound.classList.add("hide");
   const st=$("pauseStats");
   if(st){
     const f=FLOORS[STATE.level]||FLOORS[0];
     st.innerHTML=
-      `<div class="statrow"><span>FLOOR</span><span>${f.floor}</span></div>`+
+      `<div class="statrow"><span>LEVEL</span><span>${f.floor}</span></div>`+
       `<div class="statrow"><span>TIME</span><span>${fmtClock(STATE.time)}</span></div>`+
-      `<div class="statrow"><span>TIMES CAUGHT</span><span>${STATE.deaths}</span></div>`;
+      `<div class="statrow"><span>DEATHS</span><span>${STATE.deaths}</span></div>`;
   }
   ui.pause.classList.remove("hide");
   setPaused(true);

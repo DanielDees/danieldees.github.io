@@ -160,7 +160,7 @@ export function updatePlayer(dt){
     camera.position.z+=Math.cos(ts*2.5+0.6)*STATE.shakeAmp;
     camera.rotation.z=Math.sin(ts*1.7)*STATE.shakeAmp*0.16;
   }
-  playerLight.position.set(STATE.pos.x,2.4,STATE.pos.z);
+  playerLight.position.set(STATE.pos.x,STATE.y+2.4,STATE.pos.z);   // it goes down the stair with you
 
   if(STATE.level===2){
     /* deep in a squeeze it cannot reach you and cannot see you */

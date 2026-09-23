@@ -16,15 +16,19 @@
 import { rand, clamp, lerp, srand, hash } from "./utils.js";
 import { CELL } from "./map.js";
 import { STATE } from "./state.js";
-import { scene, camera, renderer, lights, hemi, amb, makeLightRecord, markShared, mergeStatic, freezeStaticScene, tubeTex } from "./scene.js";
+import { scene, camera, renderer, lights, hemi, amb, makeLightRecord, markShared, mergeStatic, freezeStaticScene, batchStatic, tubeTex } from "./scene.js";
 import { makeCanvas, texLibWall, texLibCarpet, texLibCarpetBump, texLibCeil, texShelfWood, texDeskWood,
-         texCaveRock, texGalv, texBeige, makeKeyboardTexture, makeFloppyTexture,
+         texCaveRock, texGalv, texBeige, makeKeyboardTexture, KB_LAYOUT, makeFloppyTexture,
          makeCrackTexture, makeEndTextTexture, makePosterTexture, makeArtTexture,
          makeWrapTexture, texTape, texCartPaint, texMannequin,
          makeBookCoverTexture, BOOK_TITLES, BOOK_BASES,
          makeArchiveBoxTexture, BOX_LABELS,
-         texPages, texPagesAged, makeOpenPagesTexture, scaleBoxUV } from "./textures.js";
+         texPages, texPagesAged, makeOpenPagesTexture, scaleBoxUV,
+         texCork, texGhost, texClockFace, makePlaqueAtlas, texExitSign, texStaffSign,
+         texWetFloor, makeCatalogTexture, CATALOG_COLS, CATALOG_ROWS, texPaperSheets, PAPER_UV,
+         texShaftMasonry, texSpoil, texSlabSection } from "./textures.js";
 import { makeElevator, ELEV, addInteractable } from "./props.js";
+import { makeDustSystem, makeDebris } from "./particles.js";
 import { sfxLightsOut, escalateLibraryAmbience, sfxComputerBoot, sfxComputerStatic } from "./audio.js";
 
 export const LW=25, LH=25, LIB_WALL_H=24.0;      // −30% footprint; tall ceiling gives the spider room to climb
@@ -163,12 +167,16 @@ export function libGroundY(x,z,curY){
   return -999;
 }
 /* below floor level the shaft wall is the only wall there is */
+/* …and on the inside, the rail: nothing but the drop past it. Only the body
+   is kept out (not its full radius) — the treads are a narrow flight. */
 export function shaftClamp(x,z,py,pr){
   const h=LIB.hole;
   if(!h||!STATE.holeOpen||py>-0.05) return null;
-  const dx=x-h.x, dz=z-h.z, r=Math.hypot(dx,dz), max=h.r-pr+0.05;
-  if(r<=max||r<1e-4) return null;
-  return {x:h.x+dx/r*max, z:h.z+dz/r*max};
+  const dx=x-h.x, dz=z-h.z, r=Math.hypot(dx,dz), max=h.r-pr+0.05, min=STAIR.RAIL_R+0.28;
+  if(r<1e-4) return {x:h.x+min, z:h.z};
+  if(r>max) return {x:h.x+dx/r*max, z:h.z+dz/r*max};
+  if(r<min) return {x:h.x+dx/r*min, z:h.z+dz/r*min};
+  return null;
 }
 /* spider pathfinding: best-effort BFS — an unreachable target (say, the
    player under a table) routes to the closest cell it CAN stand in, so the
@@ -575,39 +583,67 @@ const BOOK_S=1.21;
 let BOOKS=null;                 // [{geo, mats, h, tx, d}] — the design pool
 let OPEN_BOOK=null;             // prototype group, cloned per placement
 let pageMats=null;
+/* four kinds of binding: tooled cloth and leather with gilt, dust jackets,
+   and paperbacks — which are a different OBJECT, not a different print:
+   flush-trimmed card covers and a flat spine, shorter and thinner */
 function buildBookDesign(title,author,vol){
-  const base=BOOK_BASES[Math.floor(Math.random()*BOOK_BASES.length)];
-  const h=(0.20+Math.random()*0.10)*BOOK_S;  // page length (standing height)
-  const tx=(0.025+Math.random()*0.04)*BOOK_S;// thickness
-  const d=(0.14+Math.random()*0.05)*BOOK_S;  // cover width (depth on the shelf)
+  const r=Math.random();
+  const style=r<0.50?"cloth":r<0.64?"leather":r<0.82?"jacket":"paperback";
+  const pb=style==="paperback";
+  let base=BOOK_BASES[Math.floor(Math.random()*BOOK_BASES.length)];
+  if(style==="leather") base=base.map(c=>Math.round(c*0.66));
+  const h=(pb? 0.178+Math.random()*0.03 : 0.20+Math.random()*0.10)*BOOK_S;  // page length (standing height)
+  const tx=(pb? 0.014+Math.random()*0.022 : 0.025+Math.random()*0.04)*BOOK_S; // thickness
+  const d=(pb? 0.108+Math.random()*0.012 : 0.14+Math.random()*0.05)*BOOK_S;  // cover width (depth on the shelf)
   const {tex,uv:UV}=makeBookCoverTexture(title,author,base,
-    Math.floor(Math.random()*6),vol,h,tx,d);
+    Math.floor(Math.random()*6),pb?null:vol,h,tx,d,style);
   const cover=new GeoAcc(), pages=new GeoAcc();
   const plainAll=geo=>{for(let f=0;f<6;f++)
     setFaceUV(geo,f,UV.plain[0]+0.02,0.3,UV.plain[1]-0.02,0.7);};
-  /* boards: the front (+x) carries the cover plate, the back stays plain */
-  for(const sx of[-1,1]){
-    const b=new THREE.BoxGeometry(0.006,h,d);
-    plainAll(b);
-    if(sx>0) setFaceUV(b,0,UV.front[0],0,UV.front[1],1);
-    b.translate(sx*(tx/2-0.003),h/2,0.004);
-    cover.add(b);
+  if(pb){
+    for(const sx of[-1,1]){
+      const b=new THREE.BoxGeometry(0.0016,h,d);
+      plainAll(b);
+      if(sx>0) setFaceUV(b,0,UV.front[0],0,UV.front[1],1);
+      b.translate(sx*(tx/2-0.0008),h/2,0);
+      cover.add(b);
+    }
+    const sp=new THREE.BoxGeometry(tx,h,0.0016);
+    plainAll(sp);
+    setFaceUV(sp,5,UV.spine[0],0,UV.spine[1],1);
+    sp.translate(0,h/2,-d/2+0.0008);
+    cover.add(sp);
+    const pg=new THREE.BoxGeometry(tx-0.0034,h-0.002,d-0.002);
+    pg.translate(0,h/2,0.0009);
+    pages.add(pg);
+  } else {
+    /* boards: the front (+x) carries the cover plate, the back stays plain */
+    for(const sx of[-1,1]){
+      const b=new THREE.BoxGeometry(0.006,h,d);
+      plainAll(b);
+      if(sx>0) setFaceUV(b,0,UV.front[0],0,UV.front[1],1);
+      b.translate(sx*(tx/2-0.003),h/2,0.004);
+      cover.add(b);
+    }
+    /* rounded spine: a shallow half-ellipse wrapped in the title strip,
+       hugging the boards' back edge */
+    const sp=new THREE.CylinderGeometry(tx/2+0.0015,tx/2+0.0015,h,10,1,true,Math.PI/2,Math.PI);
+    {
+      const uv=sp.attributes.uv;
+      for(let i=0;i<uv.count;i++) uv.setX(i,UV.spine[0]+uv.getX(i)*(UV.spine[1]-UV.spine[0]));
+    }
+    sp.scale(1,1,0.42);
+    sp.translate(0,h/2,-d/2+0.004);
+    cover.add(sp);
+    /* page block, recessed behind every cover edge */
+    const pg=new THREE.BoxGeometry(tx-0.014,h-0.012,d-0.014);
+    pg.translate(0,h/2,0.001);
+    pages.add(pg);
   }
-  /* rounded spine: a shallow half-ellipse wrapped in the title strip,
-     hugging the boards' back edge */
-  const sp=new THREE.CylinderGeometry(tx/2+0.0015,tx/2+0.0015,h,10,1,true,Math.PI/2,Math.PI);
-  {
-    const uv=sp.attributes.uv;
-    for(let i=0;i<uv.count;i++) uv.setX(i,UV.spine[0]+uv.getX(i)*(UV.spine[1]-UV.spine[0]));
-  }
-  sp.scale(1,1,0.42);
-  sp.translate(0,h/2,-d/2+0.004);
-  cover.add(sp);
-  /* page block, recessed behind every cover edge */
-  const pg=new THREE.BoxGeometry(tx-0.014,h-0.012,d-0.014);
-  pg.translate(0,h/2,0.001);
-  pages.add(pg);
-  const coverMat=new THREE.MeshPhongMaterial({map:tex, specular:0x1a1610, shininess:14});
+  /* printed stock takes a hard little highlight; cloth and leather don't */
+  const coverMat=new THREE.MeshPhongMaterial({map:tex,
+    specular: pb? 0x3c3a34 : style==="jacket"? 0x2a2822 : style==="leather"? 0x2a2018 : 0x1a1610,
+    shininess: pb? 36 : style==="jacket"? 24 : style==="leather"? 26 : 14});
   return {geo:mergeGroups(cover,pages),
           mats:[coverMat,pageMats[Math.floor(Math.random()*pageMats.length)]],
           h,tx,d};
@@ -621,7 +657,7 @@ function ensureBooks(){
     const j=Math.floor(Math.random()*(i+1));[titles[i],titles[j]]=[titles[j],titles[i]];
   }
   BOOKS=[];
-  for(let i=0;i<16;i++){
+  for(let i=0;i<28;i++){
     const [title,author]=titles[i%titles.length];
     const vol=Math.random()<0.2? "VOL. "+["I","II","III","IV","VII"][Math.floor(Math.random()*5)] : null;
     BOOKS.push(buildBookDesign(title,author,vol));
@@ -725,6 +761,17 @@ const texBrushed=makeCanvas(64,64,(g,w,h)=>{
 const bookendMat=new THREE.MeshPhongMaterial({map:texBrushed, specular:0x6a6e74, shininess:64});
 const accentWood=new THREE.MeshPhongMaterial({color:0x4a3522, specular:0x161208, shininess:10});
 const accentBrass=new THREE.MeshPhongMaterial({color:0x6e5a2e, specular:0x8a7340, shininess:55});
+const jarGlassMat=new THREE.MeshPhongMaterial({color:0x7e8a80, specular:0x8a9690, shininess:80,
+  transparent:true, opacity:0.42, depthWrite:false});
+const jarDregsMat=new THREE.MeshPhongMaterial({color:0x4a4632, specular:0x111111, shininess:6});
+const hourGlassMat=new THREE.MeshPhongMaterial({color:0x9aa496, specular:0x6a7468,
+  shininess:70, transparent:true, opacity:0.45, depthWrite:false});
+const sandMat=new THREE.MeshPhongMaterial({color:0x9a8358, specular:0x111111, shininess:4});
+const candleMat=new THREE.MeshPhongMaterial({color:0xd8d2c0, specular:0x222018, shininess:14});
+const JAR_GEO=new THREE.LatheGeometry([[0.001,0],[0.07,0],[0.078,0.012],[0.08,0.17],
+  [0.07,0.2],[0.052,0.215],[0.052,0.232]].map(([r,y])=>new THREE.Vector2(r,y)),14);
+const JAR_LID_GEO=new THREE.CylinderGeometry(0.058,0.058,0.026,14).translate(0,0.244,0);
+const JAR_DREGS_GEO=new THREE.CylinderGeometry(0.068,0.07,0.012,14);
 /* a non-book accent sitting in line with the books: archive boxes, dusty
    jars, hourglasses, candle stubs — library things, abandoned mid-task.
    (sx,yTop,sz) = spot on the board. */
@@ -736,11 +783,14 @@ function placeAccent(g,sx,yTop,sz){
     box.position.set(sx,yTop,sz); box.rotation.y=(Math.random()-0.5)*0.5;
     g.add(box);
   } else if(r<0.52){
-    const jar=new THREE.Mesh(new THREE.CylinderGeometry(0.085,0.085,0.24,10),
-      new THREE.MeshPhongMaterial({color:0x5e665c, specular:0x3a4038, shininess:50,
-        transparent:true, opacity:0.85}));
-    jar.position.set(sx,yTop+0.12,sz);
-    g.add(jar);
+    /* a specimen jar: turned glass with a shoulder and a lid, the liquid long
+       since gone to a cloudy stain at the bottom */
+    const jar=new THREE.Mesh(JAR_GEO,jarGlassMat);
+    jar.position.set(sx,yTop,sz); g.add(jar);
+    const lid=new THREE.Mesh(JAR_LID_GEO,accentBrass);
+    lid.position.set(sx,yTop,sz); g.add(lid);
+    const dregs=new THREE.Mesh(JAR_DREGS_GEO,jarDregsMat);
+    dregs.position.set(sx,yTop+0.006,sz); g.add(dregs);
   } else if(r<0.78){
     /* an hourglass, long since run out */
     const hg=new THREE.Group();
@@ -753,12 +803,13 @@ function placeAccent(g,sx,yTop,sz){
       const rod=new THREE.Mesh(new THREE.CylinderGeometry(0.008,0.008,0.26,5),accentWood);
       rod.position.set(Math.cos(a)*0.062,0.14,Math.sin(a)*0.062); hg.add(rod);
     }
-    const glassMat=new THREE.MeshPhongMaterial({color:0x9aa496, specular:0x6a7468,
-      shininess:70, transparent:true, opacity:0.5});
     for(const[cy,flip]of[[0.085,0],[0.195,Math.PI]]){
-      const cone=new THREE.Mesh(new THREE.ConeGeometry(0.055,0.105,10),glassMat);
+      const cone=new THREE.Mesh(new THREE.ConeGeometry(0.055,0.105,10),hourGlassMat);
       cone.position.y=cy; cone.rotation.x=flip; hg.add(cone);
     }
+    /* the sand, all of it, in the bottom bulb */
+    const sand=new THREE.Mesh(new THREE.ConeGeometry(0.042,0.05,10),sandMat);
+    sand.position.y=0.057; hg.add(sand);
     hg.position.set(sx,yTop,sz); hg.rotation.y=Math.random()*Math.PI*2;
     g.add(hg);
   } else {
@@ -769,8 +820,7 @@ function placeAccent(g,sx,yTop,sz){
     const stem=new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.018,0.09,8),accentBrass);
     stem.position.y=0.062; cs.add(stem);
     const ch=0.04+Math.random()*0.11;
-    const candle=new THREE.Mesh(new THREE.CylinderGeometry(0.017,0.019,ch,8),
-      new THREE.MeshPhongMaterial({color:0xd8d2c0, specular:0x222018, shininess:14}));
+    const candle=new THREE.Mesh(new THREE.CylinderGeometry(0.017,0.019,ch,8),candleMat);
     candle.position.y=0.107+ch/2; candle.rotation.z=(Math.random()-0.5)*0.12; cs.add(candle);
     cs.position.set(sx,yTop,sz); cs.rotation.y=Math.random()*Math.PI*2;
     g.add(cs);
@@ -828,22 +878,45 @@ function makeShelfRun(run){
     if(occ.some(([a,b])=>a<x1+0.06&&b>x0-0.06)) return false;
     occ.push([x0,x1]); return true;
   };
+  /* every run has a character: a third are nearly stripped, a fifth are
+     still properly stocked, and the rest sit between — the same thinning on
+     every board read as one decorator's hand, not as years of neglect.
+     Stocking scales with the board's LENGTH: a flat per-board count spread
+     a dozen books over twelve metres of shelf, and the whole building read
+     as emptied rather than abandoned. */
+  const rc=Math.random(), rate= rc<0.3? 1.2 : rc<0.8? 3.5 : 13, full=rate>5;
   for(let lv=0;lv<4;lv++){
-  let budget=Math.floor(Math.pow(Math.random(),1.55)*21);   // 0–20 per board, avg ≈8
-  let tries=50;
+  let budget=Math.round(len*rate*(0.6+Math.random()*0.8));
+  let tries=Math.round(budget*1.5)+30;
   const yTop=BOARD_TOP(lv);
   while(budget>0&&tries-->0){
     const s=Math.random()<0.5?1:-1;
     const occ=occAt(s,lv), z=s*0.20;
     const x=rand(-len/2+0.35,len/2-0.35);
     const r=Math.random();
-    if(r<0.32){
+    if(r<(full?0.5:0.2)&&budget>=6){
+      /* a proper shelf of them, spine to spine — sometimes with one gone,
+         and the gap left where it was taken */
+      const n=Math.min(budget,6+Math.floor(Math.random()*(full?40:12)));
+      const row=[];let w=0;
+      for(let i=0;i<n;i++){const des=pickBook();row.push(des);w+=des.tx;}
+      const gapAt=Math.random()<0.4? 1+Math.floor(Math.random()*(n-2)) : -1;
+      if(gapAt>=0) w+=0.05;
+      if(!claim(occ,x-w/2-0.02,x+w/2+0.02)) continue;
+      let bx=x-w/2;
+      row.forEach((des,i)=>{
+        if(i===gapAt) bx+=0.05;
+        spawnBook(g,des,bx+des.tx/2,yTop,z+rand(-0.012,0.012),s,{yaw:(Math.random()-0.5)*0.03});
+        bx+=des.tx;
+      });
+      budget-=n;
+    } else if(r<0.40){
       /* a lone survivor, sometimes slumped sideways */
       const des=pickBook();
       if(!claim(occ,x-des.tx/2-0.02,x+des.tx/2+0.02)) continue;
       spawnBook(g,des,x,yTop,z,s,{lean:Math.random()<0.3?(Math.random()-0.5)*0.4:0});
       budget--;
-    } else if(r<0.56){
+    } else if(r<0.58){
       /* a tight little row, often with one more leaning on its end */
       const n=Math.min(budget,2+Math.floor(Math.random()*3));
       const row=[];let w=0;
@@ -999,15 +1072,22 @@ function makeChair(wrapped){
   if(wrapped) g.add(makeWrap(0.58,0.58,1.10));
   return g;
 }
+/* a library ladder: tapered stiles, round rungs let into them, brass hooks
+   over the top of the stack and rubber shoes at the foot. It was two
+   planks and five more planks across them. */
 function makeLadder(){
   const g=new THREE.Group(), H=LADDER_H; g.userData.prop="ladder";
-  const railGeo=new THREE.BoxGeometry(0.06,H,0.1);
-  for(const sx of[-0.3,0.3]){
-    const r=new THREE.Mesh(railGeo,shelfMat); r.position.set(sx,H/2,0); g.add(r);
+  for(const sx of[-0.27,0.27]){
+    const r=new THREE.Mesh(taperBox(0.05,H,0.085,0.82),deskMat); r.position.set(sx,H/2,0); g.add(r);
+    const shoe=new THREE.Mesh(new THREE.BoxGeometry(0.066,0.05,0.1),cartRubberMat);
+    shoe.position.set(sx,0.025,0); g.add(shoe);
+    /* the hook is a half-torus arcing from the stile's top out over the crown */
+    const hk=new THREE.Mesh(new THREE.TorusGeometry(0.05,0.011,6,10,Math.PI),accentBrass);
+    hk.rotation.y=-Math.PI/2; hk.position.set(sx,H-0.02,0.05); g.add(hk);
   }
-  for(let i=0;i<5;i++){
-    const rung=new THREE.Mesh(new THREE.BoxGeometry(0.6,0.05,0.05),shelfMat);
-    rung.position.y=0.26+i*0.36; g.add(rung);
+  for(let i=0;i<6;i++){
+    const rung=new THREE.Mesh(new THREE.CylinderGeometry(0.017,0.017,0.54,8),deskMatH);
+    rung.rotation.z=Math.PI/2; rung.position.y=0.24+i*0.31; g.add(rung);
   }
   /* leant against the stack. YXZ so the lean happens AFTER the yaw — in
      the default XYZ order the tilt lands in world space and every ladder
@@ -1382,8 +1462,10 @@ const texGilt=makeCanvas(128,128,(g,w,h)=>{
     g.fillStyle=`rgba(${Math.random()<0.5?142:236},${Math.random()<0.5?116:214},${Math.random()<0.5?58:148},${0.06+Math.random()*0.16})`;
     g.fillRect(Math.random()*w,Math.random()*h,3+Math.random()*22,1);
   }
-  for(let i=0;i<40;i++){                         // rubbed back to the red bole
-    const x=Math.random()*w,y=Math.random()*h,r=2+Math.random()*7;
+  /* rubbed back to the red bole — small and few, or at this repeat the
+     moulding comes out polka-dotted */
+  for(let i=0;i<16;i++){
+    const x=Math.random()*w,y=Math.random()*h,r=1+Math.random()*2.5;
     g.beginPath();
     for(let k=0;k<=8;k++){
       const a=k/8*Math.PI*2, rr=r*(0.5+Math.random()*0.8);
@@ -1391,7 +1473,7 @@ const texGilt=makeCanvas(128,128,(g,w,h)=>{
       k? g.lineTo(px,py) : g.moveTo(px,py);
     }
     g.closePath();
-    g.fillStyle=`rgba(${118+Math.random()*30|0},${62+Math.random()*24|0},${40+Math.random()*20|0},${0.35+Math.random()*0.4})`;
+    g.fillStyle=`rgba(${118+Math.random()*30|0},${62+Math.random()*24|0},${40+Math.random()*20|0},${0.2+Math.random()*0.25})`;
     g.fill();
   }
   for(let i=0;i<150;i++){                        // craquelure: short and kinked
@@ -1467,18 +1549,25 @@ const SHARED_ART=new Set([frameGiltMat,frameEbonyMat,frameOakMat,
 /* one hung picture. Everything is built in the piece's own frame with the
    wall at z=0 and the room at +z; the caller places the group, and the bulk
    parts are merged room-wide afterwards. */
-function makeFramedArt(sw){
+/* opt: {land, frame, full} — `land` forces the plate's orientation (a pair
+   or a row hangs matched), `frame` the moulding, `full` forbids an empty one */
+function makeFramedArt(sw,opt={}){
   const g=new THREE.Group();
   const bulk=[];                                  // [mesh, material] — merged later
-  const sh=sw*1.25;                               // the plate's own proportion
-  const empty=Math.random()<0.10;
-  const matted=!empty&&Math.random()<0.6;
+  const empty=!opt.full&&Math.random()<0.08;
+  const art=empty? null : makeArtTexture(sw<0.7?"s":sw<1.25?"m":"l",opt.land);
+  const land=art? art.land : !!opt.land;
+  const sh=sw*(land?0.78:1.25);                   // the plate's own proportion
+  const oil=!!(art&&art.paint);
+  /* a canvas is framed straight into its moulding and hung bare; paper
+     goes behind a mat and glass */
+  const matted=!empty&&(oil? Math.random()<0.15 : Math.random()<0.85);
   const mb=matted? sw*(0.09+Math.random()*0.07) : 0;
   const oval=matted&&Math.random()<0.22;
-  const glazed=!empty&&Math.random()<0.78;
+  const glazed=!empty&&(oil? Math.random()<0.2 : Math.random()<0.85);
   const ow=sw+2*mb, oh=sh+2*mb;                   // the frame's opening
-  const mw=0.030+Math.random()*0.045, md=0.032+Math.random()*0.036;
-  const fm=FRAME_MATS[Math.floor(Math.random()*FRAME_MATS.length)];
+  const mw=(oil?0.05:0.030)+Math.random()*0.045, md=(oil?0.045:0.032)+Math.random()*0.036;
+  const fm=opt.frame||FRAME_MATS[Math.floor(Math.random()*FRAME_MATS.length)];
   const put=(geo,mat,x,y,z)=>{
     const m=new THREE.Mesh(geo,mat); m.position.set(x,y,z); g.add(m);
     bulk.push([m,mat]); return m;
@@ -1500,9 +1589,10 @@ function makeFramedArt(sw){
     fbox(cw, inH, t, -(inW+cw)/2, 0, cz, fm);
   }
   if(!empty){
-    const art=new THREE.Mesh(new THREE.PlaneGeometry(sw,sh),
-      new THREE.MeshPhongMaterial({map:makeArtTexture(), specular:0x0a0a0a, shininess:8}));
-    art.position.z=0.016; g.add(art);             // its own canvas: never merged
+    /* varnished oil takes a soft sheen off the strips; paper is dead matt */
+    const plate=new THREE.Mesh(new THREE.PlaneGeometry(sw,sh),
+      new THREE.MeshPhongMaterial({map:art.tex, specular:oil?0x26221a:0x0a0a0a, shininess:oil?22:8}));
+    plate.position.z=0.016; g.add(plate);         // its own canvas: never merged
   }
   if(matted){
     const MZ=md*0.30-0.004;
@@ -1523,12 +1613,14 @@ function makeFramedArt(sw){
       /* the BEVEL: a strip turned 45° at the sight edge. It is the same
          board as the mat and reads as a different tone purely because it
          faces somewhere else, which is exactly what a cut bevel does. */
+      /* the side strips hinge about Y: turned about Z, a strip the height of
+         the picture swings diagonally right across it */
       const bv=mb*0.30;
-      for(const[w2,h2,x2,y2,rx,rz]of[
-        [sw,bv,0, (sh+bv*0.7)/2, -Math.PI/4,0],[sw,bv,0,-(sh+bv*0.7)/2, Math.PI/4,0],
-        [bv,sh,(sw+bv*0.7)/2,0, 0,Math.PI/4],[bv,sh,-(sw+bv*0.7)/2,0, 0,-Math.PI/4]]){
+      for(const[w2,h2,x2,y2,rx,ry]of[
+        [sw,bv,0, (sh+bv*0.7)/2, Math.PI/4,0],[sw,bv,0,-(sh+bv*0.7)/2, -Math.PI/4,0],
+        [bv,sh,(sw+bv*0.7)/2,0, 0,-Math.PI/4],[bv,sh,-(sw+bv*0.7)/2,0, 0,Math.PI/4]]){
         const m=fbox(w2,h2,0.004, x2,y2,MZ,artMatMat);
-        m.rotation.x=rx; m.rotation.z=rz;
+        m.rotation.x=rx; m.rotation.y=ry;
       }
     }
   }
@@ -1685,9 +1777,29 @@ function ensureFloppy(){
     markShared(f.tex,m);
     mats.push(m);
   }
-  const body=new THREE.BoxGeometry(0.27,0.022,0.28);
-  setFaceUV(body,2,...uv.top);                            // +y: the label face
-  for(const f of[0,1,3,4,5]) setFaceUV(body,f,...uv.plain);
+  /* the shell is a moulding, not a box: radiused corners, one corner cut
+     off at 45° (the chamfer that stops it going in the drive the wrong way
+     round), and a soft bevel on every edge for the light to run along.
+     Shape y becomes world −z, so the shutter end (+y) is the −z end the
+     print puts its shutter on. */
+  const W=0.27, Dp=0.28, T=0.019, R=0.008, C=0.024;
+  const s=new THREE.Shape();
+  s.moveTo(-W/2+R,-Dp/2); s.lineTo(W/2-R,-Dp/2); s.quadraticCurveTo(W/2,-Dp/2,W/2,-Dp/2+R);
+  s.lineTo(W/2,Dp/2-C); s.lineTo(W/2-C,Dp/2);
+  s.lineTo(-W/2+R,Dp/2); s.quadraticCurveTo(-W/2,Dp/2,-W/2,Dp/2-R);
+  s.lineTo(-W/2,-Dp/2+R); s.quadraticCurveTo(-W/2,-Dp/2,-W/2+R,-Dp/2);
+  const body=new THREE.ExtrudeGeometry(s,{depth:T,bevelEnabled:true,bevelThickness:0.0016,
+    bevelSize:0.0016,bevelSegments:1,curveSegments:3});
+  body.rotateX(-Math.PI/2); body.translate(0,-T/2,0);
+  {
+    const p=body.attributes.position, n=body.attributes.normal, u=body.attributes.uv;
+    const [t0,t1,t2,t3]=uv.top, [p0,p1,p2,p3]=uv.plain;
+    for(let i=0;i<p.count;i++){
+      const fx=(p.getX(i)+W/2)/W, fz=(-p.getZ(i)+Dp/2)/Dp;
+      if(n.getY(i)>0.6) u.setXY(i,t0+fx*(t2-t0),t1+fz*(t3-t1));      // the label face
+      else u.setXY(i,p0+fx*(p2-p0),p1+fz*(p3-p1));
+    }
+  }
   FLOPPY={mats, geo:markShared(body)};
   return FLOPPY;
 }
@@ -1712,10 +1824,10 @@ function makeDisc(){
      label, since the merge went in. */
   const SX=-0.008, SY=0.001, SZ=-0.116;
   const sh=[];
-  for(const [w,hh,d,dx] of [[0.185,0.026,0.045,0],[0.042,0.027,0.052,-0.072],
-                            [0.042,0.027,0.052,0.072]]){
+  for(const [w,hh,d,dx,dz] of [[0.185,0.0245,0.045,0,0],[0.042,0.0255,0.052,-0.072,0],
+                            [0.042,0.0255,0.052,0.072,0],[0.185,0.0245,0.004,0,-0.0245]]){
     const m=new THREE.Mesh(new THREE.BoxGeometry(w,hh,d));
-    m.position.set(SX+dx,SY,SZ); sh.push(m);
+    m.position.set(SX+dx,SY,SZ+dz); sh.push(m);                 // the last one wraps the edge
   }
   g.add(mergeStatic(sh,shutterMat));
   for(const m of sh) m.geometry.dispose();
@@ -1736,6 +1848,47 @@ function makeDisc(){
    Everything static merges by material — 4 draws, down from 9 — and the
    pieces the cutscenes drive (the screen canvas, the drive LED) stay their
    own meshes because their materials are written to at runtime. */
+const roundRect=(p,x,y,w,h,r)=>{
+  p.moveTo(x+r,y); p.lineTo(x+w-r,y); p.quadraticCurveTo(x+w,y,x+w,y+r);
+  p.lineTo(x+w,y+h-r); p.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  p.lineTo(x+r,y+h); p.quadraticCurveTo(x,y+h,x,y+h-r);
+  p.lineTo(x,y+r); p.quadraticCurveTo(x,y,x+r,y);
+};
+const BEZEL_GEO=(()=>{
+  const s=new THREE.Shape(); roundRect(s,-0.28,-0.23,0.56,0.46,0.045);
+  const h=new THREE.Path(); roundRect(h,-0.228,-0.172,0.456,0.344,0.03); s.holes.push(h);
+  const g=new THREE.ExtrudeGeometry(s,{depth:0.026,bevelEnabled:true,bevelThickness:0.007,
+    bevelSize:0.007,bevelSegments:2,curveSegments:5});
+  const uv=g.attributes.uv; for(let i=0;i<uv.count;i++) uv.setXY(i,uv.getX(i)/0.34,uv.getY(i)/0.34);
+  return g;
+})();
+const MOUSE_GEO=new THREE.SphereGeometry(0.032,12,8).scale(0.95,0.5,1.45);
+/* the board's caps: the canvas layout (KB_LAYOUT) laid out on the deck at
+   0.48 × 0.175m, every cap tapered toward its top and printed with its
+   own window of the keyboard canvas */
+let KB_MAT=null, KB_GEO=null;
+const keycapMat=()=>{
+  if(!KB_MAT){ KB_MAT=new THREE.MeshPhongMaterial({map:makeKeyboardTexture(), specular:0x2a2620, shininess:22});
+    markShared(KB_MAT,KB_MAT.map); }
+  return KB_MAT;
+};
+function keycapGeo(){
+  if(KB_GEO) return KB_GEO;
+  const sx=0.48/256, sz=0.175/96, parts=[];
+  for(const [x,y,w,h] of KB_LAYOUT){
+    const bw=w*sx-0.0012, bd=h*sz-0.0012;
+    const b=new THREE.BoxGeometry(bw,0.009,bd);
+    const p=b.attributes.position;
+    for(let i=0;i<p.count;i++) if(p.getY(i)>0){ p.setX(i,p.getX(i)*0.84); p.setZ(i,p.getZ(i)*0.82); }
+    b.computeVertexNormals();
+    for(let f=0;f<6;f++) setFaceUV(b,f,(x+1)/256,1-(y+h-1)/96,(x+w-1)/256,1-(y+1)/96);
+    b.translate((x+w/2)*sx-0.24,0.0215+0.0045,(y+h/2)*sz-0.0875+0.004);
+    parts.push(new THREE.Mesh(b));
+  }
+  KB_GEO=markShared(mergeStatic(parts,null).geometry);
+  for(const m of parts) m.geometry.dispose();
+  return KB_GEO;
+}
 export function makeVintagePC(scale=1){
   const g=new THREE.Group();
   const pale=[], dark=[];
@@ -1786,19 +1939,34 @@ export function makeVintagePC(scale=1){
      that face, the only part of the screen that showed was the patch where
      the tube's bulge cleared it — a black OVAL floating on a beige box. */
   darkBox(0.50,0.38,0.008, 0,0.41,0.2465);                // the dark surround
-  paleBox(0.56,0.055,0.03, 0,0.605,0.262);                // moulding, four sides
-  paleBox(0.56,0.055,0.03, 0,0.215,0.262);
-  for(const s of[-1,1]) paleBox(0.055,0.44,0.03, s*0.2525,0.41,0.262);
+  /* the bezel is one moulding with rounded corners and a radiused lip —
+     four butted boxes read as a picture frame round a photograph of a
+     screen */
+  {
+    const b=new THREE.Mesh(BEZEL_GEO); b.position.set(0,0.41,0.2445); pale.push(b);
+  }
+  /* the swivel foot the tube sits on */
+  {
+    const f=new THREE.Mesh(new THREE.CylinderGeometry(0.17,0.19,0.018,20)); f.position.set(0,0.183,-0.02); pale.push(f);
+  }
   /* the screen: its own canvas so each machine can boot/static/die alone */
   const cv=document.createElement("canvas"); cv.width=192; cv.height=144;
   const tex=new THREE.CanvasTexture(cv); tex.minFilter=THREE.LinearFilter; tex.generateMipmaps=false;
   const ctx=cv.getContext("2d");
   const screen={
     tex,
+    /* dead glass still reflects: a soft window of the room across the top
+       and dust on the curve — a flat black quad is a hole, not a screen */
     off(){ ctx.fillStyle="#0a0d0b"; ctx.fillRect(0,0,192,144);
       const gr=ctx.createRadialGradient(96,66,6,96,66,110);
       gr.addColorStop(0,"rgba(70,80,76,0.10)"); gr.addColorStop(1,"rgba(70,80,76,0)");
-      ctx.fillStyle=gr; ctx.fillRect(0,0,192,144); tex.needsUpdate=true; },
+      ctx.fillStyle=gr; ctx.fillRect(0,0,192,144);
+      const sh=ctx.createLinearGradient(40,0,120,70);
+      sh.addColorStop(0,"rgba(150,160,156,0)"); sh.addColorStop(0.5,"rgba(150,160,156,0.07)"); sh.addColorStop(1,"rgba(150,160,156,0)");
+      ctx.fillStyle=sh; ctx.beginPath(); ctx.moveTo(30,0); ctx.lineTo(110,0); ctx.lineTo(60,80); ctx.lineTo(0,80); ctx.closePath(); ctx.fill();
+      ctx.fillStyle="rgba(120,124,118,0.05)";
+      for(let i=0;i<120;i++) ctx.fillRect(Math.random()*192,Math.random()*144,1,1);
+      tex.needsUpdate=true; },
     boot(alpha=1){ ctx.fillStyle="#05070a"; ctx.fillRect(0,0,192,144);
       ctx.fillStyle=`rgba(244,248,252,${alpha})`;
       ctx.font="bold 30px Courier New"; ctx.textAlign="center"; ctx.textBaseline="middle";
@@ -1901,9 +2069,15 @@ export function makeVintagePC(scale=1){
   kb.position.set(0,0.012,0.46); kb.rotation.x=0.07; g.add(kb);
   const kbGeo=taperBox(0.52,0.042,0.21,0.86,"z");
   const kbody=new THREE.Mesh(kbGeo,beigePlastic); kb.add(kbody);
-  const keys=new THREE.Mesh(new THREE.PlaneGeometry(0.48,0.175),
-    new THREE.MeshPhongMaterial({map:makeKeyboardTexture(), specular:0x18160f, shininess:8}));
-  keys.rotation.x=-Math.PI/2; keys.position.set(0,0.0215,0.004); kb.add(keys);
+  /* real keycaps now, a hundred of them in one mesh, each capped with its
+     own patch of the printed board */
+  kb.add(new THREE.Mesh(keycapGeo(),keycapMat()));
+  /* and the mouse, on its cord */
+  {
+    const ms=new THREE.Mesh(MOUSE_GEO,beigePlastic); ms.position.set(0.37,0.018,0.47); ms.rotation.y=rand(-0.4,0.3); g.add(ms);
+    const pts=[new THREE.Vector3(0.37,0.02,0.43),new THREE.Vector3(0.36,0.008,0.34),new THREE.Vector3(0.3,0.006,0.28),new THREE.Vector3(0.22,0.03,0.24)];
+    g.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts),10,0.004,4,false),beigePlasticDark));
+  }
   /* the coil back to the case, in two dropping arcs */
   {
     const c=[];
@@ -1922,6 +2096,15 @@ export function makeVintagePC(scale=1){
   g.scale.setScalar(scale);
   return g;
 }
+const deskShadeMat=new THREE.MeshPhongMaterial({color:0x3a3d40, specular:0x404448, shininess:40, side:THREE.DoubleSide});
+const closedCardMat=new THREE.MeshPhongMaterial({specular:0x111111, shininess:4, side:THREE.DoubleSide,
+  map:makeCanvas(256,96,(g,w,h)=>{
+    g.fillStyle="#e4dcc4"; g.fillRect(0,0,w,h);
+    g.strokeStyle="#2a2620"; g.lineWidth=3; g.strokeRect(6,6,w-12,h-12);
+    g.fillStyle="#2a2620"; g.textAlign="center"; g.textBaseline="middle";
+    g.font="bold 30px Georgia"; g.fillText("POSITION",w/2,34);
+    g.font="bold 30px Georgia"; g.fillText("CLOSED",w/2,66);
+  })});
 function makeDesk(cx0,cy0){
   /* the circulation desk: a long counter spanning its three cells, the
      terminal at its middle under the one dependable lamp in the building */
@@ -1955,19 +2138,62 @@ function makeDesk(cx0,cy0){
   /* the terminal, facing the south approach (toward the elevator) */
   const pc=makeVintagePC(1);
   pc.position.set(0,1.19,0.1); g.add(pc);
-  /* a gooseneck lamp pooled over it — the heart of the library stays lit */
-  const lampArm=new THREE.Mesh(new THREE.CylinderGeometry(0.02,0.02,0.7,6),darkMetalMat);
-  lampArm.position.set(0.85,1.54,-0.2); lampArm.rotation.z=0.5; g.add(lampArm);
-  const shade=new THREE.Mesh(new THREE.ConeGeometry(0.14,0.18,10,1,true),darkMetalMat);
-  shade.position.set(0.62,1.86,-0.2); shade.rotation.z=0.5; g.add(shade);
+  /* the one dependable lamp in the building: a weighted foot, two jointed
+     arms and a spun shade turned down over the machine, open end toward it */
+  const CT=1.19;                                                  // the counter's top
+  const rod=(a,b,r,mat)=>{
+    const d=new THREE.Vector3().subVectors(b,a), m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,d.length(),8),mat);
+    m.position.copy(a).addScaledVector(d,0.5); m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),d.normalize());
+    g.add(m); return m;
+  };
+  const foot=new THREE.Mesh(LAMP_BASE_GEO,darkMetalMat); foot.scale.set(1.1,1.4,1.1); foot.position.set(0.95,CT,-0.2); g.add(foot);
+  const elbow=new THREE.Vector3(0.93,1.62,-0.2), apex=new THREE.Vector3(0.7,1.95,-0.2);
+  rod(new THREE.Vector3(0.95,CT+0.06,-0.2),elbow,0.013,darkMetalMat);
+  rod(elbow,apex,0.011,darkMetalMat);
+  const knuckle=new THREE.Mesh(new THREE.SphereGeometry(0.022,8,6),darkMetalMat); knuckle.position.copy(elbow); g.add(knuckle);
+  const shade=new THREE.Mesh(new THREE.ConeGeometry(0.13,0.17,14,1,true),darkMetalMat);
+  shade.material=deskShadeMat;
+  shade.position.set(0.66,1.88,-0.2); shade.rotation.z=-0.5; g.add(shade);
   const bulb=new THREE.Mesh(new THREE.SphereGeometry(0.05,8,8),
     new THREE.MeshBasicMaterial({color:0xffd9a0}));
   bulb.position.set(0.6,1.82,-0.2); g.add(bulb);
   const lamp=new THREE.PointLight(0xffcf92,0.85,9,1.9);
   lamp.position.set(0.55,2.0,-0.1); g.add(lamp);
-  /* scattered returns: a tray and a stack of slips */
+  /* the rest of the counter: returns nobody checked in, a bell nobody
+     answers, the stamp still set to a date, and a sign on the only
+     position in the building */
   const tray=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.07,0.34),beigePlasticDark);
   tray.position.set(-1.4,1.23,0.2); g.add(tray);
+  scatterPapers(g,-1.4,1.265,0.2,4,0.06);
+  for(const [x,z,n] of[[-2.5,0.3,5],[-2.9,-0.2,3],[2.3,0.35,4]]){
+    let lift=0;
+    for(let i=0;i<n;i++){ const des=pickBook();
+      spawnBook(g,des,x+rand(-0.02,0.02),CT,z+rand(-0.02,0.02),1,{flat:true,lift,yaw:rand(-0.25,0.25)+Math.PI/2}); lift+=des.tx; }
+  }
+  {
+    const bell=new THREE.Group(); bell.position.set(1.35,CT,0.55); g.add(bell);
+    const bb=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.055,0.018,16),darkMetalMat); bb.position.y=0.009; bell.add(bb);
+    const dome=new THREE.Mesh(new THREE.SphereGeometry(0.045,16,8,0,Math.PI*2,0,Math.PI/2),accentBrass); dome.position.y=0.018; bell.add(dome);
+    const btn=new THREE.Mesh(new THREE.CylinderGeometry(0.006,0.006,0.02,8),accentBrass); btn.position.y=0.07; bell.add(btn);
+    const stamp=new THREE.Group(); stamp.position.set(-0.75,CT,0.45); g.add(stamp);
+    const sb=new THREE.Mesh(new THREE.BoxGeometry(0.07,0.03,0.04),darkMetalMat); sb.position.y=0.015; stamp.add(sb);
+    const sh=new THREE.Mesh(new THREE.CylinderGeometry(0.014,0.018,0.08,8),darkWoodMat); sh.position.y=0.07; stamp.add(sh);
+    const pad=new THREE.Mesh(new THREE.BoxGeometry(0.12,0.012,0.08),bakeliteMat); pad.position.set(-0.92,CT+0.006,0.42); g.add(pad);
+    /* POSITION CLOSED, on a tent card, facing whoever walks up */
+    const card=new THREE.Group(); card.position.set(0.55,CT,0.62); g.add(card);
+    for(const s of[-1,1]){
+      const p=new THREE.Mesh(new THREE.PlaneGeometry(0.3,0.12),closedCardMat);
+      p.rotation.order="YXZ"; p.rotation.set(-0.35,s<0?Math.PI:0,0);
+      p.position.set(0,0.056,s*0.02); card.add(p);
+    }
+    /* a card file with its lid up */
+    const fb=new THREE.Mesh(new THREE.BoxGeometry(0.2,0.12,0.3),darkWoodMat); fb.position.set(-2.0,CT+0.06,-0.35); g.add(fb);
+    const cards=new THREE.Mesh(new THREE.BoxGeometry(0.18,0.1,0.26),cardMat); cards.position.set(-2.0,CT+0.07,-0.35); g.add(cards);
+  }
+  /* the librarian's chair, pushed back from the counter */
+  {
+    const ch=makeChair(false); ch.position.set(0.35,0,-1.35); ch.rotation.y=rand(-0.5,0.5); g.add(ch);
+  }
   /* lamp + bulb ride out with the handle: the terminal cutscene kills them
      at the blackout beat (they were unreachable locals before — the one
      dependable light in the building used to survive "every light lets go") */
@@ -2061,118 +2287,299 @@ function makeFixture(wx,wz,alongZ,fy=3.78){     // base layer hung +20% higher (
 }
 
 /* ---------------- the way down ----------------
-   A round shaft behind the desk with a stone spiral stair winding down its
-   wall and a blue glow/fog swallowing the depth: you can read 2–3 turns of
-   stair before the light gives out. Built with the level and kept invisible
-   under the carpet plug; the terminal ending's dig reveals it. */
+   A round shaft behind the desk: the floor torn open in section, the earth
+   the librarian clawed through, and under that the dressed stone of a stair
+   that was down here long before the library was built on top of it —
+   wedge treads let into the wall, worn hollow in the middle, an iron rail
+   spiralling down the open well, and a blue light below that fills the
+   depth like water. Built with the level, hidden under a carpet plug until
+   the terminal ending digs it open. */
 const HOLE_R=2.7, HOLE_DEPTH=22;
 const STAIR_RISE=4.48, STAIR_STEPS=16;           // rise per revolution / steps per revolution
-function buildHole(hc,carpetMat){
-  const SZ=LW*CELL;
-  /* packed earth & old stone — local to the shaft, nothing above ever uses it */
-  const texStone=makeCanvas(128,128,(g,w,h)=>{
-    g.fillStyle="#242019"; g.fillRect(0,0,w,h);
-    for(let i=0;i<900;i++){
-      const v=18+Math.random()*30;
-      g.fillStyle=`rgba(${v+10|0},${v+5|0},${v|0},${0.25+Math.random()*0.4})`;
-      g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*3,1+Math.random()*2);
+/* the treads run from the well's edge right into the masonry */
+export const STAIR={RISE:STAIR_RISE, STEPS:STAIR_STEPS, IN:1.36, OUT:2.9, T:0.32, RAIL_R:1.47};
+const STEP_A=Math.PI*2/STAIR_STEPS;
+/* One tread, in its own frame: an annular sector from angle 0 to one step
+   (plus a nosing), top at y=0. Placed with rotation.y=−θ its span starts at
+   world angle θ — the same convention libGroundY reads the stair with, so
+   what you see under your feet is what you are standing on. */
+let TREAD_GEO=null;
+export function stairTreadGeo(){
+  if(TREAD_GEO) return TREAD_GEO;
+  const {IN,OUT,T}=STAIR, NOSE=0.045/2, CH=0.035, CHA=0.03/2;
+  const phiF=STEP_A+NOSE, top=phiF-CHA;
+  const pos=[],nor=[],uv=[];
+  const P=(r,f,y)=>new THREE.Vector3(r*Math.cos(f),y,r*Math.sin(f));
+  const e1=new THREE.Vector3(), e2=new THREE.Vector3(), n=new THREE.Vector3();
+  const quad=(a,b,c,d,want,uvf)=>{
+    e1.subVectors(b,a); e2.subVectors(c,a); n.crossVectors(e1,e2).normalize();
+    let q=[a,b,c,d]; if(n.dot(want)<0){ q=[a,d,c,b]; n.negate(); }
+    const tri=[q[0],q[1],q[2],q[0],q[2],q[3]];
+    for(const p of tri){ pos.push(p.x,p.y,p.z); nor.push(n.x,n.y,n.z); const t=uvf(p); uv.push(t[0],t[1]); }
+  };
+  const uvTop=p=>[p.x*0.5,p.z*0.5];
+  const up=new THREE.Vector3(0,1,0), dn=new THREE.Vector3(0,-1,0);
+  const RS=3, AS=4;
+  /* the top, worn into a shallow hollow where the feet went */
+  const wear=(r,f)=>0.014*Math.sin(Math.PI*(r-IN)/(OUT-0.4-IN))*Math.sin(Math.PI*f/top)*(r<OUT-0.4?1:0);
+  for(let j=0;j<RS;j++)for(let k=0;k<AS;k++){
+    const r0=IN+(OUT-IN)*j/RS, r1=IN+(OUT-IN)*(j+1)/RS, f0=top*k/AS, f1=top*(k+1)/AS;
+    quad(P(r0,f0,-wear(r0,f0)),P(r1,f0,-wear(r1,f0)),P(r1,f1,-wear(r1,f1)),P(r0,f1,-wear(r0,f1)),up,uvTop);
+  }
+  for(let j=0;j<RS;j++){
+    const r0=IN+(OUT-IN)*j/RS, r1=IN+(OUT-IN)*(j+1)/RS;
+    const mid=(r0+r1)/2, front=new THREE.Vector3(-Math.sin(phiF),0,Math.cos(phiF));
+    /* the chamfered nosing, the riser, the back and the soffit */
+    quad(P(r0,top,0),P(r1,top,0),P(r1,phiF,-CH),P(r0,phiF,-CH),front.clone().add(up).normalize(),p=>[Math.hypot(p.x,p.z)*0.5,p.y*0.5]);
+    quad(P(r0,phiF,-CH),P(r1,phiF,-CH),P(r1,phiF,-T),P(r0,phiF,-T),front,p=>[Math.hypot(p.x,p.z)*0.5,p.y*0.5]);
+    quad(P(r0,0,0),P(r1,0,0),P(r1,0,-T),P(r0,0,-T),new THREE.Vector3(0,0,-1),p=>[Math.hypot(p.x,p.z)*0.5,p.y*0.5]);
+    for(let k=0;k<AS;k++){
+      const f0=phiF*k/AS, f1=phiF*(k+1)/AS;
+      quad(P(r0,f0,-T),P(r1,f0,-T),P(r1,f1,-T),P(r0,f1,-T),dn,uvTop);
     }
-    for(let i=0;i<22;i++){                       // strata seams
-      g.strokeStyle=`rgba(8,7,5,${0.2+Math.random()*0.3})`; g.lineWidth=1;
-      const y=Math.random()*h; g.beginPath(); g.moveTo(0,y);
-      for(let x=0;x<=w;x+=8) g.lineTo(x,y+Math.sin(x*0.2+i)*2+Math.random()*2);
-      g.stroke();
+    void mid;
+  }
+  /* the inner end, the face you see across the well */
+  for(let k=0;k<AS;k++){
+    const f0=phiF*k/AS, f1=phiF*(k+1)/AS, fm=(f0+f1)/2;
+    const ytop=f1>top? -CH : 0;
+    quad(P(IN,f0,f0>top?-CH:0),P(IN,f1,ytop),P(IN,f1,-T),P(IN,f0,-T),
+      new THREE.Vector3(-Math.cos(fm),0,-Math.sin(fm)),p=>[Math.atan2(p.z,p.x)*IN*0.5,p.y*0.5]);
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute("position",new THREE.Float32BufferAttribute(pos,3));
+  g.setAttribute("normal",new THREE.Float32BufferAttribute(nor,3));
+  g.setAttribute("uv",new THREE.Float32BufferAttribute(uv,2));
+  TREAD_GEO=markShared(g);
+  return g;
+}
+/* The iron rail: a post on every other tread and a handrail and mid-rail
+   following the treads down. `list` is the treads it runs over, each
+   {th, y} (span start angle, top height), about the centre (cx,cz). */
+export function stairRailMeshes(cx,cz,list,mat){
+  const R=STAIR.RAIL_R, posts=[], hi=[], lo=[];
+  list.forEach((t,i)=>{
+    const a=t.th+STEP_A*0.5, x=cx+Math.cos(a)*R, z=cz+Math.sin(a)*R;
+    hi.push(new THREE.Vector3(x,t.y+0.95,z)); lo.push(new THREE.Vector3(x,t.y+0.45,z));
+    if(i%2===0){
+      const p=new THREE.Mesh(new THREE.CylinderGeometry(0.015,0.018,0.96,6),mat);
+      p.position.set(x,t.y+0.47,z); posts.push(p);
+      const f=new THREE.Mesh(new THREE.CylinderGeometry(0.035,0.04,0.02,8),mat);
+      f.position.set(x,t.y+0.01,z); posts.push(f);
     }
   });
-  texStone.wrapS=texStone.wrapT=THREE.RepeatWrapping;
+  const out=[];
+  if(posts.length){ out.push(mergeStatic(posts,mat)); for(const p of posts) p.geometry.dispose(); }
+  if(hi.length>1){
+    out.push(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(hi),hi.length*3,0.022,6,false),mat));
+    out.push(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(lo),lo.length*3,0.011,5,false),mat));
+  }
+  return out;
+}
+/* The shaft's own weather: every surface in it drifts toward the blue of
+   the light below the deeper it sits, so from the rim the stair fades into
+   glow rather than into black, and nothing has to be a plane stood across
+   the shaft for the camera to walk through. */
+const HAZE_COL={value:new THREE.Color(0x1d5374)};
+function hazeCompile(sh){
+  sh.uniforms.uHaze=HAZE_COL;
+  sh.vertexShader=sh.vertexShader.replace("#include <common>","#include <common>\nvarying float vHzY;")
+    .replace("#include <project_vertex>","#include <project_vertex>\n  vHzY=(modelMatrix*vec4(transformed,1.0)).y;");
+  sh.fragmentShader=sh.fragmentShader.replace("#include <common>","#include <common>\nuniform vec3 uHaze; varying float vHzY;")
+    .replace("#include <fog_fragment>","gl_FragColor.rgb=mix(gl_FragColor.rgb,uHaze,smoothstep(-2.5,-18.0,vHzY)*0.8);\n#include <fog_fragment>");
+}
+const hazed=m=>{ m.onBeforeCompile=hazeCompile; return m; };
+const ironMat=hazed(new THREE.MeshPhongMaterial({color:0x2c2a28, specular:0x5a5652, shininess:40}));
+const rootMat=new THREE.MeshPhongMaterial({color:0x3a2a1c, specular:0x0a0806, shininess:6});
+const jutelMat=new THREE.MeshPhongMaterial({color:0x6a5a40, specular:0x080604, shininess:3, side:THREE.BackSide});
+const shaftSilkMat=new THREE.MeshBasicMaterial({color:0xb8c4c8, transparent:true, opacity:0.14, depthWrite:false});
+const concreteMat=new THREE.MeshPhongMaterial({map:texSlabSection, color:0x77736c, specular:0x151515, shininess:6});
+let dotTex=null;
+function motesTex(){
+  if(dotTex) return dotTex;
+  dotTex=makeCanvas(32,32,(g,w,h)=>{ const gr=g.createRadialGradient(16,16,0,16,16,16);
+    gr.addColorStop(0,"rgba(255,255,255,1)"); gr.addColorStop(0.4,"rgba(255,255,255,0.35)"); gr.addColorStop(1,"rgba(255,255,255,0)");
+    g.fillStyle=gr; g.fillRect(0,0,w,h); });
+  markShared(dotTex);
+  return dotTex;
+}
+/* a lump of spoil: an icosphere pushed about by a few octaves of sines,
+   flattened, and cut off at the floor so it sits ON the carpet */
+function spoilHeap(sx,sy,sz){
+  const g=new THREE.IcosahedronGeometry(1,2), p=g.attributes.position, ph=Math.random()*9;
+  for(let i=0;i<p.count;i++){
+    let x=p.getX(i), y=p.getY(i), z=p.getZ(i);
+    const k=1+0.22*Math.sin(x*3.1+ph)*Math.sin(z*2.7+ph*1.3)+0.12*Math.sin(x*7+z*6+ph)+0.06*Math.sin(y*11+x*9);
+    x*=sx*k; z*=sz*k; y=Math.max(0,y)*sy*k;
+    p.setXYZ(i,x,y,z);
+  }
+  g.computeVertexNormals();
+  const uv=g.attributes.uv; for(let i=0;i<uv.count;i++) uv.setXY(i,p.getX(i)*0.8,p.getZ(i)*0.8+p.getY(i)*0.8);
+  return g;
+}
+function buildHole(hc,carpetMat){
+  const SZ=LW*CELL;
   const g=new THREE.Group();
   g.visible=false;
-  /* shaft wall, seen from inside; slightly belled so the depths read wider.
-     THE NEST's rock, like the treads, and for the same reason: this is the
-     bore you walk down and step off the bottom of onto the cave's own
-     continuation of it. The local packed-earth canvas it used to wear was
-     128² at repeat(6,4) — 44 px/m around and 23 px/m down, the lowest
-     resolution of any surface in the game — and its "strata" were fourteen
-     full-width sine curves, which is precisely the pass texCaveRock's own
-     header was written to bury: at tiling scale they read as dark worms
-     crawling round the shaft. texCaveRock is 512², seam-safe (everything in
-     it is drawn wrapped), fractures instead of undulating, and carries the
-     grain that lets it double as its own bump map. repeat.x stays an
-     INTEGER — the cylinder's u wraps, and a fractional rate puts a hard
-     vertical cut down the full 22m of wall. */
-  const shaftTex=texCaveRock.clone(); shaftTex.needsUpdate=true; shaftTex.repeat.set(6,7.6);
-  /* No colour tint: texCaveRock is a dark, deliberately low-contrast map
-     (built to be read at arm's length under a fungus colony), and the only
-     things lighting 22m of shaft are four dim blue points. Multiplying it
-     down as well left a flat teal field with the detail buried. The bump is
-     carried hard (0.16) because raking blue light across the joints is the
-     only thing here that says how far away the far wall is. */
-  const shaftMat=new THREE.MeshPhongMaterial({map:shaftTex, bumpMap:shaftTex, bumpScale:0.16,
-    specular:0x14181e, shininess:10,
-    emissive:0x070c11, side:THREE.BackSide});
-  const shaft=new THREE.Mesh(
-    new THREE.CylinderGeometry(HOLE_R+0.05,HOLE_R+0.4,HOLE_DEPTH,40,1,true),shaftMat);
-  shaft.position.set(hc.x,-HOLE_DEPTH/2,hc.z); g.add(shaft);
-  /* the stair: chunky stone treads hugging the wall, one merged mesh.
-     Entry tread on the south rim (the desk side — where you arrive from).
-     These are THE NEST's slabs: the same rock map, the same bump, the same
-     world-scaled UVs. They have to be — you walk down this flight and step
-     off the bottom of it onto the cave's own continuation of it, and the
-     old local packed-earth canvas at raw box UVs crammed a 4m tile onto a
-     1.25m tread, which averaged out to a flat grey slab with no grain. */
-  const stepMat=new THREE.MeshPhongMaterial({map:texCaveRock, bumpMap:texCaveRock,
-    bumpScale:0.06, color:0x525a63, emissive:0x0a1017, specular:0x141a22, shininess:8});
-  const stair={a0:Math.PI/2, dir:1, rc:HOLE_R-0.62, rise:STAIR_RISE, steps:STAIR_STEPS,
-               n:Math.round(4.5*STAIR_STEPS)};
+  const {IN,OUT,T}=STAIR, RC=HOLE_R-0.62;
+  /* ---- the shaft wall, top down: floor section, earth, masonry ---- */
+  const secTex=texSlabSection.clone(); secTex.needsUpdate=true; secTex.repeat.set(4,1); secTex.wrapT=THREE.ClampToEdgeWrapping;
+  /* the top two bands sit above where the haze begins; left plain they share programs */
+  const secMat=new THREE.MeshPhongMaterial({map:secTex, specular:0x0c0c0c, shininess:4, side:THREE.BackSide});
+  const SEC_H=0.5;
   {
-    const stepGeo=scaleBoxUV(new THREE.BoxGeometry(1.3,0.24,1.05),1.3,0.24,1.05,2);
-    const steps=[];
-    const n=stair.n;                             // ~4½ turns; the glow takes the rest
-    for(let i=0;i<n;i++){
-      const th=stair.a0+stair.dir*i*(Math.PI*2/STAIR_STEPS);
-      const m=new THREE.Mesh(stepGeo,stepMat);
-      m.position.set(hc.x+Math.cos(th)*stair.rc, -0.14-i*(STAIR_RISE/STAIR_STEPS),
-                     hc.z+Math.sin(th)*stair.rc);
-      m.rotation.y=-th;                          // tread runs tangentially
-      steps.push(m);
-    }
-    g.add(mergeStatic(steps,stepMat));
-    stepGeo.dispose();
+    const geo=new THREE.CylinderGeometry(HOLE_R,HOLE_R+0.02,SEC_H,56,1,true);
+    const p=geo.attributes.position;
+    for(let i=0;i<p.count;i++){ const a=Math.atan2(p.getZ(i),p.getX(i)), k=1+0.012*Math.sin(a*13)+0.008*Math.sin(a*29);
+      p.setX(i,p.getX(i)*k); p.setZ(i,p.getZ(i)*k); }
+    geo.computeVertexNormals();
+    const m=new THREE.Mesh(geo,secMat); m.position.set(hc.x,-SEC_H/2+0.001,hc.z); g.add(m);
   }
-  /* the blue glow/fog: stacked translucent discs, denser with depth — from
-     above they composite into a luminous murk that swallows the stair */
+  const earthTex=texSpoil.clone(); earthTex.needsUpdate=true; earthTex.repeat.set(7,2);
+  const earthMat=new THREE.MeshPhongMaterial({map:earthTex, bumpMap:earthTex, bumpScale:0.05,
+    specular:0x0a0806, shininess:4, side:THREE.BackSide});
+  const EARTH_B=-2.7;
+  {
+    /* claw-dug: gouged in long vertical grooves, and bulging where it slumped */
+    const geo=new THREE.CylinderGeometry(HOLE_R+0.02,HOLE_R+0.1,-SEC_H-EARTH_B,64,10,true);
+    const p=geo.attributes.position, ph=Math.random()*9;
+    for(let i=0;i<p.count;i++){
+      const a=Math.atan2(p.getZ(i),p.getX(i)), y=p.getY(i);
+      const edge=Math.abs(y)>(-SEC_H-EARTH_B)/2-0.01? 0 : 1;
+      const k=1+edge*(0.03*Math.pow(Math.abs(Math.sin(a*19+ph)),3)+0.02*Math.sin(a*5+y*2+ph)+0.012*Math.sin(y*9+a*3));
+      p.setX(i,p.getX(i)*k); p.setZ(i,p.getZ(i)*k);
+    }
+    geo.computeVertexNormals();
+    const m=new THREE.Mesh(geo,earthMat); m.position.set(hc.x,(-SEC_H+EARTH_B)/2,hc.z); g.add(m);
+  }
+  const masTex=texShaftMasonry.clone(); masTex.needsUpdate=true;
+  const MAS_H=HOLE_DEPTH+EARTH_B;
+  masTex.repeat.set(6,MAS_H/(8*STAIR_RISE/STAIR_STEPS));          // one course per tread
+  const masMat=hazed(new THREE.MeshPhongMaterial({map:masTex, bumpMap:masTex, bumpScale:0.07,
+    color:0x8c8a86, specular:0x101418, shininess:10, emissive:0x03060a, side:THREE.BackSide}));
+  {
+    const m=new THREE.Mesh(new THREE.CylinderGeometry(2.8,2.8,MAS_H,48,1,true),masMat);
+    m.position.set(hc.x,EARTH_B-MAS_H/2+0.05,hc.z); g.add(m);
+  }
+  /* ---- the stair ---- */
+  const stepMat=hazed(new THREE.MeshPhongMaterial({map:texCaveRock, bumpMap:texCaveRock,
+    bumpScale:0.05, color:0x6a6e70, emissive:0x070b10, specular:0x181c22, shininess:10}));
+  const stair={a0:Math.PI/2, dir:1, rc:RC, rise:STAIR_RISE, steps:STAIR_STEPS,
+               n:Math.round(4.5*STAIR_STEPS)};
+  const treads=[], list=[];
+  const TG=stairTreadGeo();
+  for(let i=0;i<stair.n;i++){
+    const th=stair.a0+i*STEP_A, y=-0.02-i*(STAIR_RISE/STAIR_STEPS);
+    const m=new THREE.Mesh(TG,stepMat);
+    m.position.set(hc.x,y,hc.z); m.rotation.y=-th;
+    treads.push(m); list.push({th,y});
+  }
+  g.add(mergeStatic(treads,stepMat));
+  for(const r of stairRailMeshes(hc.x,hc.z,list,ironMat)) g.add(r);
+  /* ---- the light below, filling the well ---- */
   const glow=[];
-  [[-2.5,0.05],[-5,0.10],[-7.5,0.17],[-10,0.28],[-13,0.46],[-16,0.68],[-19,0.9]]
+  [[-3,0.05],[-5.5,0.10],[-8,0.17],[-10.5,0.28],[-13,0.46],[-16,0.68],[-19,0.9]]
   .forEach(([y,op],i,arr)=>{
     const c=new THREE.Color(0x2b4c66).lerp(new THREE.Color(0x63ccff),i/(arr.length-1));
     const m=new THREE.MeshBasicMaterial({color:c, transparent:true, opacity:op,
       depthWrite:false, side:THREE.DoubleSide});
-    const d=new THREE.Mesh(new THREE.CircleGeometry(HOLE_R+0.04,36),m);
+    const d=new THREE.Mesh(new THREE.CircleGeometry(IN-0.06,36),m);
     d.rotation.x=-Math.PI/2; d.position.set(hc.x,y,hc.z);
     glow.push({mat:m, baseOp:op}); g.add(d);
   });
-  const cap=new THREE.Mesh(new THREE.CircleGeometry(HOLE_R+0.45,40),
-    new THREE.MeshBasicMaterial({color:0x0c2836}));
+  const cap=new THREE.Mesh(new THREE.CircleGeometry(2.85,40),
+    new THREE.MeshBasicMaterial({color:0x2a6f94}));
   cap.rotation.x=-Math.PI/2; cap.position.set(hc.x,-HOLE_DEPTH+0.1,hc.z); g.add(cap);
-  /* the rim: a ring of disturbed earth and flung dirt breaking the carpet edge */
-  const dirtMat=new THREE.MeshPhongMaterial({map:texStone, color:0x9a7c56,
-    specular:0x0c0a08, shininess:4});
-  const ring=new THREE.Mesh(new THREE.RingGeometry(HOLE_R-0.02,HOLE_R+0.95,40),dirtMat);
-  ring.rotation.x=-Math.PI/2; ring.position.set(hc.x,0.02,hc.z); g.add(ring);
+  /* dust hanging in the light */
+  const motes=(()=>{
+    const N=420, pos=new Float32Array(N*3);
+    for(let i=0;i<N;i++){ const a=Math.random()*Math.PI*2, r=Math.sqrt(Math.random())*2.55;
+      pos[i*3]=Math.cos(a)*r; pos[i*3+1]=-0.4-Math.random()*19; pos[i*3+2]=Math.sin(a)*r; }
+    const geo=new THREE.BufferGeometry(); geo.setAttribute("position",new THREE.BufferAttribute(pos,3));
+    const pts=new THREE.Points(geo,new THREE.PointsMaterial({map:motesTex(), color:0x9ed4f0, size:0.045,
+      transparent:true, opacity:0.55, depthWrite:false, blending:THREE.AdditiveBlending}));
+    pts.position.set(hc.x,0,hc.z); pts.userData.animated=true;
+    return pts;
+  })();
+  g.add(motes);
+  /* its silk: the lines it went down on, still hanging in the shaft */
+  for(let i=0;i<4;i++){
+    const a=Math.random()*Math.PI*2, r0=rand(1.9,2.5), len=rand(7,15), pts=[];
+    for(let k=0;k<=8;k++){ const t=k/8; pts.push(new THREE.Vector3(hc.x+Math.cos(a)*(r0-t*rand(0.3,0.8)), -t*len, hc.z+Math.sin(a)*(r0-t*0.5))); }
+    g.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts),16,0.006,4,false),shaftSilkMat));
+  }
+  /* roots, hanging out of the earth it cut */
   {
-    const moundGeo=new THREE.SphereGeometry(1,7,5);
-    const mounds=[];
-    for(let i=0;i<14;i++){
-      const a=i/14*Math.PI*2+rand(-0.25,0.25), rr=HOLE_R+rand(0.25,1.05);
-      const m=new THREE.Mesh(moundGeo,dirtMat);
-      const s=rand(0.16,0.42);
-      m.scale.set(s,s*rand(0.32,0.5),s*rand(0.8,1.3));
-      m.position.set(hc.x+Math.cos(a)*rr, 0.02, hc.z+Math.sin(a)*rr);
-      m.rotation.y=rand(0,Math.PI*2);
-      mounds.push(m);
+    const roots=[];
+    for(let i=0;i<16;i++){
+      const a=Math.random()*Math.PI*2, y0=rand(-0.7,-2.4), len=rand(0.4,1.3), pts=[];
+      for(let k=0;k<=5;k++){ const t=k/5, rr=HOLE_R+0.06-t*rand(0.2,0.5);
+        pts.push(new THREE.Vector3(hc.x+Math.cos(a+t*0.1)*rr, y0-t*len, hc.z+Math.sin(a+t*0.1)*rr)); }
+      roots.push(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts),8,rand(0.006,0.014),4,false)));
     }
-    g.add(mergeStatic(mounds,dirtMat));
-    moundGeo.dispose();
+    g.add(mergeStatic(roots,rootMat)); for(const r of roots) r.geometry.dispose();
+  }
+  /* ---- the rim ---- */
+  const dirtTex=texSpoil.clone(); dirtTex.needsUpdate=true; dirtTex.repeat.set(1,1);
+  const dirtMat=new THREE.MeshPhongMaterial({map:dirtTex, bumpMap:dirtTex, bumpScale:0.04,
+    specular:0x0a0806, shininess:4});
+  /* spoil flung back behind the digger (it faced the desk, south) — heaps
+     to the north, and a thinner scatter everywhere else */
+  {
+    const heaps=[];
+    for(let i=0;i<9;i++){
+      const north=i<6, a=north? -Math.PI/2+rand(-1.1,1.1) : Math.random()*Math.PI*2;
+      const rr=HOLE_R+rand(0.5,north?2.6:1.4), s=north? rand(0.6,1.2):rand(0.3,0.6);
+      const m=new THREE.Mesh(spoilHeap(s,s*rand(0.28,0.45),s*rand(0.7,1.1)),dirtMat);
+      m.position.set(hc.x+Math.cos(a)*rr,0,hc.z+Math.sin(a)*rr); m.rotation.y=Math.random()*6.28;
+      heaps.push(m);
+    }
+    for(let i=0;i<40;i++){
+      const a=Math.random()*Math.PI*2, rr=HOLE_R+rand(0.2,4.5), s=rand(0.05,0.16);
+      const m=new THREE.Mesh(spoilHeap(s,s*0.7,s),dirtMat);
+      m.position.set(hc.x+Math.cos(a)*rr,0,hc.z+Math.sin(a)*rr); heaps.push(m);
+    }
+    g.add(mergeStatic(heaps,dirtMat)); for(const h of heaps) h.geometry.dispose();
+  }
+  /* the carpet torn back from the edge: flaps curling up and over, the
+     grey face up on some and the jute backing on the others */
+  {
+    const flaps=[];
+    for(let i=0;i<24;i++){
+      const a=i/24*Math.PI*2+rand(-0.1,0.1), w=rand(0.25,0.55), len=rand(0.3,0.75), curl=Math.random()<0.7? rand(0.25,0.9) : rand(1.6,2.6);
+      const geo=new THREE.PlaneGeometry(w,len,2,8), p=geo.attributes.position, uv=geo.attributes.uv;
+      for(let k=0;k<p.count;k++){
+        const t=(p.getY(k)+len/2)/len, ang=t*curl, R=len/curl;
+        /* rolled outward from the hole's edge: along the flap is along the radius */
+        const along=R*Math.sin(ang), rise=R*(1-Math.cos(ang));
+        const x=p.getX(k)*(1-t*0.65);
+        p.setXYZ(k,x,rise+0.006,-along);
+        uv.setXY(k,(x+hc.x)/SZ+0.5,(along)/SZ+0.5);
+      }
+      geo.computeVertexNormals();
+      const m=new THREE.Mesh(geo,carpetMat);
+      m.position.set(hc.x+Math.cos(a)*(HOLE_R-0.02),0,hc.z+Math.sin(a)*(HOLE_R-0.02));
+      m.rotation.y=-a-Math.PI/2;
+      flaps.push(m);
+    }
+    const top=mergeStatic(flaps,carpetMat), back=new THREE.Mesh(top.geometry,jutelMat);
+    back.matrixAutoUpdate=false; back.matrix.copy(top.matrix);
+    g.add(top); g.add(back);
+    for(const f of flaps) f.geometry.dispose();
+  }
+  /* slab broken out of the floor */
+  {
+    const chunks=[];
+    for(let i=0;i<9;i++){
+      const geo=new THREE.BoxGeometry(rand(0.15,0.45),rand(0.08,0.2),rand(0.15,0.4),1,1,1);
+      const p=geo.attributes.position;
+      for(let k=0;k<p.count;k++) p.setXYZ(k,p.getX(k)*rand(0.7,1.2),p.getY(k)*rand(0.7,1.2),p.getZ(k)*rand(0.7,1.2));
+      geo.computeVertexNormals();
+      const a=Math.random()*Math.PI*2, rr=HOLE_R+rand(0.3,2.2), m=new THREE.Mesh(geo,concreteMat);
+      m.position.set(hc.x+Math.cos(a)*rr,0.06,hc.z+Math.sin(a)*rr); m.rotation.set(rand(-0.3,0.3),Math.random()*6.28,rand(-0.3,0.3));
+      chunks.push(m);
+    }
+    g.add(mergeStatic(chunks,concreteMat)); for(const c of chunks) c.geometry.dispose();
   }
   /* the glow leaks: lights in the throat and one washing up over the rim.
      They live OUTSIDE the hidden group, in the scene and awake-but-dark from
@@ -2186,12 +2593,7 @@ function buildHole(hc,carpetMat){
     l.position.set(hc.x,y,hc.z); scene.add(l);
     holeLights.push({l,I});
   });
-  /* a dormant sprite keeps the dig dust's shader program in the pre-warmed
-     set (the FX pool is created mid-cutscene, too late to compile cheaply) */
-  const spr=new THREE.Sprite(new THREE.SpriteMaterial({map:texStone, transparent:true, opacity:0}));
-  spr.scale.set(0.001,0.001,1); spr.position.set(hc.x,-2,hc.z); g.add(spr);
-  renderer.initTexture(texStone); renderer.initTexture(shaftTex);
-  renderer.initTexture(texCaveRock);         // the treads' map — first upload here, not at the reveal
+  for(const t of[secTex,earthTex,masTex,dirtTex,texCaveRock,texSpoil]) renderer.initTexture(t);
   scene.add(g);
   /* the plug: a carpet-matched disc hiding all of it until the dig */
   const plugGeo=new THREE.CircleGeometry(HOLE_R+0.14,44);
@@ -2202,8 +2604,9 @@ function buildHole(hc,carpetMat){
   }
   const plug=new THREE.Mesh(plugGeo,carpetMat);
   plug.rotation.x=-Math.PI/2; plug.position.set(hc.x,0.006,hc.z);
+  plug.userData.noBatch=true;         // revealHole takes it away; baked into the floor's batch it would stay
   scene.add(plug);
-  LIB.hole={x:hc.x, z:hc.z, r:HOLE_R, depth:HOLE_DEPTH, group:g, plug, lights:holeLights, glow, stair};
+  LIB.hole={x:hc.x, z:hc.z, r:HOLE_R, depth:HOLE_DEPTH, group:g, plug, lights:holeLights, glow, stair, motes};
 }
 /* the dig breaks through: swap the carpet plug for the open shaft. The
    cutscene calls this at peak dust, so the pop is never seen; it also owns
@@ -2215,6 +2618,532 @@ export function revealHole(){
   STATE.guide={x:h.x, z:h.z};       // the HUD's one legitimate pointer (see ui.js)
   h.group.visible=true;
   if(h.plug){ scene.remove(h.plug); h.plug.geometry.dispose(); h.plug=null; }
+}
+
+/* ================= the walls =================
+   Twenty-four metres of bare plaster with pictures scattered over it at
+   random heights read as a warehouse somebody had hung pictures in. What
+   makes a room a READING ROOM is architecture you can measure it by:
+   pilasters marching round it on one pitch, an oak wainscot at hand height,
+   and a picture rail the frames hang from on wires. The hang then follows
+   the architecture — one bay, one arrangement, at one height, all the way
+   round — which is what an institution does, and the REPETITION is what
+   makes the room liminal. Then it goes wrong in small ways: a bay where
+   only the wires are left and the paint is paler where the frame was,
+   every clock stopped at the same minute, doors that don't open.
+   Everything is built in each wall's own frame (x along the wall, z out
+   into the room) and left for batchStatic to merge. */
+const BAYS=11, PIL_W=0.72, PIL_D=0.22, WAIN_H=1.12, RAIL_Y=3.3;
+const WALL_IN=ROOM_SPAN/2-CELL;                  // the inner wall plane
+const BAY_W=2*WALL_IN/BAYS;
+const bayS=b=>-WALL_IN+(b+0.5)*BAY_W;
+const pilS=k=>-WALL_IN+k*BAY_W;
+/* clockwise from the north wall; `ry` turns local +z into the room */
+const WALLS=[{id:"A",ry:0,cx:0,cz:-WALL_IN},{id:"B",ry:-Math.PI/2,cx:WALL_IN,cz:0},
+             {id:"C",ry:Math.PI,cx:0,cz:WALL_IN},{id:"D",ry:Math.PI/2,cx:-WALL_IN,cz:0}];
+const wallPt=(W,s,d)=>({x:W.cx+Math.cos(W.ry)*s+Math.sin(W.ry)*d, z:W.cz-Math.sin(W.ry)*s+Math.cos(W.ry)*d});
+const wainPanelMat=new THREE.MeshPhongMaterial({map:texDeskWood, color:0x8c7c66, specular:0x16100a, shininess:10});
+const skirtMat=new THREE.MeshPhongMaterial({map:texDeskWoodH, color:0x6e5e4c, specular:0x16100a, shininess:10});
+const wireMat=new THREE.MeshPhongMaterial({color:0x5a5448, specular:0x6a6456, shininess:50});
+const ghostMat=new THREE.MeshPhongMaterial({map:texGhost, transparent:true, depthWrite:false,
+  specular:0x000000, shininess:1, polygonOffset:true, polygonOffsetFactor:-2, polygonOffsetUnits:-2});
+const corkMat=new THREE.MeshPhongMaterial({map:texCork, specular:0x080604, shininess:3});
+const clockFaceMat=new THREE.MeshPhongMaterial({map:texClockFace, specular:0x2a2a26, shininess:30});
+const bakeliteMat=new THREE.MeshPhongMaterial({color:0x1c1a17, specular:0x3a3834, shininess:60});
+const exitSignMat=new THREE.MeshBasicMaterial({map:texExitSign, color:0x9a9a9a});
+const staffSignMat=new THREE.MeshPhongMaterial({map:texStaffSign, specular:0x111111, shininess:6});
+const darkWoodMat=new THREE.MeshPhongMaterial({map:texDeskWood, color:0x3a2e22, specular:0x0a0806, shininess:6});
+const doorGlassMat=new THREE.MeshPhongMaterial({color:0x0b0d0e, specular:0x8a9296, shininess:110});
+const pinMats=[0xa02820,0x2a5a9a,0xd8c030,0x2a7a40].map(c=>new THREE.MeshPhongMaterial({color:c, specular:0x444444, shininess:60}));
+let plaqueMat=null;
+const wallBox=(g,mat,w,h,d,x,y,z,m)=>{
+  const b=new THREE.Mesh(scaleBoxUV(new THREE.BoxGeometry(w,h,d),w,h,d,m||0.9),mat);
+  b.position.set(x,y,z); g.add(b); return b;
+};
+/* a stopped clock: every one of them reads 3:17 */
+function makeWallClock(){
+  const g=new THREE.Group(), R=0.34;
+  /* a bezel ring standing proud of a recessed dial */
+  const rim=new THREE.Mesh(new THREE.TorusGeometry(R+0.02,0.035,8,32),bakeliteMat);
+  rim.position.z=0.06; g.add(rim);
+  const back=new THREE.Mesh(new THREE.CylinderGeometry(R+0.03,R+0.05,0.05,28),bakeliteMat);
+  back.rotation.x=Math.PI/2; back.position.z=0.025; g.add(back);
+  const face=new THREE.Mesh(new THREE.CircleGeometry(R+0.004,28),clockFaceMat);
+  face.position.z=0.052; g.add(face);
+  const hand=(len,w,ang)=>{
+    const m=new THREE.Mesh(new THREE.BoxGeometry(w,len,0.006),bakeliteMat);
+    m.geometry.translate(0,len/2-0.03,0);
+    m.rotation.z=-ang; m.position.z=0.06; g.add(m);
+  };
+  hand(R*0.58,0.026,(3+17/60)/12*Math.PI*2);
+  hand(R*0.86,0.016,17/60*Math.PI*2);
+  const cap=new THREE.Mesh(new THREE.CylinderGeometry(0.02,0.02,0.012,10),bakeliteMat);
+  cap.rotation.x=Math.PI/2; cap.position.z=0.066; g.add(cap);
+  return g;
+}
+/* a panelled pair of doors in an oak architrave. Locked. */
+function makeLockedDoor(exit){
+  const g=new THREE.Group();
+  const DW=2.0, DH=2.44;
+  for(const s of[-1,1]) wallBox(g,deskMat,0.15,DH+0.08,0.06, s*(DW/2+0.075),(DH+0.08)/2,0.03);
+  wallBox(g,deskMatH,DW+0.42,0.17,0.07, 0,DH+0.16,0.035);
+  wallBox(g,darkWoodMat,DW,DH,0.02, 0,DH/2,0.01);
+  for(const s of[-1,1]){
+    const lx=s*(DW/4+0.005);
+    wallBox(g,deskMat,DW/2-0.02,DH-0.02,0.045, lx,DH/2,0.03);
+    for(const[py,ph]of[[0.62,0.78],[1.7,0.9]]) wallBox(g,deskMatH,DW/2-0.26,ph,0.012, lx,py,0.058);
+    const win=new THREE.Mesh(new THREE.PlaneGeometry(0.22,0.46),doorGlassMat);
+    win.position.set(lx,1.72,0.0655); g.add(win);
+    wallBox(g,accentBrass,0.09,0.32,0.006, s*0.12,1.1,0.056);
+    wallBox(g,accentBrass,DW/2-0.12,0.2,0.004, lx,0.13,0.054);
+  }
+  wallBox(g,accentBrass,DW+0.1,0.02,0.14, 0,0.01,0.07);
+  if(exit){
+    wallBox(g,darkMetalMat,0.66,0.26,0.1, 0,DH+0.52,0.05);
+    const f=new THREE.Mesh(new THREE.PlaneGeometry(0.6,0.22),exitSignMat);
+    f.position.set(0,DH+0.52,0.101); g.add(f);
+  } else {
+    const f=new THREE.Mesh(new THREE.PlaneGeometry(0.62,0.23),staffSignMat);
+    f.position.set(0,DH+0.46,0.075); g.add(f);
+  }
+  return g;
+}
+/* a cork noticeboard in an oak frame, with what is left pinned to it */
+function makeNoticeBoard(){
+  const g=new THREE.Group(), BW=1.7, BH=1.1;
+  const cork=new THREE.Mesh(new THREE.PlaneGeometry(BW,BH),corkMat);
+  cork.position.z=0.022; g.add(cork);
+  wallBox(g,darkWoodMat,BW,BH,0.02, 0,0,0.01);
+  for(const s of[-1,1]){
+    wallBox(g,deskMatH,BW+0.12,0.06,0.04, 0,s*(BH/2+0.03),0.02);
+    wallBox(g,deskMat,0.06,BH,0.04, s*(BW/2+0.03),0,0.02);
+  }
+  const n=2+Math.floor(Math.random()*4), taken=[];
+  for(let i=0;i<n;i++){
+    const pw=0.34, ph=0.46;
+    let x=0,y=0,ok=false;
+    for(let t=0;t<12&&!ok;t++){
+      x=rand(-BW/2+0.24,BW/2-0.24); y=rand(-BH/2+0.28,BH/2-0.28);
+      ok=taken.every(q=>Math.abs(q[0]-x)>0.3||Math.abs(q[1]-y)>0.36);
+    }
+    if(!ok) continue;
+    taken.push([x,y]);
+    const po=new THREE.Mesh(new THREE.PlaneGeometry(pw,ph),
+      new THREE.MeshPhongMaterial({map:makePosterTexture(), specular:0x000000, shininess:2}));
+    po.position.set(x,y,0.026+i*0.0015); po.rotation.z=(Math.random()-0.5)*0.12; g.add(po);
+    const pin=new THREE.Mesh(new THREE.SphereGeometry(0.012,6,5),pinMats[Math.floor(Math.random()*pinMats.length)]);
+    pin.position.set(x+(Math.random()-0.5)*0.04,y+ph/2-0.03,0.04); g.add(pin);
+  }
+  return g;
+}
+/* The architecture: pilasters, wainscot, picture rail, entablature. `cut`
+   lists the stretches each wall must leave bare (doorways). */
+function buildWallArchitecture(libWallMat,cut){
+  const labels=[];
+  for(const W of WALLS) for(let k=1;k<BAYS;k++) labels.push(["SECTION",`${W.id} ${String(k).padStart(2,"0")}`]);
+  const atlas=makePlaqueAtlas(labels);
+  plaqueMat=new THREE.MeshPhongMaterial({map:atlas.tex, specular:0x3a3a36, shininess:40});
+  let li=0;
+  const shaftH=LIB_WALL_H-1.6-(WAIN_H+0.1);
+  for(const W of WALLS){
+    const g=new THREE.Group(); g.position.set(W.cx,0,W.cz); g.rotation.y=W.ry; scene.add(g);
+    W.group=g;
+    const cuts=cut[W.id]||[];
+    const inCut=s=>cuts.some(([a,b])=>s>a&&s<b);
+    /* the pilasters */
+    for(let k=1;k<BAYS;k++,li++){
+      const s=pilS(k);
+      if(inCut(s)) continue;
+      wallBox(g,deskMat,PIL_W+0.14,WAIN_H+0.06,PIL_D+0.1, s,(WAIN_H+0.06)/2,(PIL_D+0.1)/2);
+      wallBox(g,deskMatH,PIL_W+0.2,0.06,PIL_D+0.16, s,WAIN_H+0.08,(PIL_D+0.16)/2);
+      wallBox(g,libWallMat,PIL_W,shaftH,PIL_D, s,WAIN_H+0.1+shaftH/2,PIL_D/2,4);
+      wallBox(g,libWallMat,PIL_W+0.2,0.5,PIL_D+0.12, s,LIB_WALL_H-1.35,(PIL_D+0.12)/2,4);
+      wallBox(g,libWallMat,PIL_W+0.36,0.16,PIL_D+0.22, s,LIB_WALL_H-1.02,(PIL_D+0.22)/2,4);
+      const pq=new THREE.PlaneGeometry(0.34,0.21);
+      setFaceUVPlane(pq,...atlas.uv(li));
+      const plate=new THREE.Mesh(pq,plaqueMat);
+      plate.position.set(s,2.55,PIL_D+0.004); g.add(plate);
+      const p=wallPt(W,s,PIL_D/2);
+      LIB.obstacles.push({x:p.x, z:p.z, r:0.36});
+    }
+    /* the entablature the pilasters carry, far up in the dark */
+    wallBox(g,libWallMat,2*WALL_IN,0.55,0.3, 0,LIB_WALL_H-0.66,0.15,4);
+    wallBox(g,libWallMat,2*WALL_IN,0.22,0.46, 0,LIB_WALL_H-0.28,0.23,4);
+    /* the wainscot and the picture rail, bay by bay between the pilasters */
+    const ends=[-WALL_IN]; for(let k=1;k<BAYS;k++) ends.push(pilS(k)); ends.push(WALL_IN);
+    for(let i=0;i<ends.length-1;i++){
+      let a=ends[i]+(i>0? (PIL_W+0.14)/2 : 0), b=ends[i+1]-(i<ends.length-2? (PIL_W+0.14)/2 : 0);
+      /* split the stretch around any cut */
+      let spans=[[a,b]];
+      for(const[c0,c1]of cuts) spans=spans.flatMap(([p,q])=> c1<=p||c0>=q? [[p,q]] : [[p,Math.min(q,c0)],[Math.max(p,c1),q]].filter(([u,v])=>v-u>0.2));
+      for(const[p,q]of spans) wainscot(g,p,q);
+      /* the rail only has to clear the elevator, not a doorway */
+      let rails=[[a,b]];
+      for(const[c0,c1]of cuts.filter(c=>c.rail)) rails=rails.flatMap(([p,q])=> c1<=p||c0>=q? [[p,q]] : [[p,Math.min(q,c0)],[Math.max(p,c1),q]].filter(([u,v])=>v-u>0.2));
+      for(const[p,q]of rails){
+        const L=q-p, m=(p+q)/2;
+        wallBox(g,skirtMat,L,0.05,0.036, m,RAIL_Y,0.018);
+        wallBox(g,deskMatH,L,0.016,0.024, m,RAIL_Y-0.033,0.012);
+      }
+    }
+  }
+}
+function wainscot(g,a,b){
+  const L=b-a, m=(a+b)/2;
+  wallBox(g,wainPanelMat,L,WAIN_H-0.2,0.016, m,0.2+(WAIN_H-0.2)/2,0.008);
+  wallBox(g,skirtMat,L,0.2,0.045, m,0.1,0.0225);
+  wallBox(g,deskMatH,L,0.022,0.055, m,0.205,0.0275);
+  wallBox(g,deskMatH,L,0.07,0.032, m,0.255,0.016);
+  wallBox(g,deskMatH,L,0.09,0.032, m,WAIN_H-0.085,0.016);
+  wallBox(g,deskMatH,L,0.05,0.07, m,WAIN_H-0.015,0.035);
+  wallBox(g,deskMatH,L,0.02,0.05, m,WAIN_H-0.05,0.025);
+  const n=Math.max(1,Math.round(L/1.15)), pw=L/n;
+  for(let i=0;i<=n;i++) wallBox(g,deskMat,0.075,WAIN_H-0.39,0.032, a+i*pw,0.29+(WAIN_H-0.39)/2,0.016);
+  for(let i=0;i<n;i++) wallBox(g,deskMat,pw-0.16,WAIN_H-0.47,0.012, a+(i+0.5)*pw,0.29+(WAIN_H-0.39)/2,0.022);
+}
+/* PlaneGeometry is (u0,v1)(u1,v1)(u0,v0)(u1,v0) in vertex order */
+function setFaceUVPlane(geo,u0,v0,u1,v1){
+  const uv=geo.attributes.uv;
+  uv.setXY(0,u0,v1); uv.setXY(1,u1,v1); uv.setXY(2,u0,v0); uv.setXY(3,u1,v0);
+}
+/* two wires down from hooks on the rail to a frame's top corners — or to
+   nothing at all */
+function hangWires(g,x,halfW,yTop,loose){
+  const hx=halfW*0.62;
+  for(const s of[-1,1]){
+    wallBox(g,accentBrass,0.03,0.05,0.035, x+s*hx*0.75,RAIL_Y+0.02,0.045);
+    const x0=x+s*hx*0.75, y0=RAIL_Y-0.01, x1=x+s*hx, y1=loose? RAIL_Y-rand(0.35,0.9) : yTop;
+    const len=Math.hypot(x1-x0,y1-y0);
+    const w=new THREE.Mesh(new THREE.BoxGeometry(0.004,len,0.004),wireMat);
+    w.position.set((x0+x1)/2,(y0+y1)/2,0.05);
+    w.rotation.z=Math.atan2(x1-x0,y0-y1);
+    g.add(w);
+    if(loose) wallBox(g,wireMat,0.02,0.035,0.008, x1,y1-0.015,0.05);
+  }
+}
+function dressWalls(elevS){
+  const occ={A:[],B:[],C:[],D:[]};
+  occ.C.push({s:elevS,y:(ELEV.OPEN_H+1.6)/2,w:ELEV.OPEN_W+1.6,h:ELEV.OPEN_H+1.6});
+  const free=(W,s,y,w,h)=>Math.abs(s)+w/2<WALL_IN-0.3 &&
+    !occ[W.id].some(q=>Math.abs(q.s-s)<(q.w+w)/2+0.06&&Math.abs(q.y-y)<(q.h+h)/2+0.06);
+  const book=(W,s,y,w,h)=>occ[W.id].push({s,y,w,h});
+  const front=(W,s)=>{ const p=wallPt(W,s,2.0), c=worldToCell2(p.x,p.z);
+    return c.cx>=0&&c.cy>=0&&c.cx<LW&&c.cy<LH&&grid2[c.cy][c.cx]===0; };
+  const hangFramed=(W,s,sw,yc,opt,maxH)=>{
+    const p=makeFramedArt(sw,opt);
+    const k=Math.min(1,maxH/p.h);
+    const w=p.w*k, h=p.h*k;
+    const y=yc===null? Math.max(WAIN_H+0.25+h/2,2.2) : yc;
+    if(!free(W,s,y,w,h)){ disposeArt(p); return null; }
+    p.g.scale.setScalar(k);
+    p.g.position.set(s,y,0.012); p.g.rotation.z=(Math.random()-0.5)*0.03;
+    W.group.add(p.g); book(W,s,y,w,h);
+    return {p,w,h,y};
+  };
+  for(const W of WALLS){
+    W.frame=FRAME_MATS[Math.floor(Math.random()*FRAME_MATS.length)];
+    for(let b=0;b<BAYS;b++){
+      if(W.doorBay===b) continue;
+      if(W.id==="C"&&Math.abs(b-(BAYS>>1))<1) continue;
+      const s=bayS(b);
+      if(!front(W,s)) continue;
+      const wide=front(W,s-2.4)&&front(W,s+2.4);
+      const fm=Math.random()<0.8? W.frame : null;
+      const r=Math.random();
+      const yTopMax=RAIL_Y-0.14;
+      if(r<0.34||(!wide&&r<0.6)){
+        const q=hangFramed(W,s,rand(1.05,1.55),null,{frame:fm,full:true},yTopMax-WAIN_H-0.25);
+        if(q) hangWires(W.group,s,q.w/2,q.y+q.h/2,false);
+      } else if(r<0.54&&wide){
+        const land=Math.random()<0.4, sw=rand(0.72,0.95);
+        for(const side of[-1,1]){
+          const q=hangFramed(W,s+side*1.35,sw,2.25,{frame:fm||W.frame,land},1.7);
+          if(q) hangWires(W.group,s+side*1.35,q.w/2,q.y+q.h/2,false);
+        }
+      } else if(r<0.64&&wide){
+        const sw=rand(0.5,0.6);
+        for(const side of[-1,0,1]){
+          const q=hangFramed(W,s+side*1.3,sw,2.2,{frame:fm||W.frame,land:false},0.95);
+          if(q) hangWires(W.group,s+side*1.3,q.w/2,q.y+q.h/2,false);
+        }
+      } else if(r<0.76){
+        /* the frame has gone; the paint under it hasn't forgotten */
+        const gw=rand(0.9,1.4), gh=rand(1.1,1.5), y=2.25;
+        if(free(W,s,y,gw,gh)){
+          const gp=new THREE.Mesh(new THREE.PlaneGeometry(gw,gh),ghostMat);
+          gp.position.set(s,y,0.004); W.group.add(gp);
+          hangWires(W.group,s,gw/2,0,true);
+          book(W,s,y,gw,gh);
+        }
+      } else if(r<0.84){
+        if(free(W,s,2.05,1.84,1.24)){
+          const nb=makeNoticeBoard(); nb.position.set(s,2.05,0); W.group.add(nb);
+          book(W,s,2.05,1.84,1.24);
+        }
+      }
+      /* the rest of the bays stay bare, which is the point of them */
+    }
+    /* one clock per wall, over the rail — all of them at the same minute */
+    for(let t=0;t<8;t++){
+      const b=Math.floor(Math.random()*BAYS), s=bayS(b)+(Math.random()<0.5?0:BAY_W/2);
+      if(!free(W,s,4.3,0.9,0.9)) continue;
+      const c=makeWallClock(); c.position.set(s,4.3,0); W.group.add(c);
+      book(W,s,4.3,0.9,0.9); break;
+    }
+    /* and one very large canvas, hung too high to see properly */
+    for(let t=0;t<6;t++){
+      const b=Math.floor(Math.random()*BAYS), s=bayS(b);
+      if(W.id==="C"&&Math.abs(s)<BAY_W) continue;
+      const q=hangFramed(W,s,rand(2.3,3.1),6.6,{frame:frameGiltMat,land:true,full:true},3.2);
+      if(q) break;
+    }
+  }
+  /* the level's own name, lettered big and high the way a stack hall's
+     section headers are — and twice where it has no business being */
+  const lettering=(W,s,y,rot,scale)=>{
+    const txt=new THREE.Mesh(new THREE.PlaneGeometry(3.4*scale,0.85*scale),
+      new THREE.MeshPhongMaterial({map:makeEndTextTexture(), transparent:true, specular:0x000000, shininess:1}));
+    txt.position.set(s,y,0.02); txt.rotation.z=rot; W.group.add(txt);
+  };
+  const order=[...WALLS].sort(()=>Math.random()-0.5);
+  for(const W of order.slice(0,3)){
+    const b=1+Math.floor(Math.random()*(BAYS-2)), s=bayS(b);
+    if(W.id==="C"&&Math.abs(s)<BAY_W) continue;
+    if(free(W,s,10.2,6.4,1.6)){ lettering(W,s,10.2,0,1.9); book(W,s,10.2,6.4,1.6); }
+  }
+  for(let i=0;i<2;i++){
+    const W=WALLS[Math.floor(Math.random()*4)], s=bayS(Math.floor(Math.random()*BAYS));
+    const side=Math.random()<0.5, y=rand(4.8,8);
+    if(free(W,s,y,side?0.85:3.4,side?3.4:0.85)){ lettering(W,s,y,side?Math.PI/2:Math.PI,1); book(W,s,y,side?0.85:3.4,side?3.4:0.85); }
+  }
+  /* cracks in the plaster, up where nothing else is */
+  for(let i=0;i<10;i++){
+    const W=WALLS[Math.floor(Math.random()*4)];
+    const cw=rand(0.8,1.3), ch=rand(2.4,3.8), s=rand(-WALL_IN+2,WALL_IN-2), y=rand(4.6,15);
+    if(!free(W,s,y,cw,ch)) continue;
+    const cr=new THREE.Mesh(new THREE.PlaneGeometry(cw,ch),
+      new THREE.MeshPhongMaterial({map:makeCrackTexture(), transparent:true,
+        depthWrite:false, specular:0x000000, shininess:1}));
+    cr.position.set(s,y,0.012); W.group.add(cr); book(W,s,y,cw,ch);
+  }
+}
+function disposeArt(p){
+  p.g.traverse(o=>{ if(o.isMesh){ o.geometry.dispose();
+    if(!SHARED_ART.has(o.material)){ if(o.material.map) o.material.map.dispose(); o.material.dispose(); } } });
+}
+/* the doors are chosen before any wainscot is cut: at most one a wall, in
+   a bay the stacks leave open, and never beside the arrival */
+function chooseDoors(){
+  const cut={A:[],B:[],C:[],D:[]}, doors=[];
+  const front=(W,s)=>{ const p=wallPt(W,s,2.0), c=worldToCell2(p.x,p.z);
+    return c.cx>=0&&c.cy>=0&&c.cx<LW&&c.cy<LH&&grid2[c.cy][c.cx]===0&&LIB.reach.has(c.cy*LW+c.cx); };
+  const elevS=0;
+  cut.C.push([elevS-ELEV.OPEN_W/2-0.62,elevS+ELEV.OPEN_W/2+0.62]);
+  cut.C[0].rail=true;
+  for(const W of WALLS){
+    W.doorBay=-1;
+    if(Math.random()<0.2&&doors.length>1) continue;
+    for(let t=0;t<10;t++){
+      const b=1+Math.floor(Math.random()*(BAYS-2));
+      if(W.id==="C"&&Math.abs(b-(BAYS>>1))<=1) continue;
+      const s=bayS(b);
+      if(!front(W,s)||!front(W,s-1.2)||!front(W,s+1.2)) continue;
+      W.doorBay=b; cut[W.id].push([s-1.18,s+1.18]);
+      doors.push({W,s});
+      break;
+    }
+  }
+  return {cut,doors};
+}
+
+/* ================= the floor's furniture =================
+   The reading room's other furniture: the card catalogue (the one object
+   that says LIBRARY louder than a book does), green banker's lamps on the
+   tables, the rope stanchions somebody closed a section with, a wet-floor
+   sign on carpet — the most out-of-place object in the building, which is
+   why it is here — and paper, everywhere, the way a place that emptied in
+   a hurry leaves it. */
+let catalogFaceMat=null;
+const drawerHoleMat=new THREE.MeshBasicMaterial({color:0x080604});
+const cardMat=new THREE.MeshPhongMaterial({color:0xd8cfb4, specular:0x111111, shininess:4});
+const wetFloorMat=new THREE.MeshPhongMaterial({map:texWetFloor, specular:0x3a3420, shininess:40});
+const ropeMat=new THREE.MeshPhongMaterial({color:0x5a1418, specular:0x1a0808, shininess:10});
+const paperMat=new THREE.MeshPhongMaterial({map:texPaperSheets, side:THREE.DoubleSide, specular:0x111111, shininess:4});
+const greenGlassMat=new THREE.MeshPhongMaterial({color:0x1d5a3c, specular:0x9ab8a8, shininess:90,
+  emissive:0x02100a, side:THREE.DoubleSide});
+const pencilMat=new THREE.MeshPhongMaterial({color:0xc89a2a, specular:0x3a3020, shininess:30});
+const LAMP_BASE_GEO=new THREE.LatheGeometry([[0.001,0],[0.095,0],[0.1,0.012],[0.075,0.03],
+  [0.03,0.042],[0.018,0.05],[0.001,0.052]].map(([r,y])=>new THREE.Vector2(r,y)),16);
+function makeCardCatalog(){
+  if(!catalogFaceMat){
+    catalogFaceMat=new THREE.MeshPhongMaterial({map:makeCatalogTexture(), specular:0x2a2010, shininess:18});
+    markShared(catalogFaceMat,catalogFaceMat.map);
+  }
+  const g=new THREE.Group(); g.userData.prop="catalog";
+  const W=1.28, H=1.04, D=0.54, LEG=0.34;
+  wallBox(g,deskMat,W,H,D, 0,LEG+H/2,0);
+  wallBox(g,deskMatH,W+0.07,0.045,D+0.07, 0,LEG+H+0.0225,0);
+  wallBox(g,deskMatH,W+0.02,0.07,D+0.02, 0,LEG-0.035,0);
+  for(const sx of[-1,1])for(const sz of[-1,1]){
+    const leg=new THREE.Mesh(taperBox(0.07,LEG-0.07,0.07,0.7),deskMat);
+    leg.position.set(sx*(W/2-0.05),(LEG-0.07)/2,sz*(D/2-0.05)); g.add(leg);
+  }
+  const face=new THREE.Mesh(new THREE.PlaneGeometry(W-0.02,H-0.02),catalogFaceMat);
+  face.position.set(0,LEG+H/2,D/2+0.002); g.add(face);
+  /* somebody was looking something up */
+  const dw=(W-0.02)/CATALOG_COLS, dh=(H-0.02)/CATALOG_ROWS;
+  const n=Math.floor(Math.random()*3.2);
+  for(let i=0;i<n;i++){
+    const c=Math.floor(Math.random()*CATALOG_COLS), r=Math.floor(Math.random()*CATALOG_ROWS);
+    const x=-W/2+0.01+(c+0.5)*dw, y=LEG+H-0.01-(r+0.5)*dh, out=rand(0.12,0.34);
+    const hole=new THREE.Mesh(new THREE.PlaneGeometry(dw-0.012,dh-0.012),drawerHoleMat);
+    hole.position.set(x,y,D/2+0.003); g.add(hole);
+    const zf=D/2+out;
+    wallBox(g,deskMat,dw-0.012,dh-0.012,0.014, x,y,zf-0.007);
+    wallBox(g,deskMat,dw-0.02,0.008,0.4, x,y-dh/2+0.012,zf-0.2);
+    for(const s of[-1,1]) wallBox(g,deskMat,0.008,dh-0.03,0.4, x+s*(dw/2-0.014),y-0.004,zf-0.2);
+    wallBox(g,cardMat,dw-0.04,dh-0.04,0.3, x,y-0.01,zf-0.2);
+    wallBox(g,accentBrass,0.03,0.012,0.012, x,y-0.006,zf+0.006);
+  }
+  /* and one drawer never went back in */
+  if(Math.random()<0.3){
+    const x=rand(-0.5,0.5), z=D/2+rand(0.4,0.8);
+    const dr=new THREE.Group(); dr.position.set(x,0,z); dr.rotation.y=Math.random()*6.28; g.add(dr);
+    wallBox(dr,deskMat,dw-0.012,dh-0.012,0.4, 0,(dh-0.012)/2,0);
+    for(let k=0;k<12;k++){
+      const cd=new THREE.Mesh(new THREE.BoxGeometry(0.125,0.0008,0.076),cardMat);
+      cd.position.set(rand(-0.3,0.3),0.001+k*0.0009,rand(-0.1,0.45)); cd.rotation.y=Math.random()*6.28; dr.add(cd);
+    }
+  }
+  return g;
+}
+function makeWetFloorSign(){
+  const g=new THREE.Group(); g.userData.prop="wetfloor";
+  const PW=0.3, PH=0.62, A=0.2;
+  for(const s of[-1,1]){
+    const geo=new THREE.BoxGeometry(PW,PH,0.012); geo.translate(0,-PH/2,0);
+    const p=new THREE.Mesh(geo,wetFloorMat);
+    p.position.y=PH*Math.cos(A)+0.004; p.rotation.x=s*A; g.add(p);
+  }
+  wallBox(g,wetFloorMat,0.14,0.05,0.035, 0,PH*Math.cos(A)+0.03,0);
+  return g;
+}
+/* brass posts and a velvet rope — and one end of it let down */
+function makeStanchions(n){
+  const g=new THREE.Group(); g.userData.prop="stanchion";
+  const xs=[]; for(let i=0;i<n;i++) xs.push((i-(n-1)/2)*1.6);
+  for(const x of xs){
+    const base=new THREE.Mesh(new THREE.CylinderGeometry(0.15,0.17,0.035,16),accentBrass); base.position.set(x,0.0175,0); g.add(base);
+    const pole=new THREE.Mesh(new THREE.CylinderGeometry(0.024,0.024,0.9,10),accentBrass); pole.position.set(x,0.48,0); g.add(pole);
+    const knob=new THREE.Mesh(new THREE.SphereGeometry(0.045,10,8),accentBrass); knob.position.set(x,0.95,0); g.add(knob);
+  }
+  const dropAt=Math.random()<0.5? Math.floor(Math.random()*(n-1)) : -1;
+  for(let i=0;i<n-1;i++){
+    const a=new THREE.Vector3(xs[i]+0.03,0.9,0), b=new THREE.Vector3(xs[i+1]-0.03,0.9,0), pts=[];
+    for(let k=0;k<=12;k++){
+      const t=k/12;
+      if(i===dropAt){ const hang=new THREE.Vector3(xs[i]+0.06,0.02,0.05); pts.push(a.clone().lerp(hang,t).add(new THREE.Vector3(Math.sin(t*Math.PI)*0.1,0,0))); }
+      else pts.push(a.clone().lerp(b,t).add(new THREE.Vector3(0,-Math.sin(t*Math.PI)*0.2,0)));
+    }
+    if(i===dropAt) pts.push(new THREE.Vector3(xs[i]+0.25,0.02,0.1),new THREE.Vector3(xs[i]+0.5,0.02,0.02));
+    g.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts),24,0.02,6,false),ropeMat));
+  }
+  return {g,xs};
+}
+/* one sheet, curling off whatever it landed on */
+function paperSheet(){
+  const geo=new THREE.PlaneGeometry(0.21,0.297,2,2);
+  const [u0,v0,u1,v1]=PAPER_UV[Math.floor(Math.random()*PAPER_UV.length)];
+  const uv=geo.attributes.uv, ps=geo.attributes.position;
+  for(let i=0;i<uv.count;i++){ uv.setXY(i,u0+uv.getX(i)*(u1-u0),v0+uv.getY(i)*(v1-v0)); }
+  const lift=[0,2,6,8][Math.floor(Math.random()*4)];
+  ps.setZ(lift,0.012+Math.random()*0.025); ps.setZ(4,0.003);
+  geo.rotateX(-Math.PI/2); geo.computeVertexNormals();
+  return new THREE.Mesh(geo,paperMat);
+}
+function scatterPapers(parent,x,y,z,n,spread){
+  for(let i=0;i<n;i++){
+    const p=paperSheet();
+    p.position.set(x+rand(-spread,spread),y+0.002+i*0.0012,z+rand(-spread,spread));
+    p.rotation.y=Math.random()*6.28; parent.add(p);
+  }
+}
+function makeBankersLamp(){
+  const g=new THREE.Group();
+  g.add(new THREE.Mesh(LAMP_BASE_GEO,accentBrass));
+  const stem=new THREE.Mesh(new THREE.CylinderGeometry(0.011,0.011,0.34,8),accentBrass);
+  stem.position.y=0.21; g.add(stem);
+  const yoke=new THREE.Mesh(new THREE.BoxGeometry(0.2,0.012,0.012),accentBrass);
+  yoke.position.set(0,0.37,0); g.add(yoke);
+  const shade=new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.1,0.36,18,1,false,0,Math.PI),greenGlassMat);
+  shade.rotation.z=Math.PI/2; shade.rotation.y=0.18; shade.position.set(0,0.40,0.02); g.add(shade);
+  const chain=new THREE.Mesh(new THREE.CylinderGeometry(0.002,0.002,0.12,4),accentBrass);
+  chain.position.set(0.08,0.33,0.06); g.add(chain);
+  return g;
+}
+/* what the last readers left on a table: a lamp, a stack, an open book,
+   paper. Kept to the ENDS of the table — the middle is where the disks go */
+const TABLE_TOP=TABLE_Y+0.0375;
+function dressTable(tb,ends){
+  for(const e of ends){
+    const x=e*rand(1.1,1.45), z=rand(-1.0,1.0), r=Math.random();
+    if(r<0.4&&!tb.userData.lamp){
+      const l=makeBankersLamp(); l.position.set(x,TABLE_TOP,z); l.rotation.y=-e*Math.PI/2+rand(-0.4,0.4);
+      tb.add(l); tb.userData.lamp=true;
+      if(Math.random()<0.6) scatterPapers(tb,x-e*0.25,TABLE_TOP,z,1+Math.floor(Math.random()*2),0.12);
+    } else if(r<0.65){
+      let lift=0;
+      for(let i=0,n=2+Math.floor(Math.random()*4);i<n;i++){
+        const des=pickBook();
+        spawnBook(tb,des,x+rand(-0.02,0.02),TABLE_TOP,z+rand(-0.02,0.02),1,{flat:true,lift,yaw:rand(-0.3,0.3)+Math.PI/2});
+        lift+=des.tx;
+      }
+    } else if(r<0.82){
+      const ob=OPEN_BOOK.clone(); ob.position.set(x,TABLE_TOP,z); ob.rotation.y=rand(-0.6,0.6)+(e>0?Math.PI/2:-Math.PI/2); tb.add(ob);
+    } else scatterPapers(tb,x,TABLE_TOP,z,2+Math.floor(Math.random()*3),0.15);
+    if(Math.random()<0.4){
+      const pc=new THREE.Mesh(new THREE.CylinderGeometry(0.004,0.004,0.18,6),pencilMat);
+      pc.rotation.z=Math.PI/2; pc.rotation.y=Math.random()*6.28; pc.position.set(x-e*0.3,TABLE_TOP+0.004,z+rand(-0.2,0.2)); tb.add(pc);
+    }
+  }
+}
+/* the wooden book truck: sloped shelves either side of a spine so the
+   books lie back against it, and a load nobody reshelved */
+function makeBookTruck(){
+  const g=new THREE.Group(); g.userData.prop="cart";
+  const L=0.9, W=0.5, B=0.13, TOP=1.02, SL=0.2;
+  for(const s of[-1,1]) wallBox(g,deskMat,0.03,TOP-B,W, s*L/2,(TOP+B)/2,0);
+  wallBox(g,deskMatH,L+0.06,0.035,W+0.04, 0,B,0);
+  wallBox(g,deskMatH,L,TOP-B-0.05,0.018, 0,(TOP+B)/2,0);
+  wallBox(g,deskMatH,L+0.08,0.03,0.08, 0,TOP+0.015,0);
+  const levels=[B+0.05,B+0.36,B+0.66];
+  for(const y of levels) for(const s of[-1,1]){
+    const b=wallBox(g,deskMatH,L-0.01,0.016,W/2-0.02, 0,y,s*(W/4));
+    b.rotation.x=-s*SL;                          // falling away toward the spine
+    wallBox(g,deskMatH,L-0.01,0.05,0.012, 0,y+(W/4-0.01)*Math.tan(SL)+0.022,s*(W/2-0.012));
+  }
+  for(const sx of[-1,1])for(const sz of[-1,1]){
+    const t=new THREE.Mesh(new THREE.CylinderGeometry(0.045,0.045,0.028,12),cartRubberMat);
+    t.rotation.z=Math.PI/2; t.position.set(sx*(L/2-0.07),0.045,sz*(W/2-0.07)); g.add(t);
+    wallBox(g,cartSteelMat,0.05,0.06,0.04, sx*(L/2-0.07),0.09,sz*(W/2-0.07));
+  }
+  /* the load, leaning back against the spine */
+  for(const y of levels) for(const s of[-1,1]){
+    if(Math.random()<0.25) continue;
+    let x=-L/2+0.04+Math.random()*0.15;
+    while(x<L/2-0.08){
+      const des=pickBook();
+      if(x+des.tx>L/2-0.04) break;
+      if(des.d>W/2-0.03){ x+=des.tx; continue; }
+      const m=new THREE.Mesh(des.geo,des.mats);
+      m.rotation.order="YXZ"; m.rotation.set(SL,s>0?Math.PI:0,0);
+      const zc=s*(W/2-0.03-des.d/2);
+      m.position.set(x+des.tx/2, y+0.009+(Math.abs(zc)-W/4)*Math.tan(SL), zc);
+      g.add(m);
+      x+=des.tx+(Math.random()<0.1? 0.08:0.002);
+    }
+  }
+  return g;
 }
 
 /* ---------------- build ---------------- */
@@ -2258,6 +3187,14 @@ export function buildLibrary(){
     floor.rotation.x=-Math.PI/2; scene.add(floor);
   }
   buildHole(holeC,carpetMat);
+  /* the dig's dust and spoil are built now, hidden, so their programs are
+     compiled with everything else rather than mid-cutscene */
+  {
+    const fxg=new THREE.Group(); fxg.visible=false; fxg.userData.animated=true;
+    const dust=makeDustSystem(360), debris=makeDebris(140,0x3a4658);
+    fxg.add(dust.mesh,debris.clods,debris.shreds); scene.add(fxg);
+    LIB.digFx={group:fxg,dust,debris};
+  }
   texLibCeil.repeat.set(LW/2,LH/2);
   const ceilMat=new THREE.MeshPhongMaterial({map:texLibCeil, specular:0x000000, shininess:1, emissive:0x020100});
   ceilMat.emissive.setRGB(1.25/255, 1.0/255, 0.75/255);  // hue nudged 75% from warm 0x020100 toward the neutral wall backlight (0x010101)
@@ -2282,25 +3219,14 @@ export function buildLibrary(){
      already excluded above, so no post-build carve is needed here) */
   scene.add(mergeStatic(wallBoxes,libWallMat));
   wallGeo2.dispose();                        // its shape is now baked into the merged geometry
-  /* the baseboard is real geometry now (a texture band can't survive
-     world-scaled tiling): dark skirting strips along the inner perimeter,
-     parted at the elevator doorway */
-  {
-    const bbMat=new THREE.MeshPhongMaterial({color:0x39301f, specular:0x0c0a06, shininess:8});
-    const inner=ROOM_SPAN/2-CELL;                 // inner wall plane
-    const bb=(w,d,x,z)=>{
-      const m=new THREE.Mesh(new THREE.BoxGeometry(w,0.42,d),bbMat);
-      m.position.set(x,0.21,z); scene.add(m);
-    };
-    const L=inner*2;
-    bb(L,0.09, 0,-(inner-0.045));                 // north
-    bb(0.09,L, -(inner-0.045),0);                 // west
-    bb(0.09,L,  (inner-0.045),0);                 // east
-    const door=ELEV.OPEN_W/2+0.45;                // skip the elevator portal
-    const sw=(inner-door);
-    bb(sw,0.09, -(door+sw/2), inner-0.045);       // south, left of the doors
-    bb(sw,0.09,  (door+sw/2), inner-0.045);       // south, right of the doors
-  }
+  /* the architecture the hang follows, with its doorways cut first */
+  const {cut,doors}=chooseDoors();
+  buildWallArchitecture(libWallMat,cut);
+  doors.forEach((d,i)=>{
+    const dg=makeLockedDoor(i===0), p=wallPt(d.W,d.s,0);
+    dg.position.set(p.x,0,p.z); dg.rotation.y=d.W.ry; scene.add(dg);
+    addInteractable({kind:"lockedDoor", mesh:dg, label:"OPEN DOOR", taken:false});
+  });
   /* the crashed arrival cab, carved into the south wall */
   {
     const p=cellToWorld2(exC,eyC);
@@ -2340,21 +3266,30 @@ export function buildLibrary(){
       const ang=srand()*Math.PI*2;
       const cx=p.x+Math.sin(ang)*2.2, cz=p.z+Math.cos(ang)*2.2;
       if(!clearOf(cx,cz,0.34)) continue;           // a chair already sits there
-      const ch=makeChair(srand()<0.35);
+      const wrapped=srand()<0.35;
+      const ch=makeChair(wrapped);
       ch.position.set(cx,0,cz);
       ch.rotation.y=ang+Math.PI+(srand()-0.5)*0.6;
+      /* one in eight went over and nobody picked it up */
+      if(!wrapped&&Math.random()<0.13){ ch.rotation.order="YXZ"; ch.rotation.z=Math.PI/2; ch.position.y=0.245; }
       scene.add(ch);
       LIB.obstacles.push({x:cx, z:cz, r:0.34});
     }
+    /* a machine sits at one end of its table; the readers' leavings take
+       the ends the machine left free */
+    const pcEnd=pcTables.has(i)? (Math.random()<0.5?-1:1) : 0;
+    dressTable(tb, pcEnd? [-pcEnd] : [-1,1]);
     if(pcTables.has(i)){
       const pc=makeVintagePC(0.85);
-      pc.position.set(p.x+rand(-0.7,0.7),1.345,p.z+rand(-0.5,0.5));
+      const lp=new THREE.Vector3(pcEnd*rand(0.55,0.8),0,rand(-0.4,0.4)).applyAxisAngle(new THREE.Vector3(0,1,0),tb.rotation.y);
+      pc.position.set(p.x+lp.x,1.345,p.z+lp.z);
       pc.rotation.y=srand()*Math.PI*2;
       scene.add(pc);
+      tc.pc=true;
       if(!eggArmed){
         /* exactly one of them still has a breath left in it */
         eggArmed=true;
-        addInteractable({kind:"deadpc", mesh:pc, label:"PRESS THE POWER SWITCH", taken:false});
+        addInteractable({kind:"deadpc", mesh:pc, label:"TURN ON", taken:false});
       }
     }
   });
@@ -2363,12 +3298,13 @@ export function buildLibrary(){
     const d=makeDesk(cx0,cy0);
     scene.add(d.group);
     LIB.deskPos=new THREE.Vector3().copy(d.group.position);
+    LIB.obstacles.push({x:LIB.deskPos.x+0.35, z:LIB.deskPos.z-1.35, r:0.34});   // the librarian's chair
     LIB.term={group:d.group, pc:d.pc, screen:d.pc.userData.screen,
               lamp:d.lamp, bulbMat:d.bulbMat};
     addInteractable({kind:"terminal", mesh:d.group,
       label:()=> STATE.discsCarried>0
-        ? `FEED THE TERMINAL (${STATE.discsCarried} DISK${STATE.discsCarried>1?"S":""})`
-        : "THE TERMINAL IS DARK", taken:false});
+        ? `INSERT ${STATE.discsCarried} DISK${STATE.discsCarried>1?"S":""}`
+        : "NO DISKS TO INSERT", taken:false});
   }
   /* ladders: leant against the stacks, base set back exactly far enough
      that the rails rest on the top edge */
@@ -2409,189 +3345,57 @@ export function buildLibrary(){
       LIB.obstacles.push({x:px, z:pz, r});
     }
   };
-  dropFloor(makeLectern,12,0.36);
+  dropFloor(makeLectern,10,0.36);
   dropFloor(makeMannequin,9,0.3);
-  dropFloor(makeBookCart,8,CART_R);
-  dropFloor(makeGlobe,5,0.34);
-  /* wall dressing: posters, cracks, and the level's name — meaninglessly.
-     The stretch of south wall holding the crashed cab stays bare: nothing
-     may spawn over (or hang beside) the elevator. */
-  const wallFaces=[];
-  /* a face is only dressable if the cell in FRONT of it is open: a shelf run
-     that anchors into the perimeter fills the cell against the wall, and
-     anything hung there — a poster, and now a 70mm-deep frame — grows out
-     through the end of the stack */
-  const faceOK=(cx,cy)=>grid2[cy]&&grid2[cy][cx]===0;
-  for(let x=1;x<LW-1;x++){
-    if(faceOK(x,1))
-      wallFaces.push({x:cellToWorld2(x,0).x,      z:cellToWorld2(x,0).z+CELL/2+0.03,  ry:0});
-    if(Math.abs(x-exC)>1&&faceOK(x,LH-2))
-      wallFaces.push({x:cellToWorld2(x,LH-1).x,   z:cellToWorld2(x,LH-1).z-CELL/2-0.03, ry:Math.PI});
+  dropFloor(makeBookCart,5,CART_R);
+  dropFloor(makeBookTruck,4,0.55);
+  dropFloor(makeGlobe,4,0.34);
+  dropFloor(makeCardCatalog,6,0.72);
+  dropFloor(makeWetFloorSign,3,0.26);
+  /* a section roped off — from what, nobody says */
+  for(let i=0;i<2;i++){
+    const n=3+Math.floor(Math.random()*2), half=(n-1)*0.8;
+    for(let t=0;t<14;t++){
+      const c=LIB.reachList[Math.floor(srand()*LIB.reachList.length)], p=cellToWorld2(c.cx,c.cy);
+      const yaw=Math.floor(Math.random()*2)*Math.PI/2, ax=Math.cos(yaw), az=-Math.sin(yaw);
+      const posts=[]; for(let k=0;k<n;k++){ const o=(k-(n-1)/2)*1.6; posts.push({x:p.x+ax*o, z:p.z+az*o}); }
+      if(!posts.every(q=>clearOf(q.x,q.z,0.22)&&LIB.reach.has(K(worldToCell2(q.x,q.z).cx,worldToCell2(q.x,q.z).cy)))) continue;
+      const st=makeStanchions(n); st.g.position.set(p.x,0,p.z); st.g.rotation.y=yaw; scene.add(st.g);
+      for(const q of posts) LIB.obstacles.push({x:q.x, z:q.z, r:0.2});
+      break;
+    }
   }
-  for(let y=1;y<LH-1;y++){
-    if(faceOK(1,y))
-      wallFaces.push({x:cellToWorld2(0,y).x+CELL/2+0.03,  z:cellToWorld2(0,y).z, ry:Math.PI/2});
-    if(faceOK(LW-2,y))
-      wallFaces.push({x:cellToWorld2(LW-1,y).x-CELL/2-0.03, z:cellToWorld2(LW-1,y).z, ry:-Math.PI/2});
+  /* paper on the carpet, in drifts, and books that came off the shelves */
+  const floorFree=(x,z)=>Math.hypot(x-holeC.x,z-holeC.z)>HOLE_R+1.2;
+  for(let i=0;i<14;i++){
+    const c=LIB.reachList[Math.floor(srand()*LIB.reachList.length)], p=cellToWorld2(c.cx,c.cy);
+    const x=p.x+rand(-1.4,1.4), z=p.z+rand(-1.4,1.4);
+    if(floorFree(x,z)) scatterPapers(scene,x,0.001,z,1+Math.floor(Math.random()*4),0.5);
   }
-  for(let i=wallFaces.length-1;i>0;i--){
-    const j=Math.floor(srand()*(i+1)); [wallFaces[i],wallFaces[j]]=[wallFaces[j],wallFaces[i]];
+  for(const run of LIB.runs){
+    if(Math.random()>0.4) continue;
+    const c=run.cells[Math.floor(Math.random()*run.cells.length)], p=cellToWorld2(c.x,c.y);
+    const [dx,dz]=run.axis===0? [0,Math.random()<0.5?1:-1] : [Math.random()<0.5?1:-1,0];
+    if(!LIB.reach.has(K(c.x+dx,c.y+dz))) continue;
+    for(let k=0,n=1+Math.floor(Math.random()*3);k<n;k++){
+      const off=SHELF_D/2+rand(0.25,0.9), along=rand(-1.4,1.4);
+      const x=p.x+dx*off+(run.axis===0?along:0), z=p.z+dz*off+(run.axis===1?along:0);
+      if(!floorFree(x,z)) continue;
+      if(Math.random()<0.2){ const ob=OPEN_BOOK.clone(); ob.position.set(x,0.002,z); ob.rotation.y=Math.random()*6.28; scene.add(ob); }
+      else spawnBook(scene,pickBook(),x,0.002,z,1,{flat:true,yaw:Math.random()*6.28});
+    }
   }
-  /* ---- the occupancy ledger ----
-     Every pass that puts something on a wall books its rectangle here, and
-     every pass checks it first. It used to be that only the picture hang
-     tracked its own placements: the texts, the posters and the cracks each
-     took a face off a cycling cursor and stamped themselves on it blind, so
-     two passes landing on one face never knew about each other — and once
-     the four of them between them wanted more faces than the room had, the
-     cursor WRAPPED and the cracks, which run last, came down on top of
-     pictures that were already hanging.
-     The elevator books a rectangle too. The south wall already skips the
-     cells either side of the doorway, but a keep-out written in world space
-     is the one a pass added later cannot fail to see. */
-  const dressed=[];
+  dressWalls(0);
+  /* every pane of picture glass in the room, merged: it is transparent, so
+     batchStatic leaves it alone */
   {
-    const ep=cellToWorld2(exC,eyC);
-    dressed.push({x:ep.x, z:ep.z-CELL/2, y:(ELEV.OPEN_H+1.6)/2,
-                  w:ELEV.OPEN_W+1.6, h:ELEV.OPEN_H+1.6});
-  }
-  /* 0.045, not 0.22: the hang's cursor deliberately leaves a 0.10–0.19m gap
-     between neighbours, so a separation margin wider than the gap it is
-     checking rejects every second piece in every cluster — which is how a
-     34-picture hang quietly became a 10-picture one */
-  const spotFree=(x,z,y,w,h)=>!dressed.some(q=>
-    Math.hypot(q.x-x,q.z-z)<(q.w+w)/2+0.045 && Math.abs(q.y-y)<(q.h+h)/2+0.045);
-  let fi=0;
-  const take=()=>wallFaces[fi++%wallFaces.length];
-  /* walk the shuffled list from the cursor looking for a face — and a spot
-     along it — with room for a w×h piece, rather than taking the next face
-     blind. A full face now costs a retry instead of an overlap. */
-  const place=(w,h,yFn)=>{
-    for(let n=0;n<wallFaces.length;n++){
-      const f=take();
-      for(const t of[0,-1.05,1.05,-1.7,1.7]){
-        if(Math.abs(t)+w/2>1.86) continue;
-        const x=f.x+Math.cos(f.ry)*t, z=f.z-Math.sin(f.ry)*t;
-        for(let a=0;a<5;a++){
-          const y=yFn();
-          if(!spotFree(x,z,y,w,h)) continue;
-          dressed.push({x,z,y,w,h});
-          return {f,x,z,y};
-        }
-      }
+    scene.updateMatrixWorld(true);
+    const panes=[];
+    for(const W of WALLS) W.group.traverse(o=>{ if(o.isMesh&&o.material===artGlassMat) panes.push(o); });
+    if(panes.length){
+      scene.add(mergeStatic(panes,artGlassMat));
+      for(const m of panes){ m.parent.remove(m); m.geometry.dispose(); }
     }
-    return null;
-  };
-  for(let i=0;i<7;i++){
-    const r=srand();
-    /* sideways stands the 3.4m banner on end, so it books its footprint the
-       other way round — a rect booked at the wrong orientation is no keep-out */
-    const side=r>=0.14&&r<0.24;
-    const p=place(side?0.85:3.4, side?3.4:0.85, ()=>rand(1.4,5.2));
-    if(!p) continue;
-    const txt=new THREE.Mesh(new THREE.PlaneGeometry(3.4,0.85),
-      new THREE.MeshPhongMaterial({map:makeEndTextTexture(), transparent:true,
-        specular:0x000000, shininess:1}));
-    txt.position.set(p.x,p.y,p.z);
-    txt.rotation.y=p.f.ry;
-    if(r<0.14) txt.rotation.z=Math.PI;            // upside-down
-    else if(side) txt.rotation.z=Math.PI/2;
-    else txt.rotation.z=(srand()-0.5)*0.06;
-    scene.add(txt);
-  }
-  for(let i=0;i<12;i++){
-    const p=place(0.92,1.24,()=>rand(1.3,2.6));
-    if(!p) continue;
-    const po=new THREE.Mesh(new THREE.PlaneGeometry(0.92,1.24),
-      new THREE.MeshPhongMaterial({map:makePosterTexture(), specular:0x000000, shininess:2}));
-    po.position.set(p.x,p.y,p.z);
-    po.rotation.y=p.f.ry; po.rotation.z=(srand()-0.5)*0.12;
-    scene.add(po);
-  }
-  /* ---- the hang ----
-     Nine families of almost-library pieces — donor portraits with no face,
-     collection maps to nowhere, acuity charts that test something else,
-     a staff photograph where the faces never developed — and twice as many
-     of them as before, because 14 pictures spread evenly round a 400m
-     perimeter is one every 28m, which is not a dressed wall, it is a wall
-     with a picture on it.
-     They go up in CLUSTERS, which is how a reading room actually hangs
-     pictures and the only way the eye reads a wall as furnished: 2–5 pieces
-     sharing a face, either on a common centre line or stacked in a block.
-     Every cluster gets one piece well over a metre, and a few go up HIGH —
-     the room is 24m to the ceiling and the old band stopped at 3.2m, which
-     dressed the bottom eighth of it and left the rest bare plaster. */
-  {
-    const bulk=new Map();                       // material → parts, merged room-wide
-    /* the cluster layout keeps its own cursor, but the free test is now the
-       ROOM's ledger: a cluster laid over a poster or a banner was every bit
-       as wrong as a crack laid over a picture, it just never got reported */
-    const free=(f,t,y,w,h)=>spotFree(f.dx*t+f.x, f.dz*t+f.z, y, w, h);
-    let hangs=0;
-    for(let c=0;c<18&&hangs<34;c++){
-      const f=take();
-      /* the wall's own tangent: forward is (sin ry, 0, cos ry), so the run
-         along the face is (cos ry, 0, −sin ry) */
-      f.dx=Math.cos(f.ry); f.dz=-Math.sin(f.ry);
-      const n=2+Math.floor(srand()*4);
-      const tall=srand()<0.30;                  // this cluster hangs high
-      const midY=tall? rand(4.4,7.6) : rand(1.75,2.9);
-      const line=srand()<0.5;                   // a common centre line, or a block
-      /* the pieces are laid out with a running CURSOR, not on a fixed pitch:
-         a salon hang leaves a hand's width between frames, and stepping by
-         a constant ~1.5m scattered five pictures over five metres of wall,
-         which is not a cluster, it is five pictures */
-      const half=[];                            // signed order: 0, −1, +1, −2, +2 …
-      for(let i=0;i<n;i++) half.push(i? (i%2? -Math.ceil(i/2) : Math.ceil(i/2)) : 0);
-      let lft=0, rgt=0;                         // how far the hang already reaches each way
-      for(let i=0;i<n&&hangs<34;i++){
-        /* one piece per cluster is the big one; the rest are its company */
-        const sw=i===0? (tall? rand(1.5,2.4) : rand(0.95,1.45))
-                      : (srand()<0.35? rand(0.42,0.62) : rand(0.62,1.0));
-        const p=makeFramedArt(sw);
-        const gap=0.10+srand()*0.09;
-        const tx=i===0? 0 : (half[i]<0? -(lft+gap+p.w/2) : (rgt+gap+p.w/2));
-        const y=(line? midY : midY+rand(-0.55,0.55)*(tall?2.2:1))+(line?rand(-0.05,0.05):0);
-        if(Math.abs(tx)+p.w/2>1.86||y-p.h/2<0.75||!free(f,tx,y,p.w,p.h)){
-          p.g.traverse(o=>{ if(o.isMesh){ o.geometry.dispose();
-            if(!SHARED_ART.has(o.material)){ if(o.material.map) o.material.map.dispose(); o.material.dispose(); } } });
-          continue;
-        }
-        p.g.position.set(f.x+f.dx*tx, y, f.z+f.dz*tx);
-        p.g.rotation.y=f.ry;
-        p.g.rotation.z=(srand()-0.5)*0.045;     // nothing in this building is level
-        scene.add(p.g);
-        p.g.updateMatrixWorld(true);
-        for(const[m,mat]of p.bulk){
-          if(!bulk.has(mat)) bulk.set(mat,[]);
-          bulk.get(mat).push(m);
-        }
-        dressed.push({x:p.g.position.x, z:p.g.position.z, y, w:p.w, h:p.h});
-        if(tx<=0) lft=Math.max(lft,-tx+p.w/2);   // the centre piece sets BOTH
-        if(tx>=0) rgt=Math.max(rgt, tx+p.w/2);
-        hangs++;
-      }
-    }
-    /* collapse every frame, mat, backing and pane in the room down to one
-       mesh per material — the whole reason a real moulding is affordable */
-    for(const[mat,arr]of bulk){
-      scene.add(mergeStatic(arr,mat));
-      for(const m of arr){ if(m.parent) m.parent.remove(m); m.geometry.dispose(); }
-    }
-  }
-  /* the cracks run LAST, which is exactly why they were the pass that showed
-     the bug: by the time they pick a face the room is already dressed, so
-     they are the ones that have to give way */
-  for(let i=0;i<11;i++){
-    const cw=rand(0.7,1.2), ch=rand(2.2,3.6);
-    const p=place(cw,ch,()=>rand(2.2,6.2));
-    if(!p) continue;
-    const cr=new THREE.Mesh(new THREE.PlaneGeometry(cw,ch),
-      new THREE.MeshPhongMaterial({map:makeCrackTexture(), transparent:true,
-        depthWrite:false, specular:0x000000, shininess:1}));
-    cr.position.set(p.x,p.y,p.z);
-    cr.rotation.y=p.f.ry;
-    scene.add(cr);
   }
   /* hanging lights: faulty and uneven, but no longer rare — and every one
      of them is a standard makeLightRecord, the same self-contained
@@ -2679,7 +3483,10 @@ export function buildLibrary(){
       if(LIB.reach.has(K(tc.x+dx,tc.y+dy))) near=true;
     if(!near) continue;
     const p=cellToWorld2(tc.x,tc.y);
-    sites.push({cx:tc.x, cy:tc.y, x:p.x+rand(-0.8,0.8), z:p.z+rand(-0.6,0.6), y:1.37, kind:"table"});
+    /* the middle of the table: the machines and the readers' leavings
+       have the ends, and a disk dropped onto a keyboard is a disk inside a PC */
+    if(tc.pc) continue;
+    sites.push({cx:tc.x, cy:tc.y, x:p.x+rand(-0.55,0.55), z:p.z+rand(-0.5,0.5), y:1.37, kind:"table"});
   }
   for(let i=sites.length-1;i>0;i--){
     const j=Math.floor(srand()*(i+1)); [sites[i],sites[j]]=[sites[j],sites[i]];
@@ -2705,6 +3512,10 @@ export function buildLibrary(){
     scene.add(d);
     addInteractable({kind:"disc", mesh:d, label:"TAKE FLOPPY DISK", taken:false, baseY:s.y});
   }
+  /* ~2400 meshes, most of them books, drew one call each — two for a book.
+     Regrouped by material the room draws in ~200-350. Splitting the batches
+     by region to let far ones cull cost more calls than it saved triangles. */
+  LIB.batch=batchStatic(scene);
   /* freeze every static object's matrix (shelves, furniture, dressing,
      fixtures, merged walls). The spider is added after this returns; the discs
      and the elevator are tagged animated, so the sweep skips them. */
@@ -2712,9 +3523,9 @@ export function buildLibrary(){
   /* pre-warm every shader program and texture — the hidden hole's included —
      while the level is still behind the intro's black. First-use compilation
      at reveal time was a visible frame stall in the ending cutscene. */
-  LIB.hole.group.visible=true;
+  LIB.hole.group.visible=true; LIB.digFx.group.visible=true;
   renderer.compile(scene,camera);
-  LIB.hole.group.visible=false;
+  LIB.hole.group.visible=false; LIB.digFx.group.visible=false;
 }
 
 /* ---------------- per-frame level logic ---------------- */
@@ -2840,7 +3651,11 @@ export function updateLibrary(dt){
   /* the open hole breathes: its glow discs swell and settle, out of phase */
   if(STATE.holeOpen&&LIB.hole){
     const tN=performance.now()/1000;
-    LIB.hole.glow.forEach((gl,i)=>{ gl.mat.opacity=gl.baseOp*(1+0.10*Math.sin(tN*0.7+i*1.7)); });
+    /* the discs are for looking DOWN the well from the rim; from inside the
+       shaft you would see them edge-on as plates, so they go as you descend */
+    const fromRim=clamp(1+camera.position.y/4,0,1);
+    LIB.hole.glow.forEach((gl,i)=>{ gl.mat.opacity=gl.baseOp*(1+0.10*Math.sin(tN*0.7+i*1.7))*fromRim; });
+    if(LIB.hole.motes){ LIB.hole.motes.rotation.y+=dt*0.03; LIB.hole.motes.position.y=Math.sin(tN*0.21)*0.25; }
     /* the shaft's own weather: the deeper you walk the stairs, the bluer and
        denser the fog — a couple of turns down the world is nearly gone.
        Pure function of depth, so climbing back up restores the library. */
@@ -2879,6 +3694,14 @@ markShared(texLibWall,texLibCarpet,texLibCarpetBump,texLibCeil,texShelfWood,texD
 markShared(shelfMat,deskMat,shelfMatH,deskMatH,texShelfWoodH,texDeskWoodH,texBeige,
            darkMetalMat,beigePlastic,beigePlasticDark,plasticWrap,shutterMat,discHubMat,
            bookendMat,accentWood,accentBrass,mannequinMat,mannequinDark,webMat);
+markShared(jarGlassMat,jarDregsMat,hourGlassMat,sandMat,candleMat,JAR_GEO,JAR_LID_GEO,JAR_DREGS_GEO);
+markShared(wainPanelMat,skirtMat,wireMat,ghostMat,corkMat,clockFaceMat,bakeliteMat,exitSignMat,
+           staffSignMat,darkWoodMat,doorGlassMat,...pinMats,
+           texCork,texGhost,texClockFace,texExitSign,texStaffSign);
+markShared(deskShadeMat,closedCardMat,closedCardMat.map,MOUSE_GEO,BEZEL_GEO);
+markShared(ironMat,rootMat,jutelMat,concreteMat,shaftSilkMat,texShaftMasonry,texSpoil,texSlabSection);
+markShared(drawerHoleMat,cardMat,wetFloorMat,ropeMat,paperMat,greenGlassMat,pencilMat,LAMP_BASE_GEO,
+           texWetFloor,texPaperSheets);
 markShared(texWrapFilm,texTape,texCartPaint,texMannequin,             // the graphics pass's own
            wrapTapeMat,cartRubberMat,cartSteelMat,mannequinIron,
            ...cartPaintMats, frameGiltMat,frameEbonyMat,frameOakMat,artGlassMat,artMatMat,artBackMat);

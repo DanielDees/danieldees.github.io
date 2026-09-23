@@ -23,6 +23,7 @@ import { makeCanvas, texCaveRock, texCaveFloor, texDripstone,
          makeFungusSkin, scaleBoxUV, texEggSac, makeFlameTexture, texCocoon,
          texCloth, texBone, texJournalPages } from "./textures.js";
 import { addInteractable } from "./props.js";
+import { stairTreadGeo, stairRailMeshes, STAIR } from "./library.js";
 import { die } from "./lifecycle.js";
 import { renderObjectives, toast } from "./ui.js";
 import { AU, sfxRockfall, sfxIgnite, startClutchFire, panTo } from "./audio.js";
@@ -2669,42 +2670,44 @@ export function buildCave(){
       const l=new THREE.PointLight(0x6e94a6,0.5,9,1.7);
       l.position.set(sx,yL+1.4,sz); scene.add(l);
     }
-    /* the stair: the library's own numbers (rise 4.48/turn, 16 treads,
-       radius 2.08) so it IS that stair, continued — phase locked to height
-       so the helix runs unbroken from the haze down to the break */
+    /* the stair: the library's own treads and rail (library.js builds
+       both), on its numbers — phase locked to height so the helix runs
+       unbroken from the haze down to the break. The treads are pivoted at
+       the wall, so the sagging ones hang from it rather than from the air. */
     {
       const stepMat=new THREE.MeshPhongMaterial({map:texCaveRock, bumpMap:texCaveRock,
-        bumpScale:0.06, color:0x474e56, emissive:0x020508, specular:0x0c1016, shininess:6});
-      const stepGeo=scaleBoxUV(new THREE.BoxGeometry(1.3,0.24,1.05),1.3,0.24,1.05,2);
-      const RISE=4.48, STEPS=16, rc=2.08;
-      const steps=[];
+        bumpScale:0.05, color:0x4e555c, emissive:0x020508, specular:0x0c1016, shininess:6});
+      const railMat=new THREE.MeshPhongMaterial({color:0x2a2826, specular:0x3a3836, shininess:30});
+      const TG=stairTreadGeo(), RISE=STAIR.RISE, STEPS=STAIR.STEPS, stepA=Math.PI*2/STEPS;
+      const steps=[], rail=[];
       const yTop=yL+12.6, yBreak=3.3;
       const n=Math.ceil((yTop-yBreak)/(RISE/STEPS));
       for(let i=0;i<n;i++){
         const yy=yBreak+i*(RISE/STEPS);
-        const th=Math.PI/2+(yTop-yy)/RISE*Math.PI*2;
-        const m=new THREE.Mesh(stepGeo,stepMat);
-        m.position.set(sx+Math.cos(th)*rc, yy, sz+Math.sin(th)*rc);
-        m.rotation.y=-th;
+        const th=Math.PI/2+(yTop-yy)/RISE*Math.PI*2-stepA/2;
+        const m=new THREE.Mesh(TG,stepMat);
+        m.position.set(sx,yy+0.12,sz); m.rotation.y=-th;
         if(i<3){                       // the break: the last treads sag toward the fall
           m.position.y-=(3-i)*0.08;
-          m.rotation.z=(Math.random()-0.5)*0.3; m.rotation.x=(Math.random()-0.5)*0.22;
-        }
+          m.rotation.order="YXZ"; m.rotation.z=(Math.random()-0.5)*0.12; m.rotation.x=(Math.random()-0.5)*0.1;
+        } else rail.push({th,y:yy+0.12});
         steps.push(m);
       }
       /* the fallen flight, where it landed: snapped treads half-sunk at the foot */
+      const cm=(STAIR.IN+STAIR.OUT)/2, piece=TG.clone().translate(-cm*Math.cos(stepA/2),STAIR.T/2,-cm*Math.sin(stepA/2));
       for(let i=0;i<8;i++){
         const a=Math.random()*Math.PI*2, rr=rand(0.3,1.8);
-        const m=new THREE.Mesh(stepGeo,stepMat);
+        const m=new THREE.Mesh(piece,stepMat);
         const bx=sx+Math.cos(a)*rr, bz=sz+Math.sin(a)*rr;
-        const s=rand(0.55,1);
-        m.scale.set(s,s,s*rand(0.5,1));
-        m.position.set(bx, floorYAt(bx,bz)+rand(0.0,0.28), bz);
-        m.rotation.set(rand(-0.5,0.5),Math.random()*Math.PI*2,rand(-0.6,0.6));
+        const s=rand(0.45,0.8);
+        m.scale.set(s,s,s);
+        m.position.set(bx, floorYAt(bx,bz)+rand(0.0,0.1), bz);
+        m.rotation.set(rand(-0.4,0.4),Math.random()*Math.PI*2,rand(-0.5,0.5));
         steps.push(m);
       }
       scene.add(mergeStatic(steps,stepMat));
-      stepGeo.dispose();
+      piece.dispose();
+      for(const r of stairRailMeshes(sx,sz,rail,railMat)) scene.add(r);
     }
     /* (the silk sealing this mouth is built with the web pass above;
        the debris obstacle was pushed with the mouth, before placement) */
@@ -2764,7 +2767,7 @@ export function buildCave(){
     scene.add(glowL);
     CAVE.corpse={body,lant,journal:jr,glowL};
     addInteractable({kind:"corpse", mesh:lant, journal:jr, glowL,
-      label:()=>"TAKE THE LANTERN & JOURNAL", taken:false});
+      label:()=>"TAKE LANTERN", taken:false});
   }
   /* ---- the clutches ---- */
   CAVE.broods.forEach((b,i)=>{
@@ -2777,7 +2780,7 @@ export function buildCave(){
     /* (the keep-out circle for this spot was reserved before the dripstone
        and web passes, up with the stair mouth and the corpse) */
     addInteractable({kind:"clutch", mesh:cl, idx:i, taken:false,
-      label:()=> STATE.hasLantern? "IGNITE THE CLUTCH — HOLD [E]" : "EGGS. YOU NEED FIRE."});
+      label:()=> STATE.hasLantern? "HOLD TO BURN THE EGGS" : "YOU NEED A FLAME TO BURN THESE"});
   });
   /* freeze all the static matrices, then pre-warm every shader (the hidden
      fissure included) while the level is still behind the intro's black */
@@ -2891,7 +2894,7 @@ function openFissure(){
      too much to sweep on a hunch: the draught it opened is the objectives
      log's one legitimate pointer (see STATE.guide / the bearing row in ui.js) */
   STATE.guide={x:f.x, z:f.z};
-  toast("The rubble lets go somewhere to the north. Cold air — from above.",5200);
+  toast("Something collapsed in the distance. There's a way out now.",5200);
 }
 
 /* The main loop stops calling updateCave the instant you die, so every loop

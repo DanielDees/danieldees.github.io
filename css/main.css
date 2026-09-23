@@ -198,7 +198,7 @@ kbd{display:inline-block;min-width:26px;text-align:center;padding:2px 7px;margin
 @keyframes blink{50%{opacity:.25}}
 #titleArt{font-size:10px;line-height:1.25;color:var(--accent-dim);white-space:pre;margin-bottom:18px;overflow:hidden}
 
-/* ---------- the field notes (tabbed guide) ---------- */
+/* ---------- how to play (tabbed guide) ---------- */
 .sheet.guide{max-width:760px}
 .tabs{display:flex;flex-wrap:wrap;gap:2px;margin:0 0 4px;border-bottom:1px solid var(--accent-28)}
 .tab{font-family:inherit;font-size:11px;letter-spacing:.2em;padding:10px 15px;cursor:pointer;
@@ -235,7 +235,6 @@ kbd{display:inline-block;min-width:26px;text-align:center;padding:2px 7px;margin
 .optrow{display:grid;grid-template-columns:96px 1fr 52px;align-items:center;gap:8px 16px;margin:14px 0 16px}
 .optrow label{font-size:11px;letter-spacing:.24em;color:#bdb28b}
 .optrow output{font-size:12px;color:var(--accent);text-align:right;letter-spacing:.06em}
-.optrow .hint{grid-column:2 / -1;font-size:11.5px;line-height:1.6;color:#7d7560;margin:0}
 .optrow input[type=checkbox]{justify-self:start}
 input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:4px;background:var(--accent-15);
   outline:none;cursor:pointer;border:1px solid var(--accent-28)}

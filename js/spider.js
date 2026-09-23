@@ -1634,6 +1634,23 @@ export function spiderPose(dt,speed){
    this every frame. The front two leg pairs strike downward in a violent
    flurry, the back pairs brace, the head stays buried in the work — and the
    whole body rides `sink` metres below the floor as it digs itself under. */
+/* one scoop, as [cycle, swing back, pitch down]: reach forward with the
+   claw up, drive it down, drag it back under the body, flick the spoil
+   out behind, and bring it forward again high */
+const SCOOP=[[0,-0.32,-0.05],[0.18,-0.34,0.58],[0.62,0.36,0.52],[0.72,0.46,-0.18],[1,-0.32,-0.05]];
+const SCOOP_FLICK=0.64;
+function scoopAt(c){
+  for(let i=0;i<SCOOP.length-1;i++){
+    const a=SCOOP[i], b=SCOOP[i+1];
+    if(c<=b[0]){ let k=(c-a[0])/(b[0]-a[0]); k=k*k*(3-2*k); return [a[1]+(b[1]-a[1])*k, a[2]+(b[2]-a[2])*k]; }
+  }
+  return [SCOOP[0][1],SCOOP[0][2]];
+}
+const _foot=new THREE.Vector3();
+/* where a claw is in the world (for the cutscene's thrown spoil) */
+export function spiderFootWorld(leg,out=_foot){
+  return out.set(leg.tipX,leg.tipY,0).applyMatrix4(leg.femG.matrixWorld);
+}
 export function spiderDigPose(dt,sink=0){
   const s=spider, u=s.mesh.userData;
   const tNow=performance.now()/1000;
@@ -1642,11 +1659,21 @@ export function spiderDigPose(dt,sink=0){
      pitches nose-first (to ~55°) and slides FORWARD into the dark — the
      front goes under while the abdomen is still working the surface */
   const dive=clamp(sink/1.6,0,1);
+  const hz=2.0+dive*0.7;
+  u.digFlick=u.digFlick||[]; u.digFlick.length=0;
   for(const leg of u.legs){
     if(leg.row<2){
-      /* alternating downward strikes, fast and deep */
-      leg.hip.rotation.y=-leg.basePhi+Math.sin(tNow*22+leg.phase)*0.24;
-      leg.femG.rotation.z=leg.pitch0+0.53+Math.sin(tNow*26+leg.phase*2.3)*0.55;
+      /* the front two pairs take turns: left and right half a stroke apart,
+         the second pair a quarter behind the first, so there is always a
+         claw going in and one coming out */
+      const side=leg.hx>0? 1 : -1;
+      const off=(side>0?0.5:0)+(leg.row?0.25:0);
+      const c=(((s.digT||0)*hz+off)%1+1)%1;
+      if(leg.digC!==undefined&&leg.digC<SCOOP_FLICK&&c>=SCOOP_FLICK) u.digFlick.push(leg);
+      leg.digC=c;
+      const [sw,pd]=scoopAt(c);
+      leg.hip.rotation.y=-leg.basePhi+side*sw;
+      leg.femG.rotation.z=leg.pitch0+0.3+pd;
     } else {
       /* braced low — scrambling harder the steeper it tips, shoving it down */
       leg.hip.rotation.y=-leg.basePhi+Math.sin(tNow*(3+dive*15)+leg.phase)*(0.04+dive*0.16);
@@ -1659,12 +1686,16 @@ export function spiderDigPose(dt,sink=0){
   u.abd.rotation.x=0.22-dive*0.12;                // abdomen cocked up, throwing spoil
   u.abd.position.y=(u.BODY_Y+0.12)+0.18;
   u.eyeMat.emissive.setHex(0x8a1410);
-  const fwd=0.9*dive, pitch=0.16+dive*0.8;
+  s.digT=(s.digT||0)+dt;
+  /* the body rides the strokes: it rocks into every drag and rolls toward
+     whichever side is pulling */
+  const st=s.digT*hz*Math.PI*2;
+  const fwd=0.9*dive, pitch=0.16+dive*0.8+0.045*Math.sin(st*2)*(1-dive*0.5);
   s.mesh.position.set(s.pos.x+Math.sin(s.faceAng)*fwd,
-                      Math.abs(Math.sin(tNow*9))*0.05*(1-dive*0.6)-sink,
+                      Math.abs(Math.sin(st))*0.045*(1-dive*0.6)-sink,
                       s.pos.z+Math.cos(s.faceAng)*fwd);
   s.mesh.rotation.order="YXZ";
-  s.mesh.rotation.set(pitch,s.faceAng,0);
+  s.mesh.rotation.set(pitch,s.faceAng,0.05*Math.sin(st)*(1-dive*0.5));
 }
 /* ---- debug hooks (smoke tests): force the new surface transitions ---- */
 export function debugSpiderToWall(){

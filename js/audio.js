@@ -228,6 +228,25 @@ export function sfxClunk(){
   o.frequency.exponentialRampToValueAtTime(40,t+0.3);
   const g=C.createGain();env(g,t,0.005,0.3,0.35);o.connect(g);g.connect(AU.sfx);o.start(t);o.stop(t+0.5);
 }
+/* a locked door: the handle turns a little way and stops, twice, and the
+   leaf knocks against its keeper */
+export function sfxDoorRattle(){
+  if(!AU.ctx)return; const C=AU.ctx,t=C.currentTime;
+  const len=Math.floor(C.sampleRate*0.05), buf=C.createBuffer(1,len,C.sampleRate), d=buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/len,2);
+  [0,0.13,0.34].forEach((dt,i)=>{
+    const src=C.createBufferSource(); src.buffer=buf;
+    const f=C.createBiquadFilter(); f.type="bandpass"; f.frequency.value=1700+i*260; f.Q.value=2.2;
+    const g=C.createGain(); g.gain.value=i<2? 0.16:0.1;
+    src.connect(f); f.connect(g); g.connect(AU.sfx); src.start(t+dt);
+  });
+  for(const dt of[0.02,0.36]){
+    const o=C.createOscillator(); o.type="sine"; o.frequency.setValueAtTime(110,t+dt);
+    o.frequency.exponentialRampToValueAtTime(62,t+dt+0.09);
+    const g=C.createGain(); env(g,t+dt,0.003,0.22,0.14);
+    o.connect(g); g.connect(AU.sfx); o.start(t+dt); o.stop(t+dt+0.2);
+  }
+}
 export function sfxPowerOn(){
   /* the mains coming up under load: a sub thump as the transformers take it,
      then the hum spinning up to line frequency and settling into the walls */
