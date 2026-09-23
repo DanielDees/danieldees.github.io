@@ -95,8 +95,8 @@ vec2 fineAt(vec2 uv){
   float g1=fbm5(uv*8.0,vec2(8.0));
   vec3 c=cell(uv*20.0,vec2(20.0));
   vec3 c2=cell(uv*46.0,vec2(46.0));
-  float pits=(1.0-smoothstep(0.0,0.25,c2.x))*step(c2.z,0.25);
-  float h=0.5+g1*0.45+smoothstep(0.0,0.5,c.x)*0.12-pits*0.35;
+  float pits=(1.0-smoothstep(0.0,0.2,c2.x))*step(c2.z,0.10)*smoothstep(0.0,0.3,fbm3(uv*3.0+8.0,vec2(3.0)));
+  float h=0.5+g1*0.45+smoothstep(0.0,0.5,c.x)*0.12-pits*0.3;
   float a=0.5+fbm3(uv*16.0+3.3,vec2(16.0))*0.8+(c.z-0.5)*0.25-pits*0.3;
   return vec2(clamp(h,0.0,1.0),clamp(a,0.0,1.0));
 }
@@ -163,6 +163,19 @@ vec2 gritAt(vec2 uv){
   return vec2(clamp(h,0.0,1.0),clamp(a,0.0,1.0));
 }
 vec4 OUT(vec2 uv,float m){ return vec4(gritAt(uv),0.0,1.0); }`;
+/* dripstone's close-up layer: no pinholes (on a smooth formation a field
+   of pits reads as drilled), just the fine streaked ripple of a water film
+   and the small facets of the calcite growing under it */
+const DFINE_GLSL=`
+vec2 dfAt(vec2 uv){
+  float r=fbm5(vec2(uv.x*10.0,uv.y*3.0),vec2(10.0,3.0));
+  vec3 c=cell(uv*28.0,vec2(28.0));
+  float cr=(1.0-smoothstep(0.0,0.55,c.x));
+  float h=0.5+r*0.45+cr*0.12;
+  float a=0.5+r*0.35+(c.z-0.5)*0.3;
+  return vec2(clamp(h,0.0,1.0),clamp(a,0.0,1.0));
+}
+vec4 OUT(vec2 uv,float m){ return vec4(dfAt(uv),0.0,1.0); }`;
 /* ---- dripstone: calcite, a 2m tile ----
    runnels straight down (the X/Z projections keep texture-v on world-y, so
    down the map is down the formation), growth rings as fine wavy terraces,
@@ -173,16 +186,17 @@ DS dripAt(vec2 t){
   DS d;
   vec2 w=vec2(fbm3(t*3.0,vec2(3.0)),fbm3(t*3.0+2.7,vec2(3.0)))*0.05;
   vec2 q=t+w;
-  float run=gn(vec2(q.x*18.0,q.y),vec2(18.0,1.0))*0.6+gn(vec2(q.x*40.0,q.y*2.0),vec2(40.0,2.0))*0.4;
+  float run=gn(vec2(q.x*10.0,q.y),vec2(10.0,1.0))*0.65+gn(vec2(q.x*24.0,q.y*2.0),vec2(24.0,2.0))*0.35;
   float ring=sin(6.2831853*q.y*22.0+fbm3(q*vec2(4.0,2.0),vec2(4.0,2.0))*4.0)*0.5+0.5;
   vec3 pc=cell(q*24.0,vec2(24.0));
   float popZ=smoothstep(0.1,0.4,fbm3(q*3.0+5.0,vec2(3.0)));
   float pop=(1.0-smoothstep(0.1,0.5,pc.x))*step(pc.z,0.35)*popZ;
   float mac=fbm4(q*4.0,vec2(4.0));
   float h=0.5+run*0.30+ring*0.02+pop*0.18+mac*0.15;
-  vec3 c=mix(vec3(0.44,0.42,0.38),vec3(0.56,0.54,0.49),smoothstep(-0.3,0.3,mac));
-  c=mix(c,vec3(0.46,0.36,0.26),smoothstep(0.2,0.5,fbm3(vec2(q.x*2.0,q.y*6.0)+11.0,vec2(2.0,6.0)))*0.55);
-  c*=0.84+0.26*(run+0.5);
+  vec3 c=mix(vec3(0.27,0.26,0.24),vec3(0.46,0.45,0.41),smoothstep(-0.35,0.35,mac));
+  c=mix(c,vec3(0.40,0.30,0.21),smoothstep(0.15,0.5,fbm3(vec2(q.x*2.0,q.y*6.0)+11.0,vec2(2.0,6.0)))*0.6);
+  c=mix(c,vec3(0.16,0.155,0.15),smoothstep(0.2,0.55,fbm4(q*3.0+33.0,vec2(3.0)))*0.5);
+  c*=0.93+0.12*(run+0.5);
   c*=0.97+0.03*ring;
   c=mix(c,c*1.12,pop);
   d.col=c; d.h=clamp(h,0.0,1.0);
@@ -303,6 +317,14 @@ function surfMat(set,o){
   return markShared(m);
 }
 
+/* a tangent-space normal map off any grey texture (its R as height, its G
+   carried into the alpha), for the canvas-drawn skins that want relief */
+export function normalFromHeight(H,size,tile,relief){
+  const N=bakeTexture(size,NORMAL_BODY,{uniforms:{uH:H, uNrm:new THREE.Vector2(relief/tile,1/size)}});
+  bakeFlush();
+  return N;
+}
+
 let SURF=null;
 export function caveSurfaces(){
   if(SURF) return SURF;
@@ -327,7 +349,8 @@ export function caveSurfaces(){
   rock.AY=top.A; rock.NY=top.N;
   const floor=set(FLOOR_GLSL,S,4.0,0.11);
   const drip=set(DRIP_GLSL,S,2.0,0.06);
-  rock.F=drip.F=fineN(FINE_GLSL,0.9,0.006);
+  rock.F=fineN(FINE_GLSL,0.9,0.006);
+  drip.F=fineN(DFINE_GLSL,0.8,0.003);
   floor.F=fineN(GRIT_GLSL,0.6,0.004);
   bakeFlush();
   const rockOpts={tile:4.0, ftile:0.9, spec:0x30363a, shin:30,
