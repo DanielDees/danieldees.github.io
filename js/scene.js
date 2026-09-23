@@ -183,6 +183,93 @@ export function mergeStatic(meshes,material){
   for(const g of geos) g.dispose();
   return freezeStatic(new THREE.Mesh(merged,material));
 }
+/* Regroup every static opaque mesh left standing on its own by material and
+   merge each group — books, bookends, ladders, fixture shells, furniture —
+   so a room of two thousand small meshes draws in a couple of hundred calls.
+   `region` (metres) optionally splits the buckets by floor area so a far
+   corner can still be frustum-culled. A mesh only goes in if EVERY material it wears
+   is opaque and shared by at least one other mesh; transparent layers keep
+   their own draw order, and anything tagged persist/animated/noBatch (or
+   hidden) is left exactly where it is, subtree and all. */
+const _bv=new THREE.Vector3(), _bn=new THREE.Vector3(), _nm=new THREE.Matrix3();
+export function batchStatic(root,region=0){
+  root.updateMatrixWorld(true);
+  const cand=[];
+  const walk=o=>{
+    if(o.userData.persist||o.userData.animated||o.userData.noBatch||!o.visible) return;
+    if(o.isMesh&&!o.isInstancedMesh&&!o.isSkinnedMesh&&o.geometry.attributes.normal){
+      const mats=Array.isArray(o.material)? o.material : [o.material];
+      if(mats.every(m=>m&&!m.transparent&&!m.userData.noBatch&&!m.vertexColors)) cand.push(o);
+    }
+    for(const c of o.children) walk(c);
+  };
+  walk(root);
+  /* how many meshes wear each material: a singleton gains nothing */
+  const uses=new Map();
+  for(const o of cand){
+    const mats=Array.isArray(o.material)? o.material : [o.material];
+    for(const m of new Set(mats)) uses.set(m,(uses.get(m)||0)+1);
+  }
+  const buckets=new Map();
+  const taken=[];
+  for(const o of cand){
+    const mats=Array.isArray(o.material)? o.material : [o.material];
+    if(!mats.every(m=>uses.get(m)>1)) continue;
+    const g=o.geometry;
+    const groups=Array.isArray(o.material)&&g.groups.length? g.groups
+      : [{start:0, count:g.index? g.index.count : g.attributes.position.count, materialIndex:0}];
+    const e=o.matrixWorld.elements;
+    const rk=region>0? Math.floor(e[12]/region)+":"+Math.floor(e[14]/region) : "";
+    for(const gr of groups){
+      const m=mats[gr.materialIndex||0]; if(!m) continue;
+      const key=m.uuid+"|"+rk;
+      let b=buckets.get(key);
+      if(!b){ b={mat:m, parts:[], vc:0, ic:0}; buckets.set(key,b); }
+      b.parts.push({o,gr}); b.ic+=gr.count;
+    }
+    taken.push(o);
+  }
+  const takenSet=new Set(taken), keep=new Set();
+  root.traverse(o=>{ if(o.isMesh&&!takenSet.has(o)) keep.add(o.geometry); });
+  let made=0;
+  for(const b of buckets.values()){
+    /* vertices are remapped per part, so the merge stays indexed */
+    const pos=[], nor=[], uv=[], idx=new Uint32Array(b.ic);
+    let vc=0, io=0;
+    for(const {o,gr} of b.parts){
+      const g=o.geometry, P=g.attributes.position, N=g.attributes.normal, U=g.attributes.uv, I=g.index;
+      _nm.getNormalMatrix(o.matrixWorld);
+      const remap=new Int32Array(P.count).fill(-1);
+      const flip=o.matrixWorld.determinant()<0;          // a mirror turns every triangle inside out
+      for(let k=gr.start;k<gr.start+gr.count;k++){
+        const i=I? I.getX(k) : k;
+        if(remap[i]<0){
+          remap[i]=vc++;
+          _bv.fromBufferAttribute(P,i).applyMatrix4(o.matrixWorld);
+          _bn.fromBufferAttribute(N,i).applyMatrix3(_nm).normalize();
+          pos.push(_bv.x,_bv.y,_bv.z); nor.push(_bn.x,_bn.y,_bn.z);
+          uv.push(U? U.getX(i):0, U? U.getY(i):0);
+        }
+        idx[io++]=remap[i];
+        if(flip&&(k-gr.start)%3===2){ const t=idx[io-1]; idx[io-1]=idx[io-2]; idx[io-2]=t; }
+      }
+    }
+    const geo=new THREE.BufferGeometry();
+    geo.setAttribute("position",new THREE.Float32BufferAttribute(pos,3));
+    geo.setAttribute("normal",new THREE.Float32BufferAttribute(nor,3));
+    geo.setAttribute("uv",new THREE.Float32BufferAttribute(uv,2));
+    geo.setIndex(new THREE.BufferAttribute(vc>65535? idx : Uint16Array.from(idx),1));
+    geo.computeBoundingSphere();
+    scene.add(freezeStatic(new THREE.Mesh(geo,b.mat)));
+    made++;
+  }
+  for(const o of taken){
+    if(o.parent) o.parent.remove(o);
+    const g=o.geometry;
+    if(!SHARED.has(g)&&!keep.has(g)){ keep.add(g); g.dispose(); }
+  }
+  return {merged:taken.length, draws:made};
+}
 /* stop per-frame matrix recompute on a positioned static object (+ subtree) */
 export function freezeStatic(o){
   o.updateMatrixWorld(true);

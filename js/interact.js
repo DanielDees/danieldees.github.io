@@ -2,7 +2,7 @@
 import { STATE, KEYS, monster } from "./state.js";
 import { scene } from "./scene.js";
 import { interactables } from "./props.js";
-import { sfxPickup, sfxClunk, sfxDiscPickup, sfxDiscInsert, sfxStrikerTick } from "./audio.js";
+import { sfxPickup, sfxClunk, sfxDiscPickup, sfxDiscInsert, sfxStrikerTick, sfxDoorRattle } from "./audio.js";
 import { ui, renderObjectives, toast } from "./ui.js";
 import { escalateMonster } from "./monster.js";
 import { CINE, startBreakerCine, startElevatorCine, startTerminalCine } from "./cutscene.js";
@@ -56,6 +56,8 @@ export function tryInteract(){
     startDeadPC(it);
   } else if(it.kind==="deadElev"){
     sfxClunk();
+  } else if(it.kind==="lockedDoor"){
+    sfxDoorRattle();
   }
   /* ---- THE NEST ---- */
   else if(it.kind==="corpse"){
@@ -63,7 +65,7 @@ export function tryInteract(){
     if(it.journal) scene.remove(it.journal);
     if(it.glowL) it.glowL.intensity=0;          // the ember comes with you (never remove: light count)
     STATE.hasLantern=true; STATE.lanternCharge=0.65; STATE.lanternOn=false;
-    toast("The lantern still turns. The journal is waterlogged — you take both. [F] LIGHT · [R] CRANK",6200);
+    toast("You picked up a crank lantern. Press F to light it, hold R to wind it up.",6200);
   } else if(it.kind==="clutch"){
     /* not a press — a commitment. The channel runs in updateInteractHold. */
     if(!STATE.hasLantern) sfxClunk();
@@ -81,7 +83,7 @@ export function updateInteractHold(dt){
   holdT+=dt; tickT-=dt;
   if(tickT<=0){ tickT=0.38; sfxStrikerTick(1); }
   const pct=Math.min(99,Math.round(holdT/3*100));
-  ui.prompt.innerHTML=`<b>[E]</b> IGNITING THE CLUTCH — ${pct}%`;
+  ui.prompt.innerHTML=`<b>[E]</b> BURNING — ${pct}%`;
   ui.prompt.classList.add("show");
   if(holdT>=3){
     holdT=0;

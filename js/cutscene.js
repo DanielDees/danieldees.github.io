@@ -7,8 +7,7 @@
 import { clamp, lerp, angLerp, hash, rand } from "./utils.js";
 import { STATE, monster, spider } from "./state.js";
 import { worldToCell, isWall, losCells } from "./map.js";
-import { scene, camera, playerLight, amb, lights, markShared } from "./scene.js";
-import { makeCanvas } from "./textures.js";
+import { scene, camera, playerLight, amb, lights } from "./scene.js";
 import { AU, panTo, sfxAlert, sfxStinger, sfxClunk, sfxPowerOn,
          sfxBoxOpen, sfxLatchTurn, sfxFuseSeat, FUSE_SEAT_AT, sfxLeverStrain, sfxMainThrow, sfxBreakerClick,
          sfxElevButton, sfxElevDing, sfxElevDoors, sfxElevThud, sfxElevJolt, sfxFloorBlip,
@@ -21,7 +20,7 @@ import { exitDoor, ELEV } from "./props.js";
 import { win, enterTheEnd, enterTheNest } from "./lifecycle.js";
 import { LIB, losCells2, revealHole } from "./library.js";
 import { CAVE } from "./cave.js";
-import { spiderPose, spiderDigPose } from "./spider.js";
+import { spiderPose, spiderDigPose, spiderFootWorld } from "./spider.js";
 import { startUpdraftWind, sfxHatchTap, sfxBodyFall } from "./audio.js";
 
 export const CINE={active:false, kind:null, t:0};
@@ -622,7 +621,7 @@ function updateLibIntro(dt){
   cue("title",LI_TITLE,()=>{
     const el=document.getElementById("levelTitle");
     if(el){ el.querySelector("#ltMain").textContent="THE END";
-      el.querySelector("#ltSub").textContent="the infinite library";
+      el.querySelector("#ltSub").textContent="The Infinite Library";
       el.classList.add("show"); }
   });
   cue("titleOff",LI_TITLE_OFF,()=>{
@@ -729,231 +728,126 @@ export function startTerminalCine(){
      aScr:lookAngles(view.x,view.y,view.z,scr.x,scr.y,scr.z),
      aAir:lookAngles(aerial.x,aerial.y,aerial.z,focus.x,focus.y,focus.z),
      aEye:lookAngles(eye0.x,eye0.y,eye0.z,scr.x,scr.y,scr.z),
-     lastStatic:0, lastTap:0, lastDig:0, rush:null, digFx:null};
+     lastStatic:0, lastTap:0, lastDig:0, rush:null, fx:null, kick:0};
   if(AU.ctx&&AU.spiderBedGain)
     AU.spiderBedGain.gain.setTargetAtTime(0,AU.ctx.currentTime,0.4);
 }
-/* ---- dig FX: flung debris + a churning shroud of soft dust ----
-   The dust is pooled billboard sprites wearing a mottled radial-falloff
-   puff texture, tinted across carpet blues and earth browns. Three
-   emitters share the pool: a churn boiling up out of the work, a heavy
-   ground shroud rolling out along the carpet (this is what swallows the
-   floor), and one violent ring burst when the floor lets go. Debris is
-   small tumbling clods that raise their own little puff where they land. */
-let puffTex=null;
-function ensurePuffTex(){
-  if(puffTex) return;
-  /* THREE puffs, not one. A single sprite map repeated 150 times reads as
-     150 copies of the same blob however you tint it — the eye finds the
-     repeat immediately. And each one is built from soft lumps AND a coarse
-     grain pass: a smooth radial falloff is fog. Dust is particulate, and
-     what makes it read as dust is that its edges are dirty. */
-  puffTex=[0,1,2].map(v=>makeCanvas(128,128,(g,w,h)=>{
-    g.clearRect(0,0,w,h);
-    const lumps=6+v*3;
-    for(let i=0;i<lumps;i++){
-      const a=Math.random()*Math.PI*2, rr=Math.random()*(16+v*7);
-      const x=64+Math.cos(a)*rr, y=64+Math.sin(a)*rr, r=20+Math.random()*(18+v*4);
-      const gr=g.createRadialGradient(x,y,0,x,y,r);
-      gr.addColorStop(0,"rgba(255,255,255,0.30)");
-      gr.addColorStop(0.55,"rgba(255,255,255,0.14)");
-      gr.addColorStop(1,"rgba(255,255,255,0)");
-      g.fillStyle=gr;
-      g.beginPath(); g.arc(x,y,r,0,Math.PI*2); g.fill();
-    }
-    /* the grain: motes punched through the body, thinning to nothing at
-       the rim so the sprite still has no edge of its own */
-    for(let i=0;i<340;i++){
-      const a=Math.random()*Math.PI*2, rr=Math.pow(Math.random(),0.6)*58;
-      const fall=1-rr/58;
-      g.fillStyle=`rgba(255,255,255,${(0.05+Math.random()*0.20)*fall*fall})`;
-      g.fillRect(64+Math.cos(a)*rr,64+Math.sin(a)*rr,1+Math.random()*2.5,1+Math.random()*2.5);
-    }
-  }));
-  markShared(...puffTex);              // module-level, reused across every ending
+/* ---- dig FX: a churning shroud, and spoil thrown by the claws ----
+   The dust and the debris are LIB.digFx (particles.js), built with the
+   level so their programs are compiled behind the intro instead of in the
+   middle of this shot. Four emitters share the dust pool: a gusting churn
+   boiling out of the work, a heavy ground shroud rolling out along the
+   carpet, a fine VEIL that climbs and hangs (it gives the aerial camera
+   something to look down THROUGH), and the breakthrough when the floor
+   lets go. The spoil comes off the CLAWS: every front leg that finishes a
+   drag flicks a spray of clods out behind the body — carpet shreds and
+   carpet-grey dust at first, earth once it is through the floor — and all
+   of it lands and stays where it lands. */
+const EARTH_TINTS=[0x6a543c,0x54432e,0x5d4d3a,0x7a6448,0x3a2e20,0x46382a];
+const CARPET_TINTS=[0x4a5666,0x3a4756,0x435264,0x252d38,0x55606e];
+const dustTint=k=>{ const p=Math.random()<k? EARTH_TINTS : CARPET_TINTS; return p[Math.floor(Math.random()*p.length)]; };
+function startDigFx(){
+  const F=LIB.digFx;
+  F.group.visible=true; F.dust.mesh.visible=true; F.dust.clear();
+  spider.digT=0;
+  D.fx={accP:0,accG:0,accV:0,accC:0,burst:false};
 }
-/* carpet blues and subsoil browns, with two near-black entries in the mix.
-   Sprites are UNLIT, so every puff renders at full strength in a room this
-   dark and a cloud of uniformly mid-tone ones turns into a cotton ball
-   hanging over the desk. The darks are what give the mass its shadow side
-   once the billows start overlapping. */
-const PUFF_TINTS=[0x6a543c,0x54432e,0x4a5666,0x3a4756,0x5d4d3a,0x435264,
-                  0x7a6448,0x3a2e20,0x252d38];
-function makeDigFx(){
-  ensurePuffTex();
-  const g=new THREE.Group();
-  scene.add(g);
-  const puffs=[];
-  for(let i=0;i<210;i++){
-    const m=new THREE.SpriteMaterial({map:puffTex[i%3], color:PUFF_TINTS[i%PUFF_TINTS.length],
-      transparent:true, opacity:0, depthWrite:false});
-    const s=new THREE.Sprite(m);
-    s.visible=false; g.add(s);
-    puffs.push({s,m,vx:0,vy:0,vz:0,life:0,max:1,scale0:1,grow:1,peak:0.6,rotV:0,fade:1});
-  }
-  /* debris: clods of earth and shreds of carpet backing, tumbling as they
-     fly. Two shapes — lumps and flat torn strips, which flutter */
-  const mats=[0x5a3f24,0x42301b,0x37424e,0x2b3542,0x6b5334].map(c=>new THREE.MeshBasicMaterial({color:c}));
-  const chipGeo=new THREE.BoxGeometry(1,1,1);
-  const chips=[];
-  for(let i=0;i<88;i++){
-    const m=new THREE.Mesh(chipGeo,mats[i%mats.length]);
-    m.visible=false;
-    const flat=i%3===0;                              // a third are carpet shreds
-    m.scale.set(flat? rand(0.05,0.11):rand(0.025,0.06),
-                flat? 0.006:rand(0.02,0.045),
-                flat? rand(0.04,0.10):rand(0.025,0.07));
-    g.add(m);
-    chips.push({m,vx:0,vy:0,vz:0,life:0,spin:rand(-9,9),flat,spin2:rand(-7,7)});
-  }
-  return {g,puffs,chips,chipGeo,mats,accP:0,accG:0,accC:0,accV:0,burstDone:false};
-}
-function spawnPuff(F,x,y,z,vx,vy,vz,scale0,grow,life,peak,fade){
-  const p=F.puffs.find(p=>p.life<=0);
-  if(!p) return;
-  p.life=p.max=life; p.scale0=scale0; p.grow=grow; p.peak=peak;
-  p.fade=fade||1;                                  // >1 = sinks away faster than it swelled
-  p.vx=vx; p.vy=vy; p.vz=vz; p.rotV=rand(-0.7,0.7);
-  p.m.rotation=Math.random()*Math.PI*2;
-  p.s.position.set(x,y,z);
-  p.s.scale.set(scale0,scale0,1);
-  p.s.visible=true;
-}
-/* dust does not come off a dig one puff at a time — it comes off in
-   BILLOWS. Two or three at once, at different sizes and slightly out of
-   step, is the difference between a churn and a bead curtain. */
-function billow(F,n,x,y,z,vx,vy,vz,scale0,grow,life,peak){
+/* dust comes off a dig in BILLOWS — two or three at once, at different
+   sizes and a little out of step — not one puff at a time */
+function billow(n,x,y,z,vx,vy,vz,s0,grow,life,peak,k){
+  const F=LIB.digFx;
   for(let i=0;i<n;i++){
-    const k=0.7+Math.random()*0.7;
-    spawnPuff(F, x+rand(-0.22,0.22), y+rand(-0.08,0.14), z+rand(-0.22,0.22),
-      vx*k+rand(-0.25,0.25), vy*k, vz*k+rand(-0.25,0.25),
-      scale0*k, grow, life*(0.8+Math.random()*0.45), peak*(0.75+Math.random()*0.5));
+    const q=0.7+Math.random()*0.7;
+    F.dust.spawn(x+rand(-0.22,0.22),y+rand(-0.08,0.14),z+rand(-0.22,0.22),
+      vx*q+rand(-0.25,0.25),vy*q,vz*q+rand(-0.25,0.25),
+      s0*q,grow,life*(0.8+Math.random()*0.45),peak*(0.75+Math.random()*0.5),1,dustTint(k));
   }
 }
-function spawnChip(F,sp,up){
-  const c=F.chips.find(c=>c.life<=0);
-  if(!c) return;
-  const h=D.hole, a=Math.random()*Math.PI*2;
-  c.vx=Math.cos(a)*sp; c.vz=Math.sin(a)*sp; c.vy=up;
-  c.life=rand(0.8,1.5);
-  c.m.position.set(h.x+rand(-0.5,0.5),rand(0.15,0.5),h.z+rand(-0.5,0.5));
-  c.m.rotation.set(Math.random()*7,Math.random()*7,Math.random()*7);
-  c.m.visible=true;
-}
+const _tip=new THREE.Vector3();
 function updateDigFx(dt,t){
-  const F=D.digFx, h=D.hole;
-  /* master envelope: swells with the dig, holds while it sinks, settles
-     once the spider is gone — every puff's alpha rides it */
-  const env=seg(t,TC_DIG+0.4,TC_SINK0)*(1-seg(t,TC_CLEAR0,TC_CLEAR1));
+  const F=LIB.digFx, h=D.hole, fx=D.fx;
+  F.dust.env=seg(t,TC_DIG+0.3,TC_DIG+2.0)*(1-seg(t,TC_CLEAR0,TC_CLEAR1));
+  const earth=seg(t,TC_DIG+0.8,TC_DIG+3.2);          // through the carpet into what is under it
   const digging=t>=TC_DIG&&t<TC_SINK1-0.3;
+  const back={x:-Math.sin(spider.faceAng), z:-Math.cos(spider.faceAng)};
   if(digging){
-    /* churn: fresh dust boiling up out of the work, in billows. The legs
-       are throwing it, so it comes in gusts rather than a steady stream */
     const gust=0.72+0.55*Math.pow(Math.abs(Math.sin(t*4.1)),1.6)+0.25*hash(Math.floor(t*7));
-    F.accP+=dt*13*gust;
-    while(F.accP>=1){
-      F.accP-=1;
-      const a=Math.random()*Math.PI*2, rr=Math.random()*0.9;
-      const dir=Math.random()*Math.PI*2, sp=rand(0.5,1.9);
-      billow(F, 2+(Math.random()<0.45?1:0),
-        h.x+Math.cos(a)*rr, rand(0.15,0.8), h.z+Math.sin(a)*rr,
-        Math.cos(dir)*sp, rand(0.4,1.4), Math.sin(dir)*sp,
-        rand(0.7,1.2), rand(2.0,2.9), rand(1.2,2.0), rand(0.32,0.52));
+    fx.accP+=dt*11*gust;
+    while(fx.accP>=1){
+      fx.accP-=1;
+      const a=Math.random()*Math.PI*2, rr=Math.random()*0.9, dir=Math.random()*Math.PI*2, sp=rand(0.5,1.9);
+      billow(2+(Math.random()<0.45?1:0), h.x+Math.cos(a)*rr, rand(0.15,0.8), h.z+Math.sin(a)*rr,
+        Math.cos(dir)*sp, rand(0.4,1.4), Math.sin(dir)*sp, rand(0.8,1.3), rand(2.0,2.9), rand(1.2,2.0), rand(0.34,0.54), earth);
     }
-    /* the ground shroud: heavy dust rolling out along the carpet — this is
-       the layer that swallows the floor (hole + rim included) at the sink */
-    F.accG+=dt*20;
-    while(F.accG>=1){
-      F.accG-=1;
-      const a=Math.random()*Math.PI*2, rr=rand(0.3,3.0);
-      const drift=a+rand(-0.6,0.6);
-      spawnPuff(F, h.x+Math.cos(a)*rr, rand(0.2,0.55), h.z+Math.sin(a)*rr,
-        Math.cos(drift)*rand(0.15,0.5), rand(0.02,0.12), Math.sin(drift)*rand(0.15,0.5),
-        rand(1.8,2.9), rand(1.4,1.8), rand(2.4,3.6), rand(0.50,0.68));
+    fx.accG+=dt*16;
+    while(fx.accG>=1){
+      fx.accG-=1;
+      const a=Math.random()*Math.PI*2, rr=rand(0.3,3.0), drift=a+rand(-0.6,0.6);
+      F.dust.spawn(h.x+Math.cos(a)*rr, rand(0.05,0.4), h.z+Math.sin(a)*rr,
+        Math.cos(drift)*rand(0.15,0.5), rand(0.02,0.1), Math.sin(drift)*rand(0.15,0.5),
+        rand(2.0,3.2), rand(1.4,1.8), rand(2.4,3.6), rand(0.5,0.7), 1, dustTint(earth));
     }
-    /* the VEIL: the fine fraction that never settles. It climbs slowly, way
-       out past the shroud, and holds for six seconds at almost no opacity —
-       this is what gives the shot a volume for the aerial camera to look
-       down THROUGH, instead of a flat mat of dust on the floor. */
-    F.accV+=dt*6;
-    while(F.accV>=1){
-      F.accV-=1;
+    fx.accV+=dt*5;
+    while(fx.accV>=1){
+      fx.accV-=1;
       const a=Math.random()*Math.PI*2, rr=rand(0.6,2.6);
-      spawnPuff(F, h.x+Math.cos(a)*rr, rand(0.5,2.4), h.z+Math.sin(a)*rr,
+      F.dust.spawn(h.x+Math.cos(a)*rr, rand(0.5,2.4), h.z+Math.sin(a)*rr,
         Math.cos(a)*rand(0.05,0.35), rand(0.28,0.62), Math.sin(a)*rand(0.05,0.35),
-        rand(2.2,3.6), rand(2.2,3.2), rand(4.5,6.5), rand(0.12,0.22), 1.8);
+        rand(2.4,3.8), rand(2.2,3.2), rand(4.5,6.5), rand(0.12,0.2), 1.8, dustTint(earth));
     }
-    /* debris spray while the legs work */
-    F.accC+=dt*26;
-    while(F.accC>=1){ F.accC-=1; spawnChip(F,rand(1.4,4.2),rand(2.2,5.2)); }
+    /* the spoil, off the end of each claw as it finishes its drag */
+    const flicks=spider.mesh&&spider.mesh.userData.digFlick;
+    if(flicks) for(const leg of flicks){
+      spiderFootWorld(leg,_tip);
+      const y=Math.max(0.08,_tip.y);
+      for(let i=0;i<3;i++){
+        const sp=rand(1.6,3.6), side=rand(-1.2,1.2);
+        F.debris.toss(Math.random()>earth*0.85, _tip.x,y,_tip.z,
+          back.x*sp+back.z*side, rand(2.2,4.4), back.z*sp-back.x*side, rand(0.03,0.07));
+      }
+      billow(1,_tip.x,y+0.1,_tip.z, back.x*1.2,0.6,back.z*1.2, rand(0.5,0.8),2.2,rand(0.9,1.4),0.4,earth);
+      D.kick=Math.max(D.kick||0,0.5);
+    }
+    /* and a thinner spray all round, where the other legs are scrabbling */
+    fx.accC+=dt*9;
+    while(fx.accC>=1){
+      fx.accC-=1;
+      const a=Math.random()*Math.PI*2, sp=rand(1.2,3.4);
+      F.debris.toss(Math.random()>earth*0.85, h.x+rand(-0.5,0.5),rand(0.15,0.5),h.z+rand(-0.5,0.5),
+        Math.cos(a)*sp,rand(2,4.6),Math.sin(a)*sp,rand(0.025,0.055));
+    }
   }
   /* the breakthrough: the floor lets go. A ring blown out along the carpet,
-     a column punched straight up out of the shaft it just opened, and every
-     clod it had left */
-  if(t>=TC_SWAP&&!F.burstDone){
-    F.burstDone=true;
+     a column punched up out of the shaft it just opened, and a last throw
+     of everything it had loose */
+  if(t>=TC_SWAP&&!fx.burst){
+    fx.burst=true;
     for(let i=0;i<24;i++){
       const a=i/24*Math.PI*2+rand(-0.15,0.15);
-      billow(F, 2, h.x+Math.cos(a)*rand(0.8,2.0), rand(0.2,0.9), h.z+Math.sin(a)*rand(0.8,2.0),
+      billow(2, h.x+Math.cos(a)*rand(0.8,2.0), rand(0.2,0.9), h.z+Math.sin(a)*rand(0.8,2.0),
         Math.cos(a)*rand(1.1,2.2), rand(0.3,0.9), Math.sin(a)*rand(1.1,2.2),
-        rand(1.2,1.9), rand(1.8,2.4), rand(1.8,2.8), rand(0.42,0.62));
+        rand(1.3,2.0), rand(1.8,2.4), rand(1.8,2.8), rand(0.42,0.62), 1);
     }
-    for(let i=0;i<14;i++){                        // the column out of the hole
+    for(let i=0;i<14;i++){
       const a=Math.random()*Math.PI*2, rr=Math.random()*h.r*0.8;
-      spawnPuff(F, h.x+Math.cos(a)*rr, rand(0.1,0.6), h.z+Math.sin(a)*rr,
+      F.dust.spawn(h.x+Math.cos(a)*rr, rand(0.1,0.6), h.z+Math.sin(a)*rr,
         Math.cos(a)*rand(0.1,0.6), rand(2.2,4.4), Math.sin(a)*rand(0.1,0.6),
-        rand(1.4,2.4), rand(2.4,3.4), rand(2.6,3.8), rand(0.32,0.50));
+        rand(1.5,2.6), rand(2.4,3.4), rand(2.6,3.8), rand(0.32,0.5), 1, dustTint(1));
     }
-    for(let i=0;i<30;i++) spawnChip(F,rand(2.2,5.2),rand(3.0,6.4));
-  }
-  /* dust: drag, slow rise, growth, spin; in fast, out slow. The rise is a
-     buoyancy that DECAYS — a fresh puff is hot off the work and climbs,
-     an old one has cooled and just hangs, which is what stops the whole
-     cloud drifting away as one rigid body. */
-  for(const p of F.puffs){
-    if(p.life<=0) continue;
-    p.life-=dt;
-    if(p.life<=0){ p.s.visible=false; p.m.opacity=0; continue; }
-    const k=1-p.life/p.max;
-    const drag=Math.pow(0.42,dt);
-    p.vx*=drag; p.vz*=drag; p.vy*=Math.pow(0.55,dt);
-    p.s.position.x+=p.vx*dt;
-    p.s.position.y+=p.vy*dt+0.09*(1-k)*dt;
-    p.s.position.z+=p.vz*dt;
-    const sc=p.scale0*(1+(p.grow-1)*k);
-    p.s.scale.set(sc,sc,1);
-    p.m.rotation+=p.rotV*dt;
-    /* fade 1 is the old 1−k²; higher holds the plateau longer and drops it
-       at the end, which is how the fine veil outlives the churn under it */
-    p.m.opacity=p.peak*Math.min(1,k*5)*Math.max(0,1-Math.pow(k,2*p.fade))*env;
-  }
-  /* debris: gravity, tumble — and a little puff where each clod lands.
-     Flat shreds of carpet backing flutter instead of dropping: they lose
-     their fall speed and slew, which reads as WEIGHT on the lumps beside
-     them, and it costs one line. */
-  for(const c of F.chips){
-    if(c.life<=0) continue;
-    c.life-=dt;
-    c.vy-=(c.flat? 3.6:9.5)*dt;
-    if(c.flat){ c.vx*=Math.pow(0.45,dt); c.vz*=Math.pow(0.45,dt); c.vy=Math.max(c.vy,-1.5); }
-    c.m.position.x+=c.vx*dt; c.m.position.y+=c.vy*dt; c.m.position.z+=c.vz*dt;
-    c.m.rotation.x+=c.spin*dt; c.m.rotation.z+=c.spin*0.7*dt; c.m.rotation.y+=c.spin2*dt;
-    if(c.life<=0||c.m.position.y<0.03){
-      if(c.m.position.y<0.03&&Math.random()<0.6)
-        spawnPuff(F, c.m.position.x, 0.12, c.m.position.z,
-          c.vx*0.12, 0.14, c.vz*0.12, rand(0.3,0.5), 1.9, rand(0.4,0.7), 0.35);
-      c.life=0; c.m.visible=false;
+    for(let i=0;i<30;i++){
+      const a=Math.random()*Math.PI*2, sp=rand(2.2,5.2), rr=rand(h.r*0.6,h.r);
+      F.debris.toss(Math.random()<0.25, h.x+Math.cos(a)*rr,rand(0.1,0.5),h.z+Math.sin(a)*rr,
+        Math.cos(a)*sp,rand(3,6.4),Math.sin(a)*sp,rand(0.03,0.08));
     }
   }
+  F.dust.update(dt,camera);
+  F.debris.update(dt,(x,z)=> STATE.holeOpen&&Math.hypot(x-h.x,z-h.z)<h.r-0.08? -1e9 : 0);
 }
-function disposeDigFx(){
-  const F=D.digFx;
+/* the dust goes; the spoil stays on the carpet where it fell */
+function endDigFx(){
+  const F=LIB.digFx;
   if(!F) return;
-  scene.remove(F.g);
-  F.chipGeo.dispose();
-  for(const m of F.mats) m.dispose();
-  for(const p of F.puffs) p.m.dispose();         // sprite materials only — the puff texture is shared
-  D.digFx=null;
+  F.dust.clear(); F.dust.mesh.visible=false;
 }
 function updateTerminal(dt){
   const t=CINE.t, term=D.term, screen=term.screen, hole=D.hole;
@@ -1017,7 +911,7 @@ function updateTerminal(dt){
   }
   /* ---- the dig ---- */
   cue("dig",TC_DIG,()=>{
-    D.digFx=makeDigFx();
+    startDigFx();
     spider.pos.set(hole.x,0,hole.z);
     spider.faceAng=Math.atan2(D.scr.x-hole.x,D.scr.z-hole.z);   // face its desk while it works
   });
@@ -1038,7 +932,7 @@ function updateTerminal(dt){
     spider.mesh.visible=false;
     spider.active=false;
   });
-  if(D.digFx) updateDigFx(dt,t);
+  if(D.fx) updateDigFx(dt,t);
   /* ---- the warning: the dead terminal comes back for one last line ---- */
   cue("warn",TC_WARN,()=>{
     if(term.pc.userData.led) term.pc.userData.led.color.set(0xff2418);
@@ -1074,7 +968,8 @@ function updateTerminal(dt){
   }
   /* the work below shakes the view, just a little; the breakthrough thumps it */
   let amp=0;
-  if(t>=TC_DIG&&t<TC_SINK1) amp=0.006;
+  if(t>=TC_DIG&&t<TC_SINK1) amp=0.006+0.012*(D.kick||0);
+  D.kick=(D.kick||0)*Math.exp(-dt*10);
   if(t>=TC_SWAP&&t<TC_SWAP+1.2) amp=Math.max(amp,0.02*(1-(t-TC_SWAP)/1.2));
   yaw+=(Math.random()-0.5)*amp; pitch+=(Math.random()-0.5)*amp;
   STATE.yaw=yaw; STATE.pitch=pitch;
@@ -1082,42 +977,74 @@ function updateTerminal(dt){
   if(t>=TC_END){
     screen.warn(1,t);                  // the face stays on the glass for good…
     LIB.weeping=true; LIB.weepT=t;     // …and updateLibrary keeps the tears running
-    disposeDigFx();
+    endDigFx();
     CINE.active=false; CINE.kind=null; D=null;
     ui.dread.style.opacity=0;
     renderObjectives();                                   // ENTER THE HOLE
   }
 }
 
-/* ================= THE END: the dark takes the stairs ================= */
-/* The stair is a real level component — the player walks it themselves,
-   the fog thickening with every turn (library.js drives that by depth).
-   Only a couple of spirals down, with most vision already gone, does this
-   take over: the view drifts on down the walk it was already making while
-   the black closes, and the footsteps keep landing on stone a while after
-   there is nothing left to see. (The next floor is TBD: for now, the win.) */
-const DE_FADE=1.7, DE_END=5.0;
+/* ================= THE END: down the stair ================= */
+/* The stair is a real level component — you walk it yourself, the fog
+   thickening with every turn. A couple of turns down the walk is taken off
+   you WITHOUT A CUT: the camera starts exactly where your eyes are, eases
+   onto the line of the treads at the pace you were already keeping, and
+   carries on down them — turning with the spiral, the head dipping with
+   every step, looking at the treads ahead the way anyone on a stair does —
+   while the dark closes. The footfalls land on the treads it steps on, and
+   keep landing a while after there is nothing left to see. */
+const DE_FADE0=1.5, DE_FADE1=4.4, DE_END=6.0;
+const DE_PACE=1.3;                                 // m/s along the treads once it has you
 export function startDescentEnd(){
   if(CINE.active) return;
   CINE.active=true; CINE.kind="descend"; CINE.t=0;
   ui.prompt.classList.remove("show");
-  D={fired:new Set(), stepAcc:0.25,
-     eye:{x:camera.position.x, y:camera.position.y, z:camera.position.z},
-     yaw0:STATE.yaw, pitch0:STATE.pitch};
+  const h=LIB.hole, st=h.stair, stepA=Math.PI*2/st.steps, stepH=st.rise/st.steps;
+  const px=STATE.pos.x-h.x, pz=STATE.pos.z-h.z, r0=Math.max(1.8,Math.hypot(px,pz));
+  /* unwrap the bearing onto the lap the feet are on */
+  const cFeet=-(STATE.y+0.02)/stepH;
+  let th=Math.atan2(pz,px);
+  const want=st.a0+cFeet*stepA;
+  th+=Math.round((want-th)/(Math.PI*2))*Math.PI*2;
+  const vT=STATE.velX*-Math.sin(th)+STATE.velZ*Math.cos(th);
+  D={fired:new Set(), h, st, stepA, stepH, th, r0, lastStep:null,
+     w0:Math.max(0.35,Math.min(vT,4.6))/r0,
+     eye0:{x:camera.position.x, y:camera.position.y, z:camera.position.z},
+     yaw0:STATE.yaw, pitch0:STATE.pitch, off:null};
+}
+function descendAt(th,r){
+  const c=(th-D.st.a0)/D.stepA, f=c-Math.floor(c);
+  const feet=-0.02-(c-0.5)*D.stepH;
+  return {c, feet, eye:feet+1.6+0.022*Math.cos(f*Math.PI*2),
+          x:D.h.x+Math.cos(th)*r, z:D.h.z+Math.sin(th)*r};
 }
 function updateDescend(dt){
-  const t=CINE.t;
-  /* the walk carries on into the black: a slow drift down and forward */
-  const drift=Math.min(t,DE_FADE+0.8);
-  const cx=D.eye.x-Math.sin(D.yaw0)*drift*0.5;
-  const cz=D.eye.z-Math.cos(D.yaw0)*drift*0.5;
-  const cy=D.eye.y-drift*0.5+Math.sin(t*7)*0.02;
-  setCam(cx,cy,cz,D.yaw0,D.pitch0);
-  /* footfalls on stone, all the way down — and after */
-  D.stepAcc+=dt;
-  if(D.stepAcc>=0.42){ D.stepAcc=0; sfxStoneStep(0.8+Math.random()*0.2); }
+  const t=CINE.t, rc=D.st.rc-0.08;
+  const k=seg(t,0,0.9);
+  const w=lerp(D.w0,DE_PACE/rc,k);
+  D.th+=w*dt;
+  const r=lerp(D.r0,rc,seg(t,0,1.1));
+  const p=descendAt(D.th,r);
+  /* where the eyes were, fading out over the first steps */
+  if(!D.off) D.off={x:D.eye0.x-p.x, y:D.eye0.y-p.eye, z:D.eye0.z-p.z};
+  const hold=1-seg(t,0,0.8);
+  const cx=p.x+D.off.x*hold, cy=p.eye+D.off.y*hold, cz=p.z+D.off.z*hold;
+  /* look at the treads a little way ahead, just inside the line you walk */
+  const ah=descendAt(D.th+0.75,rc-0.15);
+  const aim=lookAngles(cx,cy,cz,ah.x,ah.feet+0.95,ah.z);
+  const ka=seg(t,0,1.2);
+  const yaw=angLerp(D.yaw0,aim.yaw,ka), pitch=lerp(D.pitch0,aim.pitch,ka);
+  setCam(cx,cy,cz,yaw,pitch);
+  camera.rotation.z=0.01*Math.sin(p.c*Math.PI);    // weight onto each foot in turn
+  STATE.pos.x=p.x; STATE.pos.z=p.z; STATE.y=p.feet;  // the shaft's fog reads the depth
+  STATE.yaw=yaw; STATE.pitch=pitch;
+  playerLight.position.set(cx,cy+0.4,cz);
+  /* a footfall on every tread it lands on */
+  const tread=Math.floor(p.c);
+  if(D.lastStep!==null&&tread!==D.lastStep) sfxStoneStep((0.9+Math.random()*0.15)*(1-0.55*seg(t,DE_FADE1,DE_END)));
+  D.lastStep=tread;
   ui.flash.style.transition="none"; ui.flash.style.background="#000";
-  ui.flash.style.opacity=seg(t,0,DE_FADE);
+  ui.flash.style.opacity=seg(t,DE_FADE0,DE_FADE1);
   if(t>=DE_END){
     CINE.active=false; CINE.kind=null; D=null;
     /* the stair was going somewhere after all */
@@ -1154,7 +1081,7 @@ function updateNestIntro(dt){
   cue("title",NI_TITLE,()=>{
     const el=document.getElementById("levelTitle");
     if(el){ el.querySelector("#ltMain").textContent="THE NEST";
-      el.querySelector("#ltSub").textContent="level 8, wrong side out";
+      el.querySelector("#ltSub").textContent="The Cave Below";
       el.classList.add("show"); }
   });
   cue("titleOff",NI_TITLE_OFF,()=>{

@@ -17,7 +17,7 @@ import { igniteClutch, hushCave } from "./cave.js";
 
 /* ---- level 0 is made while the start screen is up ----
    Its build is ~0.2s, but its first frame compiled ~20 shader programs one
-   after another (35–60ms each) and uploaded its textures: DESCEND froze for
+   after another (35–60ms each) and uploaded its textures: PLAY froze for
    about two seconds. So it is built behind the start screen and held OFF the
    scene (the menu draws over an empty one), and its programs and textures are
    warmed a root at a time between frames. The light count is part of every
@@ -136,7 +136,7 @@ export function enterTheNest(){
   STATE.y=0; STATE.vy=0; STATE.grounded=true; STATE.velX=0; STATE.velZ=0;
   STATE.yaw=CAVE.spawnYaw; STATE.pitch=0; STATE.stamina=1; STATE.crouch=false;
   const hint=$("keysHint");
-  if(hint) hint.textContent="WASD MOVE · SHIFT SPRINT · C CROUCH · E USE · F LAMP · R CRANK";
+  if(hint) hint.textContent="WASD MOVE · SHIFT SPRINT · C CROUCH · E INTERACT · F LANTERN · R WIND";
   startCaveAmbience();
   setLevelChrome(2);
   renderObjectives(true);
@@ -348,55 +348,45 @@ export function die(cause="caught"){
 }
 function showDeathCard(){
   const lvl=STATE.level, fell=STATE.deathCause==="fall";
-  const title = fell? "YOU FELL"
-    : lvl===2? "SHE FOUND YOU"
+  const title = fell? "YOU FELL" : "YOU WERE CAUGHT";
+  const quote = fell? "THE CHASM IS DEEPER THAN IT LOOKS"
+    : lvl===2? "THE MOTHER SPIDER FOUND YOU"
     : lvl===1? "THE LIBRARIAN FOUND YOU"
-    : "IT FOUND YOU";
-  const quote = fell
-    ? pick(["THE DARK UNDER THE BRIDGE GOES A LONG WAY DOWN","THERE WAS NO FLOOR TO FIND",
-            "YOU RAN AT A GAP AND THE GAP WON"])
-    : lvl===2
-    ? pick(["LIGHT FOR THE CHILDREN, DARK FOR THE MOTHER","THE SILK FELT YOUR HEARTBEAT",
-            "YOU CRANKED IT ONE NOTCH TOO MANY","THE DRIP HAD LEGS","SHE WON'T FORGIVE THIS"])
-    : lvl===1
-    ? pick(["IT HEARD THE DISK LEAVE THE SHELF","EIGHT LEGS ARE FASTER THAN TWO",
-            "THE TABLES WERE RIGHT THERE","NEXT TIME, CRAWL","SILENCE IS A CURRENCY — YOU OVERSPENT"])
-    : pick(["YOU SHOULDN'T HAVE LET IT SEE YOU","IT WAS FASTER THAN YOU THOUGHT",
-            "THE HUM SWALLOWED YOUR SCREAM","NEXT TIME, CROUCH SOONER"]);
+    : "THE ENTITY FOUND YOU";
   const body = fell
-    ? "The chasm does not keep what it takes. You wake back at the dead stair with everything you were carrying, and the climb down here to do again."
+    ? "You'll wake up at the bottom of the broken stairs with everything you were carrying."
     : lvl===2
-    ? "You wake at the foot of the stair that no longer goes anywhere, the lantern beside you as if placed there. What burned stays burned. The tending has resumed."
+    ? "You'll wake up at the bottom of the broken stairs. You keep the lantern, and any clutches you burned stay burned."
     : lvl===1
-    ? "You wake on the floor of the wrecked cab. Your pockets are, somehow, still full — and the terminal keeps what it was fed. The librarian has gone back to its shelves."
-    : "You wake at the place you first fell through — but the backrooms have already rearranged themselves, and whatever you'd gathered is gone. Start the floor again. Quieter, this time.";
+    ? "You'll wake up in the crashed elevator. You keep the disks you were carrying, and the terminal keeps the ones you already put in."
+    : "The level starts over with a new layout, and anything you collected is gone.";
   const tip = fell
-    ? "The rock bridge is the only way over the chasm, and it is narrower than it looks. Walk it — momentum from a sprint carries you off the lip."
+    ? "The rock bridge is narrower than it looks. Walk across it instead of sprinting."
     : lvl===2
-    ? pick(["The squeezes are the only ground she cannot follow you onto. Know where the nearest one is before you strike a light.",
-            "A lit lantern makes you invisible to the brood and obvious to their mother. Light it to move through them, kill it to move past her.",
-            "Wade the stream when you have to cross open cave: running water eats your footfalls. Scree does the opposite."])
+    ? pick(["She can't follow you into the crawlspaces. Know where the nearest one is before you light the lantern.",
+            "The lantern keeps the hatchlings away but draws their mother in. Light it to get past the small ones, then put it out.",
+            "Wade through the stream to cross open ground quietly. Loose rocks are loud."])
     : lvl===1
-    ? pick(["Standing perfectly still reads as safe — even upright, even turning to look. When you don't know where it is, stop.",
-            "Get under a reading table. It cannot reach you there, it will circle, and it will lose interest.",
-            "It goes up. If it vanishes, look at the ceiling — a drop is telegraphed, and you escape it only by moving out from under."])
-    : pick(["Break its line of sight first, then crouch and hold still. Searching is a timer; sprinting restarts it.",
-            "It stops and cries out before it commits to a chase. Spend that pause getting round a corner, not watching it.",
-            "Flickering lights are its position. Distant flicker is information; flicker on you is the last warning you get."]);
+    ? pick(["Standing completely still hides you from it, even standing up. If you don't know where it is, stop moving.",
+            "Crouch under a reading table. It can't reach you there and will give up after a while.",
+            "If it disappears, check the ceiling. When it starts to drop, move out from under it."])
+    : pick(["Break its line of sight, then crouch and stay still. Sprinting lets it hear you again.",
+            "It stops and screams before it chases you. Use that moment to get around a corner.",
+            "Flickering lights mean it's nearby. If the lights around you are flickering, it's close."]);
   const t0 = lvl===2? STATE.caveT0 : lvl===1? STATE.libT0 : 0;
-  const kept = lvl===2? `LANTERN + ${STATE.clutchesLit}/4 BURNED`
-             : lvl===1? `${STATE.discsDelivered}/${STATE.discTotal||"?"} RETURNED`
-             : "NOTHING — THE FLOOR RESETS";
+  const kept = lvl===2? `LANTERN, ${STATE.clutchesLit}/4 BURNED`
+             : lvl===1? `${STATE.discsDelivered}/${STATE.discTotal||"?"} DISKS IN`
+             : "NOTHING";
   $("deathTitle").textContent=title;
   $("deathQuote").textContent=quote;
   const b=$("deathBody"); if(b) b.textContent=body;
-  const tp=$("deathTip"); if(tp) tp.innerHTML=`<b>TRY THIS</b>${tip}`;
+  const tp=$("deathTip"); if(tp) tp.innerHTML=`<b>TIP</b>${tip}`;
   const st=$("deathStats");
   if(st) st.innerHTML=
-    `<div class="statrow"><span>FLOOR</span><span>${(FLOORS[lvl]||FLOORS[0]).floor}</span></div>`+
-    `<div class="statrow"><span>TIME ON THIS FLOOR</span><span>${fmtT(Math.max(0,STATE.time-t0))}</span></div>`+
+    `<div class="statrow"><span>LEVEL</span><span>${(FLOORS[lvl]||FLOORS[0]).floor}</span></div>`+
+    `<div class="statrow"><span>TIME ON THIS LEVEL</span><span>${fmtT(Math.max(0,STATE.time-t0))}</span></div>`+
     `<div class="statrow"><span>YOU KEEP</span><span>${kept}</span></div>`+
-    `<div class="statrow"><span>TIMES CAUGHT</span><span>${STATE.deaths}</span></div>`;
+    `<div class="statrow"><span>DEATHS</span><span>${STATE.deaths}</span></div>`;
   setPaused(true,true);            // keep audio so the death sound plays out
   if(document.pointerLockElement) document.exitPointerLock();
   ui.death.classList.remove("hide");
@@ -422,42 +412,41 @@ export function win(){
   ui.win.classList.toggle("finale",finale);
   if(wB) wB.classList.toggle("hide",!finale);
   if(finale){
-    if(wB) wB.textContent="RUN COMPLETE · ALL THREE FLOORS";
-    if(wT) wT.textContent="OUT";
-    if(wS) wS.textContent="YOU BURNED HER BROOD AND CLIMBED INTO THE PALE.";
+    if(wB) wB.textContent="GAME COMPLETE";
+    if(wT) wT.textContent="YOU ESCAPED";
+    if(wS) wS.textContent="YOU BURNED THE NEST AND CLIMBED OUT";
     $("winStats").innerHTML=
       `<div class="statrow"><span>LEVEL 0 · THE BACKROOMS</span><span>${fmt(STATE.libT0)}</span></div>`+
       `<div class="statrow"><span>THE END · THE LIBRARY</span><span>${fmt(Math.max(0,STATE.caveT0-STATE.libT0))}</span></div>`+
       `<div class="statrow"><span>THE NEST · THE CAVE</span><span>${fmt(Math.max(0,STATE.time-STATE.caveT0))}</span></div>`+
       `<div class="statrow"><span>TOTAL TIME</span><span>${fmt(STATE.time)}</span></div>`+
       `<div class="statrow"><span>CLUTCHES BURNED</span><span>${STATE.clutchesLit}/4</span></div>`+
-      `<div class="statrow"><span>DISKS RETURNED</span><span>${STATE.discsDelivered}/${STATE.discTotal||0}</span></div>`+
-      `<div class="statrow"><span>TIMES CAUGHT</span><span>${STATE.deaths}</span></div>`;
-    if(wN) wN.innerHTML="You have reached the end of NOCLIP <b>v3.1.0</b> — three floors, "+
-      "three keepers, and one chimney out. Nothing has been built above the fissure yet: "+
-      "whatever the pale is, it is the next version's problem.<br>Thank you for playing.";
-    if(wA) wA.textContent="FALL THROUGH AGAIN";
+      `<div class="statrow"><span>DISKS DELIVERED</span><span>${STATE.discsDelivered}/${STATE.discTotal||0}</span></div>`+
+      `<div class="statrow"><span>DEATHS</span><span>${STATE.deaths}</span></div>`;
+    if(wN) wN.innerHTML="That's the end of NOCLIP <b>v3.3.0</b> — all three levels. "+
+      "There's nothing past the crack yet; more levels are coming in future versions.<br>Thanks for playing.";
+    if(wA) wA.textContent="PLAY AGAIN";
   } else if(STATE.level===1){
-    if(wT) wT.textContent="THE END";
-    if(wS) wS.textContent="IT WARNED YOU. YOU WENT DOWN ANYWAY.";
+    if(wT) wT.textContent="LEVEL COMPLETE";
+    if(wS) wS.textContent="YOU WENT DOWN THE STAIRS";
     $("winStats").innerHTML=
       `<div class="statrow"><span>TIME IN LEVEL 0</span><span>${fmt(STATE.libT0)}</span></div>`+
       `<div class="statrow"><span>TIME IN THE END</span><span>${fmt(STATE.time-STATE.libT0)}</span></div>`+
-      `<div class="statrow"><span>FLOPPY DISKS RETURNED</span><span>${STATE.discsDelivered}/${STATE.discTotal}</span></div>`+
-      `<div class="statrow"><span>TIMES CAUGHT</span><span>${STATE.deaths}</span></div>`;
-    if(wN) wN.textContent="The stair below the library goes somewhere. This sheet means it didn't take you.";
-    if(wA) wA.textContent="DESCEND AGAIN";
+      `<div class="statrow"><span>DISKS DELIVERED</span><span>${STATE.discsDelivered}/${STATE.discTotal}</span></div>`+
+      `<div class="statrow"><span>DEATHS</span><span>${STATE.deaths}</span></div>`;
+    if(wN) wN.textContent="";
+    if(wA) wA.textContent="PLAY AGAIN";
   } else {
     /* level 0's ending now leads DOWN, not out — this stays as a fallback */
-    if(wT) wT.textContent="GOING DOWN";
-    if(wS) wS.textContent="THE DOORS SAVED YOU. THE BRAKES DID NOT.";
+    if(wT) wT.textContent="LEVEL COMPLETE";
+    if(wS) wS.textContent="YOU REACHED THE ELEVATOR";
     $("winStats").innerHTML=
       `<div class="statrow"><span>TIME IN LEVEL 0</span><span>${fmt(STATE.time)}</span></div>`+
       `<div class="statrow"><span>ALMOND WATER FOUND</span><span>${STATE.bottles}/3</span></div>`+
-      `<div class="statrow"><span>TIMES CAUGHT</span><span>${STATE.deaths}</span></div>`+
-      `<div class="statrow"><span>OBJECTIVES CLEARED</span><span>4/4</span></div>`;
+      `<div class="statrow"><span>DEATHS</span><span>${STATE.deaths}</span></div>`+
+      `<div class="statrow"><span>OBJECTIVES</span><span>4/4</span></div>`;
     if(wN) wN.textContent="";
-    if(wA) wA.textContent="DESCEND AGAIN";
+    if(wA) wA.textContent="PLAY AGAIN";
   }
   ui.win.classList.remove("hide");
 }

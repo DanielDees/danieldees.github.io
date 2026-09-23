@@ -1659,7 +1659,7 @@ export function placeProps(){
     const bp=new THREE.Vector3(p.x+dir.dx*(CELL/2-0.15),1.4,p.z+dir.dy*(CELL/2-0.15));
     const br=makeBreaker(bp,dir.fy);
     scene.add(br);
-    interactables.push({kind:"breaker",mesh:br,label:"INSERT FUSE & RESTORE POWER",taken:false});
+    interactables.push({kind:"breaker",mesh:br,label:"INSERT FUSE",taken:false});
   }
   {
     let best=null,bestD=-1;

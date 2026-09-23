@@ -1,6 +1,6 @@
 # NOCLIP — Escape the Backrooms
 
-**Version: v3.1.0**
+**Version: v3.3.0**
 
 A first-person browser survival horror game, playable right now at
 **[danieldees.github.io](https://danieldees.github.io)** — no install, no login,
@@ -81,16 +81,111 @@ The chimney is real: climb it yourself, tread by tread, into the pale.
 | `C` | crouch / hide (silent in THE END; the only way past the spider). Hold by default, or switch to a toggle in the sound/options sheet |
 | `E` | interact (hold it to channel THE NEST's clutch burns) |
 | `F` / `R` | THE NEST only: lantern on/off / hold to crank the charge back up (loudly) |
-| `O` / `ESC` | options / pause — the **field notes** (how to play) live on the pause sheet |
+| `O` / `ESC` | options / pause — **How to Play** is on the pause menu |
 
 Headphones recommended — audio is positional, and both monsters are far easier to
 track by ear.
 
-The in-game **field notes** are a tabbed guide: CONTROLS, SURVIVAL (the five rules
-every floor obeys), and one page per floor. The pages for floors you have not
-reached yet stay sealed, so the guide can never spoil a level transition.
+The in-game **How to Play** guide is tabbed: CONTROLS, TIPS (the five rules every
+level follows), and one page per level. Pages for levels you haven't reached yet
+stay locked, so the guide never spoils what's coming.
 
 ## Changelog
+
+### v3.3.0 (2026-09-22)
+A graphics and presentation pass over THE END, plus a rewrite of the game's
+interface text. No AI, generation or objective changes.
+- **The library draws in a tenth of the calls.** The room was ~2,400 separate
+  meshes — about a thousand of them books at two draw calls each — so the library
+  issued 1,300–3,300 draw calls a frame. Every static opaque mesh is now regrouped
+  by material and merged after the build: the same room, with a lot more furniture,
+  draws in ~240–420 calls.
+- **The walls are architecture.** Plaster pilasters run up all four walls on an
+  8m pitch, with an oak wainscot, a picture rail and an entablature far up in the
+  dark. Each pilaster carries an enamel section plate. The pictures hang from the
+  rail on wires, one arrangement per bay at a single height — an institutional hang,
+  deliberately repetitive — and it goes wrong in small ways: bays where only the
+  wires are left and the paint is paler where a frame used to be, cork noticeboards
+  with a few notices still pinned, one very large canvas per wall hung too high,
+  clocks that all stopped at 3:17, and locked panelled doors (one under a dim red
+  EXIT sign) that rattle when you try them.
+- **New artwork.** Most frames now hold oil paintings of empty places — a reading
+  room with every lamp lit and no one at the tables, a corridor of closed doors, a
+  drained pool, a field with one lamp post, a stairwell going down into blue, a
+  yellow-papered room with an open doorway, an empty chair — finished with brush
+  texture, canvas weave, amber varnish and craquelure, at up to 512×640. Oils hang
+  unglazed in deeper mouldings; paper hangs matted behind glass. Fixed: mat bevels
+  that stuck out of the frame as diagonal bars.
+- **Books.** 28 designs (was 16) in four bindings: gilt cloth, leather, printed
+  dust jackets, and paperbacks — flush-trimmed covers, a flat creased spine,
+  sun-faded. Almost every spine carries a library call-number label. Shelves stay thin
+  so the floppy disks are easy to pick out: some aisles are nearly stripped, a fifth
+  hold proper rows.
+- **The floor.** New: card catalogues with drawers pulled out (and one spilled on
+  the floor), green banker's lamps and readers' leavings on the tables, a wooden book
+  truck with sloped shelves, brass stanchions with a velvet rope (sometimes let down),
+  wet-floor signs, loose paper, and books fallen off the shelves. Ladders are proper
+  rolling library ladders with brass hooks; some chairs are knocked over, and the
+  wrapped ones are now in clear stretch film wound round the chair's own shape — tight
+  over the seat, drawn from the top of the back to the seat's front edge, with the
+  winding visible and the film going silvery where it turns away from you.
+- **The machines.** The CRTs have a single rounded bezel moulding, a swivel foot,
+  real keycaps printed with their legends, a mouse on its cord, and dead glass that
+  still reflects. Floppy disks are a moulded shell with the chamfered corner and a
+  shutter that wraps the edge.
+- **The circulation desk** gets a jointed lamp, a service bell, a date stamp, stacks
+  of unreturned books, a card file, a POSITION CLOSED sign and the librarian's chair.
+- **The way down, rebuilt.** The shaft shows the floor in section (carpet, underlay,
+  screed, the slab with its rebar cut), then clawed earth with roots hanging from it,
+  then coursed masonry. The treads are wedge-shaped stone with nosings, worn hollow in
+  the middle and let into the wall — the same treads the cave uses — with an iron
+  handrail spiralling down the well, dust drifting in the light, the spider's lines
+  hanging in the shaft, and a blue haze that deepens with depth. The rim is torn
+  carpet, spoil heaps and broken slab. The rail is solid: you can't fall into the well.
+- **Walking down.** The descent no longer snaps into a straight slide into black. The
+  camera takes over from exactly where your eyes are, at the pace you were walking,
+  and carries on down the spiral tread by tread — head dipping on each step, a footfall
+  on every tread — while the dark closes in.
+- **The dig.** The spider scoops with its front legs in alternating pairs and flicks
+  the spoil out behind it; clods and carpet shreds land and stay on the carpet around
+  the hole. The dust is a new particle system: one draw call, lit from above, fading
+  into the floor instead of cutting through it, and turning from carpet grey to earth
+  as the dig gets through the floor.
+- **Plainer interface text.** The title screen, How to Play (was "Field Notes"),
+  Options, pause, death and win screens, objectives, prompts and level titles are
+  rewritten in plain language, and Options no longer carries a paragraph under every
+  control. The title screen shows v3.3.0.
+
+### v3.2.0 (2026-09-22)
+- **The entity is the wire Lifeform.** Level 0's cylinder-and-sphere figure is
+  replaced by the classic Lifeform: 3.3m of black wire in the shape of a man, arms to
+  the floor, a knot for a head — one skinned mesh on a 21-bone skeleton whose ~120
+  strands bend through the joints and writhe in the shader. One pose function drives
+  the AI, the elevator sprint and the kill, which leaves it bent over you while the
+  death camera looks up at it. It raises an arm to knock on walls.
+- **The spider is rebuilt as an animal.** Every leg is one swept tube through all
+  seven segments, with the knees standing above the body and lengths that differ by
+  pair. A sculpted carapace with seated eyes, real hair (setae, spines, sensory
+  hairs), velvet fur on the abdomen, fangs that open when it commits, jointed palps,
+  and eyeshine only when it faces you.
+- **Level 0's surfaces at full resolution.** Wallpaper at 2048² (1024² on low
+  graphics) with a faint floral print, paper grain and soft dirt; carpet with a matte
+  pile layer used as tone and bump; ceiling tiles with a mineral-fibre face that
+  differs tile to tile; ceiling light spill that flickers with its lamp; baseboard
+  mold that grows as specks and solid colonies; sharper leak stains.
+- **The elevator is real hardware.** Profiled door casings, a plated call station
+  and lantern, a glowing EXIT sign, per-leaf wear, brushed steel that reflects the
+  hall, embossed cab panels and a studded rubber floor.
+- **The breaker is a distribution board, and restoring power is done by hand.** A
+  wall cabinet fed by conduit, a voltmeter and pilot lamps, a door with the circuit
+  directory inside, a panel of breakers (some tripped), and a main switch with a
+  lockout tag. The cutscene opens the latch and door, works the fuse into its holder
+  and throws the switch with an arc and sparks. The whole floor browns out, then the
+  lights come back on in a ring rolling out from the board.
+- **Performance.** Level 0 is built and its shaders compiled behind the start screen,
+  so starting a game is no longer a ~2s freeze; respawns are about twice as fast; the
+  elevator ride no longer freezes on the call button; the mold and leak decals are
+  packed and merged; lights past their range are skipped in the shader.
 
 ### v3.1.0 (2026-07-27)
 An interface and presentation pass. No level geometry, AI or generation changed;
