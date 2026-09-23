@@ -287,6 +287,9 @@ function surfCompile(sh){
     .replace("#include <specularmap_fragment>","float specularStrength=mix(uSQ.x,1.0,cWet);")
     .replace("#include <normal_fragment_maps>",`{
     vec3 g=normalize(vCN)*faceDirection;
+#ifdef FLIP_SIDED
+    g=-g;                                  // a bore, seen from inside
+#endif
 #ifdef CAVE_PLANAR
     vec3 tY=tnrm(uSNY,vCW.xz/uSP.x,vCW.xz/uSP.y);
     vec3 nw=normalize(vec3(tY.x+g.x, abs(tY.z)*g.y, tY.y+g.z));
@@ -357,6 +360,7 @@ export function caveSurfaces(){
     dry:0.10, wetDark:0.22, fineK:0.35, aoK:0.8, emissive:0x010101};
   SURF={rock, floor, drip,
     rockMat:surfMat(rock,rockOpts),
+    rockInMat:surfMat(rock,Object.assign({},rockOpts,{side:THREE.BackSide})),
     /* the chasm's walls: the same rock, sinking into the cold as it falls */
     pitMat:surfMat(rock,Object.assign({},rockOpts,{fade:[-1.5,-15.0,0.92], deep:0x0a1d24})),
     floorMat:surfMat(floor,{planar:true, tile:4.0, ftile:0.6,

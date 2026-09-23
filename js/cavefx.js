@@ -249,3 +249,24 @@ export function updateMist(dt,camera){
   while(MI.t<=0){ MI.t+=0.22; mistPuff(); }
   MI.sys.update(dt,camera);
 }
+
+/* ---------------- dust in the chimney's light ----------------
+   The way out is a shaft of pale light, and light like that is only visible
+   because of what hangs in it: slow specks turning in the draught, rising
+   and falling, brightest where the light is. */
+const SM={sys:null, x:0, z:0, r:1, top:10, t:0};
+export function initShaftMotes(x,z,r,top){
+  SM.sys=makeMoteSystem(150); SM.x=x; SM.z=z; SM.r=r; SM.top=top; SM.t=0;
+  scene.add(SM.sys.mesh);
+}
+export function updateShaftMotes(dt,camera){
+  if(!SM.sys) return;
+  SM.t-=dt;
+  while(SM.t<=0){ SM.t+=0.06;
+    const a=Math.random()*Math.PI*2, rr=Math.sqrt(Math.random())*SM.r, y=rand(0.5,SM.top);
+    SM.sys.spawn(SM.x+Math.cos(a)*rr,y,SM.z+Math.sin(a)*rr,{life:rand(5,9), size:rand(0.012,0.024),
+      alpha:rand(0.35,0.75)*(0.4+0.6*y/SM.top), tint:0xd4e6ec, vy:rand(-0.05,0.08), wob:rand(0.05,0.14),
+      drag:1, fin:0.3, fout:0.4, tw:0.4});
+  }
+  SM.sys.update(dt,camera,performance.now()*0.001);
+}

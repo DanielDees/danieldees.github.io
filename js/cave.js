@@ -18,7 +18,7 @@ import { CELL } from "./map.js";
 import { STATE } from "./state.js";
 import { scene, camera, renderer, lights, makeLightRecord, markShared,
          mergeStatic, freezeStaticScene } from "./scene.js";
-import { makeCanvas, texCaveRock,
+import { makeCanvas, texCaveRock, texShaftMasonry, texShaftMasonryBump,
          makeWebSheetTexture, makeCobwebTexture, makeStrandTexture, makeFunnelTexture,
          makeFungusSkin, FUNGUS_STRIPS, scaleBoxUV,
          texCloth, texBone, texJournalPages } from "./textures.js";
@@ -28,7 +28,7 @@ import { die } from "./lifecycle.js";
 import { caveSurfaces } from "./cavemats.js";
 import { scatterStones, stoneGeo } from "./caverocks.js";
 import { initDrips, releaseDrip, updateDrips, initSpores, updateSpores, initRockDust, puffRockDust, updateRockDust,
-         initMist, updateMist } from "./cavefx.js";
+         initMist, updateMist, initShaftMotes, updateShaftMotes } from "./cavefx.js";
 import { makeClutch, updateClutch, initClutchFire, updateClutchFire, cocoonMaterial, cocoonGeo } from "./clutch.js";
 import { makeLanternModel, initViewmodel } from "./viewmodel.js";
 import { renderObjectives, toast } from "./ui.js";
@@ -596,7 +596,7 @@ function genCave(){
 const WALL_ROWS=10;
 /* the stone (walls, vault, floor, dripstone, the chasm) is baked and mapped in
    world space — see cavemats.js; built on the first descent */
-let rockMat, floorMat, wetMat, curtainMat, pitMat;
+let rockMat, rockInMat, floorMat, wetMat, curtainMat, pitMat;
 const voidMat=new THREE.MeshPhongMaterial({color:0x070605, specular:0x000000, shininess:1});
 /* a soft radial glow, shared by every halo in the level */
 const HALO_TEX=makeCanvas(64,64,(g,w,h)=>{
@@ -1685,7 +1685,7 @@ function makeCorpse(){
 export function buildCave(){
   CAVE.obstacles=[]; CAVE.fires=[]; CAVE.lastBurn=null; CAVE.regionDim=[1,1,1,1];
   CAVE.shakeT=0; CAVE.dripT=2.5;
-  ({rockMat,floorMat,dripMat:wetMat,curtainMat,pitMat}=caveSurfaces());
+  ({rockMat,rockInMat,floorMat,dripMat:wetMat,curtainMat,pitMat}=caveSurfaces());
   const {entrance,central,broods,spawnC}=genCave();
   /* the arrival bore's mouth: where the library's shaft breaks through the
      entrance vault. Fixed before any mesh is laid so the ceiling pass can
@@ -2727,46 +2727,60 @@ export function buildCave(){
     const R=2.0, RISE=4.4, STEPS=16, N=58;
     const stair={a0:Math.PI/2, dir:1, rc:R-0.58, rise:RISE, steps:STEPS, n:N};
     const g=new THREE.Group(); g.visible=false;
-    const boreTex=texCaveRock;
-    const boreMat=new THREE.MeshPhongMaterial({map:boreTex, specular:0x10141a, shininess:6,
-      emissive:0x060a0c, side:THREE.BackSide});
     const TOP=18;
-    const bore=new THREE.Mesh(new THREE.CylinderGeometry(R+0.05,R+0.3,TOP+2,32,1,true),boreMat);
-    bore.position.set(pc.x,TOP/2-1,pc.z); g.add(bore);
-    /* treads: the mirror of the library's — these go UP */
+    /* the bore is the cave's own rock, seen from inside and knocked out of
+       round — a smooth grey pipe with a picture of rock on it was the last
+       thing the level showed you */
     {
-      /* stays cooler than the cave — this is the library's stone, and the
-         contrast is the point — but nowhere near the old 0xc8d2d8, which
-         lit up as painted concrete. The UVs are world-scaled too: raw box
-         UVs crammed a whole 4 m tile onto a 1.25 m tread, which averaged
-         out to a flat grey slab with no grain at all. */
-      const stepMat=new THREE.MeshPhongMaterial({map:texCaveRock, bumpMap:texCaveRock,
-        bumpScale:0.06, color:0x4e565e, emissive:0x03060a, specular:0x0e1218, shininess:6});
-      const stepGeo=scaleBoxUV(new THREE.BoxGeometry(1.25,0.24,1.0),1.25,0.24,1.0,2);
-      const steps=[];
+      const geo=new THREE.CylinderGeometry(R+0.05,R+0.3,TOP+2,44,18,true), P=geo.attributes.position;
+      for(let i=0;i<P.count;i++){
+        const x=P.getX(i), y=P.getY(i), z=P.getZ(i), a=Math.atan2(z,x);
+        const k=1+0.07*Math.sin(a*3+y*0.7)+0.05*Math.sin(a*5-y*1.3+1.1)+0.03*Math.sin(a*9+y*2.1);
+        P.setXYZ(i,x*k,y,z*k);
+      }
+      geo.computeVertexNormals();
+      const bore=new THREE.Mesh(geo,rockInMat);
+      bore.position.set(pc.x,TOP/2-1,pc.z); g.add(bore);
+    }
+    /* the treads are slabs of that rock set into the wall on the spiral —
+       the ledges a chimney like this is climbed by. Their tops sit on the
+       heights caveGroundY walks (0.02 + i·rise/steps). */
+    {
+      const S=rubbleShapes(), steps=[];
       for(let i=0;i<N;i++){
-        const th=stair.a0+i*(Math.PI*2/STEPS);
-        const m=new THREE.Mesh(stepGeo,stepMat);
-        m.position.set(pc.x+Math.cos(th)*stair.rc, 0.02+i*(RISE/STEPS)-0.12,
-                       pc.z+Math.sin(th)*stair.rc);
-        m.rotation.y=-th;
+        const th=stair.a0+i*(Math.PI*2/STEPS), ty=0.02+i*(RISE/STEPS);
+        const m=new THREE.Mesh(S[i%S.length]);
+        m.scale.set(0.72,0.19,0.44);
+        m.position.set(pc.x+Math.cos(th)*(stair.rc+0.1), ty-0.13, pc.z+Math.sin(th)*(stair.rc+0.1));
+        m.rotation.set(rand(-0.05,0.05),-th+rand(-0.08,0.08),rand(-0.04,0.04));
         steps.push(m);
       }
-      g.add(mergeStatic(steps,stepMat));
-      stepGeo.dispose();
+      g.add(mergeStatic(steps,rockMat));
     }
-    /* pale daylight-that-can't-be bleeding down the bore */
+    /* pale daylight-that-can't-be, pouring down the bore: a glow at the top,
+       a shaft of it, and dust turning in it (cavefx.js) */
     const sky=new THREE.Mesh(new THREE.CircleGeometry(R+0.1,28),
       new THREE.MeshBasicMaterial({color:0x9fb6be}));
     sky.rotation.x=Math.PI/2; sky.position.set(pc.x,TOP+0.9,pc.z); g.add(sky);
     const hazes=[];
-    [[5,0.05],[9,0.10],[12,0.2],[15,0.36],[17,0.6]].forEach(([y,op])=>{
+    [[15,0.22],[17,0.5]].forEach(([y,op])=>{
       const m=new THREE.MeshBasicMaterial({color:0xb9c9ce, transparent:true, opacity:op,
         depthWrite:false, side:THREE.DoubleSide});
       const d=new THREE.Mesh(new THREE.CircleGeometry(R+0.02,28),m);
       d.rotation.x=-Math.PI/2; d.position.set(pc.x,y,pc.z);
       hazes.push({mat:m,baseOp:op}); g.add(d);
     });
+    {
+      const grad=makeCanvas(4,256,(c,w,h)=>{ const gr=c.createLinearGradient(0,0,0,h);
+        gr.addColorStop(0,"rgba(255,255,255,1)"); gr.addColorStop(0.35,"rgba(255,255,255,0.45)");
+        gr.addColorStop(1,"rgba(255,255,255,0)"); c.fillStyle=gr; c.fillRect(0,0,w,h); });
+      const m=new THREE.MeshBasicMaterial({map:grad, color:0xa9c3cc, transparent:true, opacity:0.16,
+        blending:THREE.AdditiveBlending, depthWrite:false, side:THREE.DoubleSide});
+      const shaft=new THREE.Mesh(new THREE.CylinderGeometry(R*0.55,R*0.85,TOP+0.5,24,1,true),m);
+      shaft.position.set(pc.x,TOP/2+0.6,pc.z); g.add(shaft);
+      hazes.push({mat:m,baseOp:0.16});
+    }
+    initShaftMotes(pc.x,pc.z,R*0.8,TOP);
     scene.add(g);
     /* its lights live in the scene from build, dark — the reveal must never
        change the light count (the v2.6 shader-recompile lesson) */
@@ -2797,8 +2811,8 @@ export function buildCave(){
        Inner lip tucked inside the bore's foot, outer skirt carried up past
        the surrounding ceiling — no seam can ever show from below. */
     {
-      const SEG=26, acc=new QuadAcc();
-      const rows=[[2.55,0,0.10],[3.6,0.55,0.22],[5.05,1,0.12]]; // [radius, lift, drip jitter]
+      const SEG=48, acc=new QuadAcc();
+      const rows=[[2.55,0,0.05],[3.6,0.55,0.10],[5.05,1,0.08]]; // [radius, lift, drip jitter]
       const cols=[];
       for(let s=0;s<=SEG;s++){
         const th=(s%SEG)/SEG*Math.PI*2;          // s=SEG re-samples s=0: the seam closes
@@ -2816,17 +2830,21 @@ export function buildCave(){
         acc.tri(a,b,c,[[u0,r],[u1,r],[u1,r+1]]);
         acc.tri(a,c,d,[[u0,r],[u1,r+1],[u0,r+1]]);
       }
-      scene.add(acc.mesh(curtainMat));           // DoubleSide calcite, like the drapery
+      const collar=acc.mesh(curtainMat); smoothShade(collar.geometry,0.3);
+      scene.add(collar);                         // DoubleSide calcite, like the drapery
     }
     /* the bore: earth-stained stone, slightly belled at the break like the
        library's, rising into a stacked haze that goes lightless — the dark
        up there is the library's, not the cave's */
     {
-      const bt=texCaveRock.clone(); bt.needsUpdate=true; bt.repeat.set(5,3);
-      const boreMat=new THREE.MeshPhongMaterial({map:bt, color:0xa6988a,
-        emissive:0x04060a, specular:0x0c0e12, shininess:8, side:THREE.BackSide});
-      const BLEN=14.5;
-      const bore=new THREE.Mesh(new THREE.CylinderGeometry(2.75,2.95,BLEN,32,1,true),boreMat);
+      /* it is the library's shaft, so it wears the library shaft's coursed
+         masonry — one course a tread, as up there — not a picture of rock */
+      const BLEN=14.5, COURSE=STAIR.RISE/STAIR.STEPS;
+      const bt=texShaftMasonry.clone(), bb=texShaftMasonryBump.clone();
+      for(const t of[bt,bb]){ t.needsUpdate=true; t.repeat.set(6,BLEN/(8*COURSE)); t.anisotropy=8; }
+      const boreMat=new THREE.MeshPhongMaterial({map:bt, bumpMap:bb, bumpScale:0.045, color:0x7c7a76,
+        emissive:0x04060a, specular:0x14181c, shininess:12, side:THREE.BackSide});
+      const bore=new THREE.Mesh(new THREE.CylinderGeometry(2.75,2.95,BLEN,48,1,true),boreMat);
       bore.position.set(sx, yL-0.3+BLEN/2, sz); scene.add(bore);
       const cap=new THREE.Mesh(new THREE.CircleGeometry(2.9,32),
         new THREE.MeshBasicMaterial({color:0x020508}));
@@ -3207,6 +3225,7 @@ export function updateCave(dt){
   /* the opened fissure breathes cold light */
   const fis=CAVE.fissure;
   if(fis&&fis.open){
+    updateShaftMotes(dt,camera);
     fis.revealT=Math.min(6,(fis.revealT||0)+dt);
     const k=clamp(fis.revealT/4,0,1);
     for(const rec of fis.lights) rec.l.intensity=rec.I*k*(0.92+0.08*Math.sin(tN*0.6));
