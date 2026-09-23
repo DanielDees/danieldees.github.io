@@ -18,13 +18,15 @@ import { CELL } from "./map.js";
 import { STATE } from "./state.js";
 import { scene, camera, renderer, lights, makeLightRecord, markShared,
          mergeStatic, freezeStaticScene } from "./scene.js";
-import { makeCanvas, texCaveRock, texCaveFloor, texDripstone,
+import { makeCanvas, texCaveRock,
          makeWebSheetTexture, makeCobwebTexture, makeStrandTexture, makeFunnelTexture,
          makeFungusSkin, scaleBoxUV, texEggSac, makeFlameTexture, texCocoon,
          texCloth, texBone, texJournalPages } from "./textures.js";
 import { addInteractable } from "./props.js";
 import { stairTreadGeo, stairRailMeshes, STAIR } from "./library.js";
 import { die } from "./lifecycle.js";
+import { caveSurfaces } from "./cavemats.js";
+import { scatterStones } from "./caverocks.js";
 import { renderObjectives, toast } from "./ui.js";
 import { AU, sfxRockfall, sfxIgnite, startClutchFire, panTo } from "./audio.js";
 
@@ -588,24 +590,10 @@ function genCave(){
 /* every rock wall face is subdivided into this many rows, regardless of
    how tall it is — see the wall builder for why it has to be global */
 const WALL_ROWS=10;
-const rockMat=new THREE.MeshPhongMaterial({map:texCaveRock, bumpMap:texCaveRock, bumpScale:0.14,
-  specular:0x1a1a16, shininess:10, emissive:0x010101});
-const floorMat=new THREE.MeshPhongMaterial({map:texCaveFloor, bumpMap:texCaveFloor, bumpScale:0.07,
-  specular:0x0a0a08, shininess:4});
-/* Dripstone is pale calcite, not the parent rock; the streaked skin is its
-   own bump map so runnels read as ridges in the beam.
-   Damp calcite, NOT wet chrome. specular 0x3e4a52 at shininess 46 put a
-   single tight highlight down each lathe, and against the lantern's orange
-   that read as polished brass — the formations looked die-cast. Real
-   dripstone is a chalky body with a broad, weak sheen, so the highlight is
-   now wide and dim and the base colour is warmer and darker than the
-   texture suggests (the map itself is already pale). */
-const wetMat=new THREE.MeshPhongMaterial({map:texDripstone, bumpMap:texDripstone, bumpScale:0.10,
-  color:0x6d6d67, specular:0x14171a, shininess:9, emissive:0x020303});
-/* flowstone curtains hang free of the wall — both faces show */
-const curtainMat=new THREE.MeshPhongMaterial({map:texDripstone, bumpMap:texDripstone, bumpScale:0.105,
-  color:0x62625d, specular:0x101315, shininess:7, emissive:0x020303, side:THREE.DoubleSide});
-const pitMat=new THREE.MeshPhongMaterial({color:0x070605, specular:0x000000, shininess:1});
+/* the stone (walls, vault, floor, dripstone, the chasm) is baked and mapped in
+   world space — see cavemats.js; built on the first descent */
+let rockMat, floorMat, wetMat, curtainMat, pitMat;
+const voidMat=new THREE.MeshPhongMaterial({color:0x070605, specular:0x000000, shininess:1});
 /* a soft radial glow, shared by every halo in the level */
 const HALO_TEX=makeCanvas(64,64,(g,w,h)=>{
   const gr=g.createRadialGradient(w/2,h/2,2,w/2,h/2,w/2);
@@ -732,7 +720,7 @@ const texWaterSurf=makeCanvas(256,256,(g,w,h)=>{
     g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*2,1+Math.random()*2);
   }
 });
-markShared(HALO_TEX,texCaustic,texWaterSurf,wetMat,curtainMat,texDripstone);
+markShared(HALO_TEX,texCaustic,texWaterSurf);
 const silkFloorMat=new THREE.MeshPhongMaterial({color:0xb8bcc0, specular:0x222222, shininess:8,
   transparent:true, opacity:0.34, depthWrite:false});
 const cocoonMat=new THREE.MeshPhongMaterial({map:texCocoon, bumpMap:texCocoon, bumpScale:0.02,
@@ -757,8 +745,8 @@ const bootMat=new THREE.MeshPhongMaterial({map:texCloth, color:0x2a2724,
 const beltMat=new THREE.MeshPhongMaterial({map:texCloth, color:0x33291f,
   specular:0x241d14, shininess:18});
 const brassMat=new THREE.MeshPhongMaterial({color:0x6e5a2e, specular:0x8a7340, shininess:55});
-markShared(rockMat,floorMat,pitMat,silkFloorMat,cocoonMat,boneMat,clothMat,brassMat,
-           texCaveRock,texCaveFloor,texCocoon,TEX_MOUND,moundMat,texCloth,texBone,texJournalPages,
+markShared(voidMat,texCaveRock,silkFloorMat,cocoonMat,boneMat,clothMat,brassMat,
+           texCocoon,TEX_MOUND,moundMat,texCloth,texBone,texJournalPages,
            coatMat,bootMat,beltMat);
 /* silk is LIT (Phong, not Basic): it glistens where the lantern rakes it
    and takes the fungus tint near the broods, instead of glowing flat white
@@ -1214,6 +1202,30 @@ function strandMesh(ax,ay,az,bx,by,bz,wdt){
   return m;
 }
 
+/* The rock's relief lives in its maps, and a flat normal per facet only drew
+   the tessellation on top of it: a wall read as panels. Every vertex here is
+   a function of world position alone, so the corners two facets share are
+   found by position and their normals averaged; facets meeting at more than
+   the crease angle (the bridge's lips) keep their edge. */
+function smoothShade(geo,creaseCos=0.35){
+  const P=geo.attributes.position, N=geo.attributes.normal, n=P.count;
+  const groups=new Map();
+  for(let i=0;i<n;i++){
+    const k=Math.round(P.getX(i)*500)+","+Math.round(P.getY(i)*500)+","+Math.round(P.getZ(i)*500);
+    let a=groups.get(k); if(!a) groups.set(k,a=[]); a.push(i);
+  }
+  const out=new Float32Array(n*3), src=N.array;
+  for(const ids of groups.values()) for(const i of ids){
+    let x=0,y=0,z=0;
+    for(const j of ids){
+      if(src[i*3]*src[j*3]+src[i*3+1]*src[j*3+1]+src[i*3+2]*src[j*3+2]<creaseCos) continue;
+      x+=src[j*3]; y+=src[j*3+1]; z+=src[j*3+2];
+    }
+    const l=Math.hypot(x,y,z)||1;
+    out[i*3]=x/l; out[i*3+1]=y/l; out[i*3+2]=z/l;
+  }
+  geo.setAttribute("normal",new THREE.BufferAttribute(out,3));
+}
 /* one quad accumulator (positions/uv/normals) merged into a single mesh */
 class QuadAcc{
   constructor(){this.pos=[];this.nor=[];this.uv=[];this.col=[];this.idx=[];this.vc=0;}
@@ -1377,10 +1389,10 @@ function makeCorpse(){
   const face=new THREE.Mesh(new THREE.SphereGeometry(0.075,10,8),boneMat);
   face.scale.set(0.82,0.72,0.80); face.position.set(0,-0.035,-0.075); sk.add(face);
   for(const sx of[-0.042,0.042]){                    // the sockets
-    const soc=new THREE.Mesh(new THREE.SphereGeometry(0.032,8,7),pitMat);
+    const soc=new THREE.Mesh(new THREE.SphereGeometry(0.032,8,7),voidMat);
     soc.scale.set(1,0.9,0.75); soc.position.set(sx,0.008,-0.094); sk.add(soc);
   }
-  const nas=new THREE.Mesh(new THREE.SphereGeometry(0.018,6,5),pitMat);
+  const nas=new THREE.Mesh(new THREE.SphereGeometry(0.018,6,5),voidMat);
   nas.scale.set(0.8,1.3,0.7); nas.position.set(0,-0.038,-0.118); sk.add(nas);
   const jaw=new THREE.Mesh(new THREE.TorusGeometry(0.058,0.014,4,9,Math.PI*1.1),boneMat);
   jaw.position.set(0,-0.082,-0.050); jaw.rotation.set(1.28,0,0); sk.add(jaw);
@@ -1501,6 +1513,7 @@ function makeClutch(){
 export function buildCave(){
   CAVE.obstacles=[]; CAVE.fires=[]; CAVE.lastBurn=null; CAVE.regionDim=[1,1,1,1];
   CAVE.shakeT=0; CAVE.dripT=2.5;
+  ({rockMat,floorMat,dripMat:wetMat,curtainMat,pitMat}=caveSurfaces());
   const {entrance,central,broods,spawnC}=genCave();
   /* the arrival bore's mouth: where the library's shaft breaks through the
      entrance vault. Fixed before any mesh is laid so the ceiling pass can
@@ -1539,7 +1552,7 @@ export function buildCave(){
      rock is. Wall feet weld to the floor (the field is zero at the floor
      line) and wall crowns weld to the vault (same nominal points, same
      field), so the skin is watertight without a single box. ---- */
-  const fAcc=new QuadAcc(), cAcc=new QuadAcc(), pAcc=new QuadAcc(), wAcc=new QuadAcc();
+  const fAcc=new QuadAcc(), pAcc=new QuadAcc(), wAcc=new QuadAcc();
   const E=CELL/2, UVm=4;
   const fpc=CAVE.fissurePocket;
   for(let y=0;y<CH;y++)for(let x=0;x<CW;x++){
@@ -1606,8 +1619,8 @@ export function buildCave(){
         const z0=p.z-E+j*CELL/S, z1=z0+CELL/S;
         /* the arrival bore cut its own mouth through this vault */
         if(Math.hypot((x0+x1)/2-M.x,(z0+z1)/2-M.z)<M.rCut) continue;
-        cAcc.tri(cq(x0,z0),cq(x1,z0),cq(x1,z1),[uv(x0,z0),uv(x1,z0),uv(x1,z1)]);
-        cAcc.tri(cq(x0,z0),cq(x1,z1),cq(x0,z1),[uv(x0,z0),uv(x1,z1),uv(x0,z1)]);
+        wAcc.tri(cq(x0,z0),cq(x1,z0),cq(x1,z1),[uv(x0,z0),uv(x1,z0),uv(x1,z1)]);
+        wAcc.tri(cq(x0,z0),cq(x1,z1),cq(x0,z1),[uv(x0,z0),uv(x1,z1),uv(x0,z1)]);
       }
     }
     /* rock walls: one displaced faceted sheet per exposed face, floor to
@@ -1654,9 +1667,9 @@ export function buildCave(){
     }
   }
   const floor=fAcc.mesh(floorMat); scene.add(floor);
-  const ceil=cAcc.mesh(rockMat); scene.add(ceil);
   const pit=pAcc.mesh(pitMat); scene.add(pit);
-  const walls=wAcc.mesh(rockMat); scene.add(walls);
+  /* the walls and the vault are one skin, welded vertex for vertex */
+  const walls=wAcc.mesh(rockMat); smoothShade(walls.geometry); scene.add(walls);
   /* ---- the stream's water: a lens, not a sheet (see texCaustic above) ---- */
   {
     const S=6;                                  // sub-quads per cell each way
@@ -2521,6 +2534,11 @@ export function buildCave(){
        of a stair, and a toadstool family beside it */
     tryFungus(spawnC.cx,spawnC.cy+0,1,"conk");
     tryFungus(spawnC.cx-1,spawnC.cy,0.95,"shroom");
+  }
+  /* ---- loose stone over every floor: pebbles, scree, breakdown ---- */
+  {
+    const st=scatterStones(scene,rockMat,{CW,CH,CELL,codeAt,cellToWorld3,worldToCell3,floorYAt,clearOf});
+    for(const o of st.obstacles) CAVE.obstacles.push(o);
   }
   /* ---- rubble piles over the sealed tunnels (and the fissure choke) ---- */
   const boulderGeo=new THREE.SphereGeometry(1,7,6);
