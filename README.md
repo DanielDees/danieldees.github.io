@@ -107,9 +107,11 @@ game's interface text. No AI, generation or objective changes.
   smooth skin rather than a quilt of flat panels.
 - **Loose stone.** Pebbles gather in drifts, cobbles and fallen blocks pile at the
   foot of the walls, and the scree is actually scree.
-- **Dripstone and water.** Stalagmites, stalactites, columns and soda straws grow
-  with smooth tapers, fluting and closed tips instead of stacked rings, and flowstone
-  runs out into the floor. Beads of water hang on the tips, and the drip you hear is
+- **Dripstone and water.** Stalagmites, stalactites and columns are grown ring by
+  ring the way water builds them: lumpy and never quite straight, with flow lobes,
+  runnels, popcorn where the drip splashes, pale wet calcite banded with iron, and
+  their roots sunk into the floor or the vault instead of sitting on it. They come
+  as candles, cones, stacked plates and knobbly totems. Beads of water hang on the tips, and the drip you hear is
   a drop you can see: it falls from a stalactite near you, splashes a ripple on the
   floor or the stream, and the plink comes from where it landed. The stream ripples,
   so the lantern breaks on it into glints.
@@ -118,17 +120,27 @@ game's interface text. No AI, generation or objective changes.
   matte with scaly caps and glowing gills, some with a torn veil on the stem; roots
   are thin dark cords with a thread of light. Every colony near you sheds slowly
   rising spores in its own colour, and they dim with it after a nest burns.
-- **The clutches.** Each nest is a mound of felted silk under a low heap of eggs lit
-  from inside — veined, with the curled shadow of what's in them — lashed and staked
-  down with silk. Burning one is a real fire: licking flames, embers climbing out of
-  it and smoke rolling off the top. The silk chars black, the eggs shrivel with their
-  veins glowing orange for a while, and a scorch mark stays on the floor.
+- **The clutches.** Each nest is a heap of silk — dirty where it drags on the ground,
+  layered in loose sheets of thread, with the spent husks of the last brood sunk
+  into its foot and a few wrapped prey bundles — under a low heap of eggs lit from
+  inside, veined, with the curled shadow of what's in them. Loose silk spreads over
+  the whole nest floor, thick by the clutch and thinning to wisps (it was a flat grey
+  sheet cut off square at the edges of the grid). Burning one is a real fire: licking
+  flames, embers climbing out of it and smoke rolling off the top. The silk burns
+  away to an ash-grey heap, the eggs shrivel with their veins glowing orange for a
+  while, and a scorch mark stays on the floor.
+- **Webs you see by lantern-light.** Orb webs are strung across corners and between
+  formations, cobweb tangles hang among the stalactites, and a tent of threads rises
+  over every clutch. They are real threads: nearly invisible in the dark, they flare
+  where the lantern catches them, the capture spiral glitters with beads of glue, and
+  each web billows a little in the draught.
 - **The chasm** falls away as cliffs into mist and a cold glow far below, and the
   bridge is a natural stone arch with broken rock along its edges (it was a flat
   plank over a sheer blade of wall).
 - **Collapses** are heaps of rubble filling the tunnel with a slope of broken blocks
   spilling out, and a dust cloud rolls out when one comes down. A cleared collapse
-  leaves its rubble on the floor. Cocoons are wrapped bodies in crossing silk.
+  leaves its rubble on the floor. Cocoons are wrapped bodies in crossing silk with a
+  fuzz of loose thread over them (they were glossy, and read as brass).
 - **The lantern in your hand.** The crank lantern is a real storm lantern — fuel drum,
   glass globe on a wire guard, brass cap and bail, the crank on the side — lying by
   the corpse and then held in your hand at the bottom of the screen: it swings as you

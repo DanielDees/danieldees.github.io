@@ -54,7 +54,8 @@ RS rockAt(vec2 t){
 #else
   vec3 fr=cell(q*vec2(5.0,1.0)+w*vec2(0.6,0.3),vec2(5.0,1.0));
 #endif
-  float fe=fr.y-fr.x;
+  /* jagged: a smooth cell edge curls round its corner into a black hook */
+  float fe=fr.y-fr.x+0.014*gn(q*52.0,vec2(52.0))+0.007*gn(q*110.0,vec2(110.0));
   float frOpen=smoothstep(0.15,0.4,gn(q*5.0+1.7,vec2(5.0)));
   float crack=(1.0-smoothstep(0.0,0.018,fe))*frOpen;
   float lip=max(0.0,(1.0-smoothstep(0.018,0.05,fe))*frOpen-crack);
@@ -76,7 +77,7 @@ RS rockAt(vec2 t){
   c=mix(c,vec3(0.09,0.085,0.08),smoothstep(0.25,0.55,fbm4(q*5.0+21.7,vec2(5.0)))*0.45);
   c*=0.88+0.24*mix(1.0,scal,scMask);
   c*=0.9+0.2*(knob+0.5);
-  c=mix(c,vec3(0.08,0.075,0.07),crack*0.55);
+  c=mix(c,vec3(0.08,0.075,0.07),crack*0.4);
   c+=vec3(0.07,0.065,0.06)*lip*0.5;
   c=mix(c,vec3(0.56,0.54,0.50),vein*0.6);
   c=mix(c,vec3(0.46,0.42,0.36),flow*0.7);
@@ -164,15 +165,14 @@ vec2 gritAt(vec2 uv){
 }
 vec4 OUT(vec2 uv,float m){ return vec4(gritAt(uv),0.0,1.0); }`;
 /* dripstone's close-up layer: no pinholes (on a smooth formation a field
-   of pits reads as drilled), just the fine streaked ripple of a water film
-   and the small facets of the calcite growing under it */
+   of pits reads as drilled) and no cells (a cell field on a round body is
+   SNAKESKIN) — the streaked ripple of a water film over a fine grain */
 const DFINE_GLSL=`
 vec2 dfAt(vec2 uv){
   float r=fbm5(vec2(uv.x*10.0,uv.y*3.0),vec2(10.0,3.0));
-  vec3 c=cell(uv*28.0,vec2(28.0));
-  float cr=(1.0-smoothstep(0.0,0.55,c.x));
-  float h=0.5+r*0.45+cr*0.12;
-  float a=0.5+r*0.35+(c.z-0.5)*0.3;
+  float g=fbm4(uv*34.0,vec2(34.0));
+  float h=0.5+r*0.45+g*0.14;
+  float a=0.5+r*0.35+g*0.2;
   return vec2(clamp(h,0.0,1.0),clamp(a,0.0,1.0));
 }
 vec4 OUT(vec2 uv,float m){ return vec4(dfAt(uv),0.0,1.0); }`;
@@ -184,24 +184,37 @@ const DRIP_GLSL=`
 struct DS { vec3 col; float h; float wet; float ao; };
 DS dripAt(vec2 t){
   DS d;
-  vec2 w=vec2(fbm3(t*3.0,vec2(3.0)),fbm3(t*3.0+2.7,vec2(3.0)))*0.05;
+  vec2 w=vec2(fbm3(t*3.0,vec2(3.0)),fbm3(t*3.0+2.7,vec2(3.0)))*0.06;
   vec2 q=t+w;
-  float run=gn(vec2(q.x*10.0,q.y),vec2(10.0,1.0))*0.65+gn(vec2(q.x*24.0,q.y*2.0),vec2(24.0,2.0))*0.35;
-  float ring=sin(6.2831853*q.y*22.0+fbm3(q*vec2(4.0,2.0),vec2(4.0,2.0))*4.0)*0.5+0.5;
-  vec3 pc=cell(q*24.0,vec2(24.0));
-  float popZ=smoothstep(0.1,0.4,fbm3(q*3.0+5.0,vec2(3.0)));
-  float pop=(1.0-smoothstep(0.1,0.5,pc.x))*step(pc.z,0.35)*popZ;
+  /* the runnels are RIDGES, not waves: the film leaves a crest where two
+     runs part, and the groove between them is where it stays wet */
+  float r1=1.0-abs(gn(vec2(q.x*9.0,q.y*0.9)+w*6.0,vec2(9.0,1.0))*1.5);
+  float r2=1.0-abs(gn(vec2(q.x*21.0,q.y*2.0)+3.3,vec2(21.0,2.0))*1.5);
+  float run=r1*0.65+r2*0.35;
+  /* growth rings: faint and only here and there — at any regular strength
+     every formation came out corrugated, like scales */
+  float rc=q.y*14.0+fbm3(q*vec2(5.0,2.0),vec2(5.0,2.0))*3.0;
+  float ringZ=smoothstep(0.1,0.45,fbm3(vec2(q.x*2.0,q.y*3.0)+19.0,vec2(2.0,3.0)));
+  float ring=smoothstep(0.0,0.3,fract(rc))*(1.0-smoothstep(0.5,1.0,fract(rc)))*ringZ;
+  /* smooth wet flowstone coats most of it: the relief stands out of that */
+  float coat=smoothstep(-0.1,0.3,fbm3(q*vec2(3.0,1.0)+27.0,vec2(3.0,1.0)));
+  vec3 pc=cell(q*26.0,vec2(26.0));
+  float popZ=smoothstep(0.05,0.35,fbm3(q*3.0+5.0,vec2(3.0)));
+  float pop=(1.0-smoothstep(0.05,0.55,pc.x))*step(pc.z,0.45)*popZ;
   float mac=fbm4(q*4.0,vec2(4.0));
-  float h=0.5+run*0.30+ring*0.02+pop*0.18+mac*0.15;
-  vec3 c=mix(vec3(0.27,0.26,0.24),vec3(0.46,0.45,0.41),smoothstep(-0.35,0.35,mac));
-  c=mix(c,vec3(0.40,0.30,0.21),smoothstep(0.15,0.5,fbm3(vec2(q.x*2.0,q.y*6.0)+11.0,vec2(2.0,6.0)))*0.6);
-  c=mix(c,vec3(0.16,0.155,0.15),smoothstep(0.2,0.55,fbm4(q*3.0+33.0,vec2(3.0)))*0.5);
-  c*=0.93+0.12*(run+0.5);
-  c*=0.97+0.03*ring;
-  c=mix(c,c*1.12,pop);
+  float h=0.5+(run*0.32+ring*0.02+pop*0.24)*(1.0-coat*0.7)+mac*0.16;
+  /* calcite is PALE: kept to the rock's browns, a formation turned to
+     driftwood under the lantern — the iron is a streak in it, not its colour */
+  vec3 c=mix(vec3(0.40,0.39,0.37),vec3(0.76,0.75,0.71),smoothstep(-0.35,0.35,mac));
+  c=mix(c,vec3(0.60,0.50,0.39),smoothstep(0.12,0.5,fbm3(vec2(q.x*2.0,q.y*7.0)+11.0,vec2(2.0,7.0)))*0.45);
+  c=mix(c,vec3(0.2,0.19,0.18),smoothstep(0.3,0.6,fbm4(q*3.0+33.0,vec2(3.0)))*0.35);
+  c*=0.86+0.2*run;
+  c*=0.97+0.04*ring;
+  c=mix(c,c*1.1,coat*0.5);
+  c=mix(c,c*1.25,pop);
   d.col=c; d.h=clamp(h,0.0,1.0);
-  d.wet=clamp(0.35+smoothstep(0.0,0.45,run+0.25*mac)*0.65,0.0,1.0);
-  d.ao=clamp(1.0-(1.0-smoothstep(0.35,0.5,pc.x))*popZ*0.2-(1.0-ring)*0.08,0.0,1.0);
+  d.wet=clamp(0.3+(1.0-run)*0.5+coat*0.45+0.2*mac,0.0,1.0);
+  d.ao=clamp(1.0-(1.0-smoothstep(0.35,0.55,pc.x))*popZ*0.3-(1.0-run)*0.25,0.0,1.0);
   return d;
 }
 vec4 OUT(vec2 uv,float m){ DS d=dripAt(uv); return m<0.5? vec4(d.col,d.wet) : vec4(d.h,d.ao,0.0,1.0); }`;
@@ -311,7 +324,7 @@ function surfCompile(sh){
 function surfMat(set,o){
   const m=new THREE.MeshPhongMaterial({color:o.color!==undefined? o.color:0xffffff,
     specular:o.spec, shininess:o.shin, emissive:o.emissive||0x000000,
-    side:o.side||THREE.FrontSide});
+    side:o.side||THREE.FrontSide, vertexColors:!!o.vc});
   m.defines=o.planar? {CAVE_PLANAR:""} : {};
   m.userData.surf={A:set.A, N:set.N, F:set.F, AY:set.AY, NY:set.NY, tile:o.tile, ftile:o.ftile,
     nA:o.nA===undefined? 1:o.nA, nF:o.nF===undefined? 1:o.nF,
@@ -370,9 +383,9 @@ export function caveSurfaces(){
   const top=set("#define NO_BEDS\n"+ROCK_GLSL,S,4.0,0.24);
   rock.AY=top.A; rock.NY=top.N;
   const floor=set(FLOOR_GLSL,S,4.0,0.11);
-  const drip=set(DRIP_GLSL,S,2.0,0.06);
+  const drip=set(DRIP_GLSL,S,2.0,0.13);
   rock.F=fineN(FINE_GLSL,0.9,0.006);
-  drip.F=fineN(DFINE_GLSL,0.8,0.003);
+  drip.F=fineN(DFINE_GLSL,0.8,0.005);
   floor.F=fineN(GRIT_GLSL,0.6,0.004);
   bakeFlush();
   const rockOpts={tile:4.0, ftile:0.9, spec:0x30363a, shin:30,
@@ -384,8 +397,9 @@ export function caveSurfaces(){
     pitMat:surfMat(rock,Object.assign({},rockOpts,{fade:[-1.5,-15.0,0.92], deep:0x0a1d24})),
     floorMat:surfMat(floor,{planar:true, tile:4.0, ftile:0.6,
       spec:0x464c50, shin:80, dry:0.0, wetDark:0, fineK:0.4, aoK:0.75}),
-    dripMat:surfMat(drip,{tile:2.0, ftile:0.9, spec:0x262c30, shin:26,
-      dry:0.3, wetDark:0.15, fineK:0.3, aoK:0.6, emissive:0x020303}),
+    /* vertex colour carries each formation's mineral bands and cavity */
+    dripMat:surfMat(drip,{tile:2.0, ftile:0.8, spec:0x2c3236, shin:30, vc:true, nA:1.3, nF:1.6,
+      dry:0.12, wetDark:0.2, fineK:0.45, aoK:0.7, emissive:0x020303}),
     curtainMat:surfMat(drip,{tile:2.0, ftile:0.9, spec:0x22282c, shin:22,
       dry:0.3, wetDark:0.15, fineK:0.3, aoK:0.6, emissive:0x020303, side:THREE.DoubleSide}),
   };

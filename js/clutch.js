@@ -18,7 +18,7 @@
        black with their veins still glowing orange for a while, shrunk into
        the mound, and a scorch on the floor round it. */
 import { rand, clamp, hash } from "./utils.js";
-import { scene, markShared, mergeStatic } from "./scene.js";
+import { scene, markShared, mergeStatic, concatGeos } from "./scene.js";
 import { makeCanvas } from "./textures.js";
 import { makeFlameSystem, makeMoteSystem, makeDustSystem } from "./particles.js";
 import { normalFromHeight } from "./cavemats.js";
@@ -30,7 +30,7 @@ function skins(){
   /* felted silk: thousands of short fibres at every angle over a soft
      mottle, drawn wrapped so it tiles */
   const felt=makeCanvas(512,512,(g,w,h)=>{
-    g.fillStyle="#7a7f80"; g.fillRect(0,0,w,h);
+    g.fillStyle="#a3a8aa"; g.fillRect(0,0,w,h);
     const wrap=fn=>{ for(const ox of[0,-w,w]) for(const oy of[0,-h,h]) fn(ox,oy); };
     for(let i=0;i<40;i++){
       const x=Math.random()*w, y=Math.random()*h, r=30+Math.random()*90, lite=Math.random()<0.5;
@@ -52,13 +52,35 @@ function skins(){
           x+ox+Math.cos(a)*L, y+oy+Math.sin(a)*L);
         g.stroke(); });
     }
+    /* what reads from a few metres: FOLDS where the matted sheet has
+       creased (a dark crease with its lit ridge beside it) and POCKETS
+       pulled into the mass — the fibre alone averages out to a smooth loaf */
+    for(let i=0;i<46;i++){
+      const x=Math.random()*w, y=Math.random()*h, a=Math.random()*Math.PI, L=50+Math.random()*150, bend=(Math.random()-0.5)*L*0.6;
+      const cx=x+Math.cos(a)*L/2-Math.sin(a)*bend, cy=y+Math.sin(a)*L/2+Math.cos(a)*bend, ex=x+Math.cos(a)*L, ey=y+Math.sin(a)*L;
+      const nx=-Math.sin(a)*2.2, ny=Math.cos(a)*2.2, al=0.14+Math.random()*0.16, lw=1.4+Math.random()*2.2;
+      wrap((ox,oy)=>{
+        g.lineWidth=lw;
+        g.strokeStyle=`rgba(236,240,240,${al*0.8})`; g.beginPath(); g.moveTo(x+ox+nx,y+oy+ny);
+        g.quadraticCurveTo(cx+ox+nx,cy+oy+ny,ex+ox+nx,ey+oy+ny); g.stroke();
+        g.strokeStyle=`rgba(30,32,32,${al})`; g.beginPath(); g.moveTo(x+ox,y+oy);
+        g.quadraticCurveTo(cx+ox,cy+oy,ex+ox,ey+oy); g.stroke(); });
+    }
+    for(let i=0;i<22;i++){
+      const x=Math.random()*w, y=Math.random()*h, r=5+Math.random()*14;
+      wrap((ox,oy)=>{
+        const gr=g.createRadialGradient(x+ox,y+oy-r*0.2,0,x+ox,y+oy,r*1.5);
+        gr.addColorStop(0,"rgba(18,20,20,0.55)"); gr.addColorStop(0.55,"rgba(30,32,32,0.25)");
+        gr.addColorStop(0.8,"rgba(230,234,234,0.18)"); gr.addColorStop(1,"rgba(230,234,234,0)");
+        g.fillStyle=gr; g.beginPath(); g.arc(x+ox,y+oy,r*1.5,0,7); g.fill(); });
+    }
     for(let i=0;i<260;i++){              // grit and husk flakes caught in it
       g.fillStyle=`rgba(${60+Math.random()*40|0},${54+Math.random()*34|0},${44+Math.random()*28|0},${0.15+Math.random()*0.25})`;
       g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*2.5,1+Math.random()*2);
     }
   });
   felt.wrapS=felt.wrapT=THREE.RepeatWrapping; felt.anisotropy=4;
-  const feltN=normalFromHeight(felt,512,0.8,0.004);
+  const feltN=normalFromHeight(felt,512,0.8,0.007);
   /* the egg: R the membrane's brightness, G its veins, B the curled shadow
      of what is inside — read as data by the egg shader, not as colour */
   const egg=makeCanvas(256,256,(g,w,h)=>{
@@ -101,10 +123,47 @@ function skins(){
       p.setXYZ(i,x*k*(1-0.10*y),y*1.26,z*k*(1-0.10*y));
     }
     eggGeo.computeVertexNormals(); }
-  SK={felt,feltN,egg,eggGeo};
-  markShared(felt,feltN,egg,eggGeo);
+  /* a spent sac: the egg with its top fallen in and crumpled — faceted,
+     because a smooth-shaded crumple is a pebble */
+  const huskGeo=new THREE.SphereGeometry(1,12,9).toNonIndexed();
+  { const p=huskGeo.attributes.position, key=new Map();
+    for(let i=0;i<p.count;i++){
+      const x=p.getX(i), y=p.getY(i), z=p.getZ(i), id=`${x.toFixed(3)},${y.toFixed(3)},${z.toFixed(3)}`;
+      let v=key.get(id);
+      if(!v){ const a=Math.atan2(z,x), k=1+0.16*Math.sin(a*5+y*7)+0.1*Math.sin(a*3-y*11)+(Math.random()-0.5)*0.18;
+        const yy=y>0? y*0.18-0.08*Math.abs(Math.sin(a*4)) : y*0.55;
+        v=[x*k*1.05,yy*1.26,z*k*1.05]; key.set(id,v); }
+      p.setXYZ(i,v[0],v[1],v[2]);
+    }
+    huskGeo.computeVertexNormals(); }
+  /* a layer of LOOSE silk to drape over the mass and spread round it:
+     threads every way, drifting into denser mats, and nothing else — alpha
+     is thread-shaped, and it tiles (drawn wrapped) */
+  const layer=makeCanvas(512,512,(g,w,h)=>{
+    g.clearRect(0,0,w,h); g.lineCap="round";
+    const wrap=fn=>{ for(const ox of[0,-w,w]) for(const oy of[0,-h,h]) fn(ox,oy); };
+    const thread=(x,y,a,L,al,lw)=>{ const bend=(Math.random()-0.5)*L*0.5;
+      wrap((ox,oy)=>{ if(x+ox<-90||x+ox>w+90||y+oy<-90||y+oy>h+90) return;
+        g.strokeStyle=`rgba(232,236,238,${al})`; g.lineWidth=lw; g.beginPath(); g.moveTo(x+ox,y+oy);
+        g.quadraticCurveTo(x+ox+Math.cos(a)*L/2-Math.sin(a)*bend,y+oy+Math.sin(a)*L/2+Math.cos(a)*bend,
+          x+ox+Math.cos(a)*L,y+oy+Math.sin(a)*L); g.stroke(); }); };
+    for(let i=0;i<1400;i++) thread(Math.random()*w,Math.random()*h,Math.random()*Math.PI,20+Math.random()*80,0.05+Math.random()*0.16,0.5+Math.random()*0.8);
+    for(let m=0;m<7;m++){                    // drifts where the silk has matted
+      const cx=Math.random()*w, cy=Math.random()*h, R=30+Math.random()*60;
+      for(let i=0;i<220;i++){ const a=Math.random()*7, rr=Math.pow(Math.random(),0.7)*R;
+        thread(cx+Math.cos(a)*rr,cy+Math.sin(a)*rr,Math.random()*Math.PI,6+Math.random()*22,0.08+Math.random()*0.2,0.5+Math.random()*0.6); }
+    }
+    for(let i=0;i<160;i++){ g.fillStyle=`rgba(${120+Math.random()*60|0},${116+Math.random()*50|0},${104+Math.random()*40|0},${0.25+Math.random()*0.35})`;
+      g.beginPath(); g.arc(Math.random()*w,Math.random()*h,0.6+Math.random()*1.6,0,7); g.fill(); }
+  });
+  layer.wrapS=layer.wrapT=THREE.RepeatWrapping; layer.anisotropy=4;
+  SK={felt,feltN,egg,eggGeo,huskGeo,layer};
+  markShared(felt,feltN,egg,eggGeo,huskGeo,layer);
   return SK;
 }
+
+/* the loose silk, for the nest floors round the clutch */
+export const silkLayerTex=()=>skins().layer;
 
 /* the egg shader: three's Phong plus a light INSIDE the sac. The glow is a
    uniform the level drives (it breathes, then burns, then embers out) */
@@ -146,26 +205,109 @@ const _o=new THREE.Object3D();
 export function makeClutch(env,x,z){
   const S=skins();
   const g=new THREE.Group();
-  /* the silk mass, lumpy where the eggs press up under it */
-  const R=1.3, SQ=0.42, bumps=[];
-  for(let i=0;i<9;i++){ const a=Math.random()*7, r=rand(0.2,0.8); bumps.push([Math.cos(a)*r,Math.sin(a)*r,rand(0.14,0.24)]); }
-  const moundGeo=new THREE.SphereGeometry(R,40,24);
-  { const p=moundGeo.attributes.position, sd=Math.random()*9;
-    for(let i=0;i<p.count;i++){
-      const x0=p.getX(i), y0=p.getY(i), z0=p.getZ(i);
-      let k=1+0.08*Math.sin(x0*2.7+sd)+0.06*Math.sin(z0*3.1-sd)+0.05*Math.sin(y0*4.3+sd*2)
-             +0.03*Math.sin(x0*7.1+z0*5.3+sd);
-      let lift=0;
-      if(y0>0) for(const[bx,bz,br]of bumps){ const d=Math.hypot(x0/R-bx,z0/R-bz); lift+=br*Math.exp(-d*d/(br*br)); }
-      p.setXYZ(i,x0*k,y0*k+lift*R*0.45,z0*k);
+  /* the silk mass is a HEAP, poured and piled: a height field lobed round
+     its foot, clumped, pressed up where eggs sit under it, whose edge runs
+     out UNDER the floor. It was a sphere squashed onto the floor, and a
+     sphere's equator stands proud of the ground as a rim — a loaf on a plate. */
+  const R=1.65, HM=0.72, sd=Math.random()*9, bumps=[];
+  for(let i=0;i<10;i++){ const a=Math.random()*7, r=rand(0.1,0.8)*R; bumps.push([Math.cos(a)*r,Math.sin(a)*r,rand(0.2,0.4)]); }
+  const foot=a=>R*(1+0.14*Math.sin(a*2+sd)+0.08*Math.sin(a*3-sd*1.7)+0.05*Math.sin(a*5+sd*0.6));
+  const qAt=(px,pz)=>Math.hypot(px,pz)/foot(Math.atan2(pz,px));
+  const moundTop=(px,pz)=>{
+    const q=qAt(px,pz);
+    let hh=HM*Math.pow(Math.max(0,1-q*q),0.8);
+    hh*=1+0.14*Math.sin(px*4.1+sd)*Math.sin(pz*3.7-sd)+0.07*Math.sin(px*7.3-pz*6.1+sd*2);
+    for(const[bx,bz,br]of bumps){ const d=Math.hypot(px-bx,pz-bz)/br; hh+=br*0.3*Math.exp(-d*d)*Math.max(0,1-q); }
+    return hh-0.07;
+  };
+  const NA=64, NR=16;
+  const polar=(fn)=>{                      // a polar grid over the heap's footprint
+    const pos=[], uv=[], col=[], idx=[];
+    for(let j=0;j<=NR;j++)for(let i=0;i<=NA;i++){
+      const a=i/NA*Math.PI*2, rr=foot(a)*1.08*Math.pow(j/NR,0.85);
+      fn(Math.cos(a)*rr,Math.sin(a)*rr,pos,uv,col);
     }
-    moundGeo.computeVertexNormals(); }
-  const feltMat=new THREE.MeshPhongMaterial({map:S.felt, normalMap:S.feltN, color:0x8d9294,
-    specular:0x3a4244, shininess:16, emissive:0x000000});
-  feltMat.map.repeat.set(3,2);
+    for(let j=0;j<NR;j++)for(let i=0;i<NA;i++){ const q=j*(NA+1)+i, r=q+NA+1; idx.push(q,q+1,r, r,q+1,r+1); }   // wound to face UP
+    const geo=new THREE.BufferGeometry();
+    geo.setAttribute("position",new THREE.Float32BufferAttribute(pos,3));
+    geo.setAttribute("uv",new THREE.Float32BufferAttribute(uv,2));
+    if(col.length) geo.setAttribute("color",new THREE.Float32BufferAttribute(col,3));
+    geo.setIndex(idx); geo.computeVertexNormals();
+    return geo;
+  };
+  /* dirty at the foot where it drags on the silt, clean where it is fresh */
+  const moundGeo=polar((px,pz,pos,uv,col)=>{
+    const hh=moundTop(px,pz), fresh=clamp(hh/0.16,0,1);
+    const m=0.9+0.1*Math.sin(px*5.3+sd*3)*Math.sin(pz*4.7-sd);
+    pos.push(px,hh,pz); uv.push(px/0.8,pz/0.8);
+    col.push((0.62+0.38*fresh)*m,(0.59+0.41*fresh)*m,(0.54+0.46*fresh)*m);
+  });
+  /* matte: silk in a mass has no glaze — a broad highlight made it a loaf */
+  const feltMat=new THREE.MeshPhongMaterial({map:S.felt, normalMap:S.feltN, color:0xbcc1c3,
+    specular:0x1a1e20, shininess:8, emissive:0x000000, vertexColors:true});
   const mound=new THREE.Mesh(moundGeo,feltMat);
-  mound.scale.set(1.15,SQ,1.15); mound.position.y=0.1; g.add(mound);
-  const moundTop=(px,pz)=>{ const q=Math.hypot(px,pz)/(R*1.15); return 0.1+R*SQ*Math.sqrt(Math.max(0,1-q*q)); };
+  g.add(mound);
+  /* and over it, loose silk in depth: shells of thread lifted off the heap,
+     each turned so the threads never line up, closing back onto the heap at
+     its foot so no shell edge floats over the floor. Inner to outer in one
+     buffer: from outside, that IS back to front. */
+  const layerMat=new THREE.MeshPhongMaterial({map:S.layer, transparent:true, depthWrite:false,
+    side:THREE.DoubleSide, color:0xeef1f2, emissive:0x1a1d1f, specular:0x7a8288, shininess:34});
+  /* the shells want their threads at full strength: the loose layer's alpha
+     is set to lie flat over the floor, and over the pale heap it disappears */
+  const fuzzMat=layerMat.clone();
+  fuzzMat.onBeforeCompile=sh=>{ sh.fragmentShader=sh.fragmentShader.replace("#include <map_fragment>",
+    "#include <map_fragment>\n  diffuseColor.a=min(1.0,diffuseColor.a*2.6);"); };
+  {
+    const nrm=moundGeo.attributes.normal, P0=moundGeo.attributes.position, NS=6, parts=[];
+    for(let s2=1;s2<=NS;s2++){
+      const rot=s2*1.37+sd, cs=Math.cos(rot), sn=Math.sin(rot), off=0.032*s2;
+      let vi=0;
+      parts.push(polar((px,pz,pos,uv,col)=>{
+        /* each sheet billows on its own, never parallel to the one under it */
+        const bil=0.45+0.55*(Math.sin(px*3.3+pz*2.1+s2*1.7+sd)*Math.sin(pz*2.7-px*1.9+s2*2.3)+1);
+        const q=qAt(px,pz), lift=off*bil*clamp((1.02-q)/0.3,0,1);
+        pos.push(P0.getX(vi)+nrm.getX(vi)*lift, P0.getY(vi)+nrm.getY(vi)*lift, P0.getZ(vi)+nrm.getZ(vi)*lift);
+        uv.push((px*cs-pz*sn)/1.1+s2*0.31,(px*sn+pz*cs)/1.1+s2*0.17); vi++;
+      }));
+    }
+    const fz=new THREE.Mesh(concatGeos(parts),fuzzMat);
+    for(const p2 of parts) p2.dispose();
+    g.add(fz);
+  }
+  {
+    const NA=44, NR=6, pos=[], uv=[], idx=[], sd=Math.random()*9;
+    for(let i=0;i<=NA;i++){
+      const a=i/NA*Math.PI*2, out=rand(2.1,2.8)*(1+0.18*Math.sin(a*3+sd)+0.1*Math.sin(a*7-sd));
+      for(let j=0;j<=NR;j++){
+        const rr=1.1+(out-1.1)*j/NR, px=Math.cos(a)*rr, pz=Math.sin(a)*rr;
+        pos.push(px,0.025+0.03*Math.sin(px*3.1+pz*2.3)*(1-j/NR),pz); uv.push(px/1.3,pz/1.3);
+      }
+    }
+    for(let i=0;i<NA;i++)for(let j=0;j<NR;j++){ const q=i*(NR+1)+j, r=q+NR+1; idx.push(q,r,q+1, r,r+1,q+1); }
+    const ag=new THREE.BufferGeometry();
+    ag.setAttribute("position",new THREE.Float32BufferAttribute(pos,3));
+    ag.setAttribute("uv",new THREE.Float32BufferAttribute(uv,2));
+    ag.setIndex(idx); ag.computeVertexNormals();
+    const apron=new THREE.Mesh(ag,layerMat); apron.renderOrder=-1; g.add(apron);
+  }
+  /* the husks of the last brood: sacs gone slack and papery, sunk into
+     the silk round the foot of the heap */
+  const huskMat=new THREE.MeshPhongMaterial({map:S.felt, color:0x8c8a84, specular:0x1a1a18, shininess:10,
+    flatShading:true, side:THREE.DoubleSide});
+  {
+    const nh=6+Math.floor(Math.random()*5), hk=new THREE.InstancedMesh(S.huskGeo,huskMat,nh);
+    for(let i=0;i<nh;i++){
+      const a=Math.random()*Math.PI*2, rr=foot(a)*rand(0.7,1.25), r=rand(0.12,0.2);
+      const hx=Math.cos(a)*rr, hz=Math.sin(a)*rr;
+      _o.position.set(hx,Math.max(0,moundTop(hx,hz))+r*0.3,hz);
+      _o.rotation.set(rand(-0.35,0.35),Math.random()*6,rand(-0.35,0.35));
+      _o.scale.set(r*rand(0.9,1.1),r*rand(0.8,1.0),r*rand(0.8,1.0)); _o.updateMatrix();
+      hk.setMatrixAt(i,_o.matrix);
+    }
+    hk.instanceMatrix.needsUpdate=true; hk.frustumCulled=false;
+    g.add(hk);
+  }
   /* the eggs: each comes to rest on the mound or on the eggs under it */
   const eggMat=eggMaterial(S.egg);
   /* a clutch is laid in a low heap, not a tower: each egg tries a few spots
@@ -224,6 +366,18 @@ export function makeClutch(env,x,z){
     lines.push(env.strandMesh(x0,moundTop(x0,z0)*rand(0.6,0.95),z0, x1,env.floorAt(x+x1,z+z1)+0.02,z1, rand(0.03,0.05)));
   }
   g.add(mergeStatic(lines,env.strandMat));
+  /* what the brood were fed: small bundles bound into the edge of the mass */
+  {
+    const bundles=[];
+    for(let i=0;i<3+Math.floor(Math.random()*3);i++){
+      const a=Math.random()*Math.PI*2, rr=rand(1.25,1.7), r=rand(0.08,0.14), len=r*rand(3.2,4.5);
+      const m=new THREE.Mesh(cocoonGeo(r,len));
+      m.position.set(Math.cos(a)*rr, r*0.8, Math.sin(a)*rr);
+      m.rotation.set(rand(-0.3,0.3), Math.random()*6, Math.PI/2+rand(-0.4,0.4));
+      bundles.push(m);
+    }
+    addCocoons(g,bundles);
+  }
   /* the egg-light pooled on the floor */
   const haloMat=new THREE.MeshBasicMaterial({map:env.halo, color:0x3f93ac,
     transparent:true, opacity:0.2, blending:THREE.AdditiveBlending, depthWrite:false});
@@ -234,7 +388,7 @@ export function makeClutch(env,x,z){
     opacity:0, depthWrite:false});
   const scorch=new THREE.Mesh(new THREE.PlaneGeometry(5.2,5.2),scorchMat);
   scorch.rotation.x=-Math.PI/2; scorch.position.y=0.05; scorch.renderOrder=-1; g.add(scorch);
-  g.userData={eggMat, feltMat, inst, eggs, haloMat, scorchMat, top, surf};
+  g.userData={eggMat, feltMat, layerMat, fuzzMat, huskMat, inst, eggs, haloMat, scorchMat, top, surf};
   return g;
 }
 
@@ -255,7 +409,13 @@ export function updateClutch(b,i,dt,tN,camera){
   U.uGlow.value.setRGB(0.12*k+0.30*(1-k)*clamp(1-T/10,0,1), 0.40*k+0.08*(1-k)*clamp(1-T/10,0,1), 0.52*k);
   /* the silk goes first: it blackens, glows at its edges, and stays black */
   const ch=clamp((T-0.5)/8,0,1);
-  u.feltMat.color.setRGB(0.553-0.46*ch,0.573-0.48*ch,0.58-0.49*ch);
+  /* to ASH, not to black: a black heap under the lantern has no shape left */
+  u.feltMat.color.setRGB(0.77-0.57*ch,0.79-0.6*ch,0.80-0.62*ch);
+  u.huskMat.color.setRGB(0.55-0.48*ch,0.52-0.46*ch,0.47-0.42*ch);
+  for(const m of [u.layerMat,u.fuzzMat]){
+    m.opacity=1-ch*0.85;
+    m.color.setRGB(0.84-0.6*ch,0.855-0.62*ch,0.86-0.63*ch);
+  }
   u.feltMat.emissive.setRGB(0.18*clamp(1-Math.abs(T-4)/5,0,1)*(0.7+0.3*hash(Math.floor(tN*11)+i)),0.05*clamp(1-Math.abs(T-4)/5,0,1),0);
   U.uChar.value=clamp((T-2)/8,0,1);
   U.uEmber.value=clamp((T-3)/3,0,1)*clamp(1-(T-26)/50,0,1)*(0.75+0.25*hash(Math.floor(tN*9)+i));
@@ -358,10 +518,29 @@ export function cocoonMaterial(){
   });
   wound.wrapS=wound.wrapT=THREE.RepeatWrapping; wound.anisotropy=4;
   const woundN=normalFromHeight(wound,256,0.5,0.004);
+  /* matte, like the heap: glazed, a wound bundle is a brass spinning top */
   CK=new THREE.MeshPhongMaterial({map:wound, normalMap:woundN, color:0x9ca2a4,
-    specular:0x3e4446, shininess:18});
+    specular:0x161a1c, shininess:6});
   markShared(wound,woundN,CK);
   return CK;
+}
+/* the loose outer silk a bundle wears over its wind: the same bundle a
+   little larger, in thread-shaped alpha, so its edges are fibre */
+let CF=null;
+export function cocoonFuzzMaterial(){
+  if(CF) return CF;
+  CF=markShared(new THREE.MeshPhongMaterial({map:skins().layer, transparent:true, depthWrite:false,
+    color:0xe8ecee, emissive:0x15181a, specular:0x505860, shininess:24}));
+  return CF;
+}
+/* a bundle's geometry and that outer silk, merged into two meshes on `parent` */
+export function addCocoons(parent,list){
+  if(!list.length) return;
+  const fuzz=list.map(m=>{ const f=new THREE.Mesh(m.geometry); f.position.copy(m.position);
+    f.rotation.copy(m.rotation); f.scale.copy(m.scale).multiplyScalar(1.07); return f; });
+  parent.add(mergeStatic(list,cocoonMaterial()));
+  parent.add(mergeStatic(fuzz,cocoonFuzzMaterial()));
+  for(const m of list) m.geometry.dispose();
 }
 /* a wrapped body along y, centred; r its girth, len its length */
 export function cocoonGeo(r,len){

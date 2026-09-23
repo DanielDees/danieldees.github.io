@@ -29,8 +29,10 @@ import { caveSurfaces, rippleNormals } from "./cavemats.js";
 import { scatterStones, stoneGeo, cullStones } from "./caverocks.js";
 import { initDrips, releaseDrip, updateDrips, initSpores, updateSpores, initRockDust, puffRockDust, updateRockDust,
          initMist, updateMist, initShaftMotes, updateShaftMotes } from "./cavefx.js";
-import { makeClutch, updateClutch, initClutchFire, updateClutchFire, cocoonMaterial, cocoonGeo } from "./clutch.js";
+import { makeClutch, updateClutch, initClutchFire, updateClutchFire, cocoonGeo, silkLayerTex, addCocoons } from "./clutch.js";
 import { makeLanternModel, initViewmodel } from "./viewmodel.js";
+import { SilkLines, SILK_LINE_MAT, orbWeb, tangleWeb, cloudPts } from "./weblines.js";
+import { LANT } from "./lantern.js";
 import { renderObjectives, toast } from "./ui.js";
 import { AU, sfxRockfall, sfxIgnite, startClutchFire, panTo } from "./audio.js";
 
@@ -726,8 +728,6 @@ const texWaterSurf=makeCanvas(256,256,(g,w,h)=>{
   }
 });
 markShared(HALO_TEX,texCaustic,texWaterSurf);
-const silkFloorMat=new THREE.MeshPhongMaterial({color:0xb8bcc0, specular:0x222222, shininess:8,
-  transparent:true, opacity:0.34, depthWrite:false});
 const boneMat=new THREE.MeshPhongMaterial({map:texBone, bumpMap:texBone, bumpScale:0.006,
   color:0x7c7464, specular:0x2a2822, shininess:14});
 const clothMat=new THREE.MeshPhongMaterial({map:texCloth, bumpMap:texCloth, bumpScale:0.008,
@@ -742,7 +742,7 @@ const bootMat=new THREE.MeshPhongMaterial({map:texCloth, color:0x2a2724,
 const beltMat=new THREE.MeshPhongMaterial({map:texCloth, color:0x33291f,
   specular:0x241d14, shininess:18});
 const brassMat=new THREE.MeshPhongMaterial({color:0x6e5a2e, specular:0x8a7340, shininess:55});
-markShared(voidMat,texCaveRock,silkFloorMat,boneMat,clothMat,brassMat,
+markShared(voidMat,texCaveRock,boneMat,clothMat,brassMat,
            texCloth,texBone,texJournalPages,
            coatMat,bootMat,beltMat);
 /* silk is LIT (Phong, not Basic): it glistens where the lantern rakes it
@@ -1037,15 +1037,8 @@ function rhizoSystem(cfg){
   return out;
 }
 
-/* ---------------- dripstone geometry: grown, not turned ----------------
-   The first pass read as TURNED WOOD: every profile point took its own ±15%
-   radius kick, which stacked each lathe into rings like a table leg, and no
-   profile closed at its end, so a stalactite seen from below was a hollow
-   pipe. What a formation actually has is a smooth taper, FLUTING — vertical
-   ribs where the water film runs down it, strongest toward the root — a
-   flared skirt where it meets the floor or the vault, and a closed tip.
-   Every builder grows from y=0 upward; hangers are turned over in their
-   geometry (a rotation, which keeps the winding) so they hang from y=0. */
+/* pushes a lathe out of rotational symmetry (radial noise, optional
+   fluting, a slow lean) and welds its seam: the silk funnels and wraps */
 function dripNoise(g,seed,leanAmt,flute=0){
   const pos=g.attributes.position;
   let y0=1e9, y1=-1e9;
@@ -1064,35 +1057,175 @@ function dripNoise(g,seed,leanAmt,flute=0){
   return g;
 }
 const V2=(x,y)=>new THREE.Vector2(Math.max(x,0.001),y);
-/* a stalagmite: a skirt sunk into the floor, a slow taper with a swell or
-   two, and a ROUNDED crown — the drip lands on it and spreads */
-function stalagmiteGeo(r,h,lean=0.08){
-  const N=20, pts=[], ph=Math.random()*7, sw=rand(0.04,0.11), k=rand(1.6,3.6);
-  const dome=Math.min(0.45,rand(0.9,1.6)*r/h+0.08);
-  pts.push(V2(r*1.35,-0.05));
-  for(let i=0;i<=N;i++){
-    const t=i/N;
-    let rad=r*(1-0.5*t)*(1+sw*Math.sin(t*Math.PI*k+ph))+r*0.3*Math.exp(-t*22);
-    if(t>1-dome){ const u=(t-(1-dome))/dome; rad*=Math.sqrt(Math.max(0,1-u*u)); }
-    pts.push(V2(rad,t*h));
-  }
-  return dripNoise(new THREE.LatheGeometry(pts,r<0.12? 8 : r<0.3? 11 : 14),Math.random()*10,lean,1);
+/* ---- speleothems, grown ring by ring ----
+   The smooth lathes read as BLOBS: a taper with a gentle flute is a candle
+   made of soap, however good the stone it wears. A formation is built by
+   what the water did to it, and that is what `speleo` sculpts, ring by ring
+   over a radius profile `prof(t)` (t 0 at the root, 1 at the tip):
+     · RIBS — the runnels of the water film, meandering as they go down,
+       strongest toward the root where the flow has had longest to work;
+     · LIPS — flow lobes that stand out and overhang, sharp underneath and
+       gentle on top (a stack of them is the pagoda stalagmite; many small
+       ones are a stalactite's growth rings);
+     · NODULES — the popcorn that grows where the drip splashes;
+     · MINERAL BANDS along the height (cream calcite, iron orange, grey) and
+       CAVITY — the grooves and the shadow under each lip — in vertex colour,
+       which multiplies the baked calcite.
+   Sides and rows follow the size of the thing, so a nub costs what a nub is
+   worth. The skirt runs under the floor (or into the vault) and the tip
+   closes. Returned geometry grows up from y=0; `hang` turns it over. */
+/* 3D value noise (smooth, about -0.5..0.5) and a three-octave sum of it:
+   what knocks a formation out of round */
+const _h3=(x,y,z)=>{ const n=Math.sin(x*127.1+y*311.7+z*74.7)*43758.5453; return n-Math.floor(n); };
+function vnoise3(x,y,z){
+  const ix=Math.floor(x), iy=Math.floor(y), iz=Math.floor(z);
+  const fx=x-ix, fy=y-iy, fz=z-iz, ux=fx*fx*(3-2*fx), uy=fy*fy*(3-2*fy), uz=fz*fz*(3-2*fz);
+  const a0=_h3(ix,iy,iz), a1=_h3(ix+1,iy,iz), a2=_h3(ix,iy+1,iz), a3=_h3(ix+1,iy+1,iz);
+  const b0=_h3(ix,iy,iz+1), b1=_h3(ix+1,iy,iz+1), b2=_h3(ix,iy+1,iz+1), b3=_h3(ix+1,iy+1,iz+1);
+  const p0=a0+(a1-a0)*ux, p1=a2+(a3-a2)*ux, q0=b0+(b1-b0)*ux, q1=b2+(b3-b2)*ux;
+  const p=p0+(p1-p0)*uy, q=q0+(q1-q0)*uy;
+  return p+(q-p)*uz-0.5;
 }
-/* a stalactite: flared at the vault, a carrot taper to a fine tip that
-   ends in the drop it is growing from */
-function stalactiteGeo(r,h,lean=0.06){
-  const N=20, pts=[], ph=Math.random()*7, sw=rand(0.02,0.06);
-  const kk=rand(1.0,1.6);                    // a carrot, or a long needle
-  pts.push(V2(0.001,-0.2), V2(r*1.35,-0.12));
-  for(let i=0;i<=N;i++){
-    const t=i/N;
-    let rad=r*Math.pow(1-t,kk)*(1+sw*Math.sin(t*9+ph))+r*0.35*Math.exp(-t*20)+0.006;
-    if(i===N) rad=0.001;
-    pts.push(V2(rad,t*h));
+const fbm3d=(x,y,z)=>vnoise3(x,y,z)+0.5*vnoise3(x*2.03+5.1,y*2.03+1.7,z*2.03+9.3)+0.25*vnoise3(x*4.1+2.2,y*4.1+7.9,z*4.1+3.3);
+const BAND_TINTS=[[1.12,1.1,1.06],[0.88,0.76,0.62],[0.78,0.77,0.75],[1.18,1.16,1.12],[0.7,0.66,0.6],[0.92,0.85,0.76]];
+function speleo(h,r,prof,o={}){
+  const segs=o.segs||(r<0.07?8:r<0.16?13:r<0.35?18:24);
+  const step=Math.max(0.028,Math.min(0.08,r*0.26));
+  const rows=o.rows||clamp(Math.round(h/step),10,64);
+  const sd=Math.random()*20;
+  const ribN=o.ribN||(4+Math.floor(Math.random()*4)), ribA=o.ribs===undefined? 0.10 : o.ribs;
+  const lobes=(o.lobes||[]).map(L=>Object.assign({ph:Math.random()*7},L));
+  const nBand=3+Math.floor(Math.random()*5), bands=[];
+  for(let i=0;i<nBand;i++) bands.push({t:Math.random(), w:rand(0.06,0.2), c:BAND_TINTS[Math.floor(Math.random()*BAND_TINTS.length)], k:rand(0.5,0.95)});
+  const grime=o.hang? 0 : rand(0.25,0.45);         // the root, dirty with the floor it grew from
+  const la=Math.random()*7, lean=o.lean===undefined? 0.06:o.lean, lx=Math.cos(la)*lean, lz=Math.sin(la)*lean;
+  const knob=o.knob||0;
+  /* never round, never straight: 3D lumps at the scale of the girth and a
+     finer knobbling over them, and an axis that wanders as it grows */
+  const lump=o.lump===undefined? 0.2 : o.lump, bumpA=r<0.12? 0 : o.bump===undefined? 0.05 : o.bump;   // a knobble on a thin one is under a pixel
+  const nOff=[Math.random()*50,Math.random()*50,Math.random()*50];
+  const wa=rand(1.2,2.8), wph=Math.random()*7, wph2=Math.random()*7, wamp=(o.wander===undefined? 0.1:o.wander)*r;
+  /* some carry a stripe or two down one side, iron in the water that ran there */
+  const stripes=Math.random()<(o.stripes||0.35)? [0,1].slice(0,1+Math.floor(Math.random()*2)).map(()=>({a:Math.random()*Math.PI*2, w:rand(0.12,0.35), c:BAND_TINTS[Math.random()<0.5?1:4]})) : [];
+  const pos=[], col=[], uv=[], idx=[];
+  /* what a lobe does round the body depends on the column alone, and along
+     the height on the ring alone: both are tabled, not redone per vertex */
+  const aroundT=lobes.map(L=>{ const A=new Float32Array(segs+1);
+    for(let i=0;i<=segs;i++){ const a=(i%segs)/segs*Math.PI*2; A[i]=0.62+0.38*Math.sin(a*2+L.ph)+0.12*Math.sin(a*5-L.ph); }
+    return A; });
+  const lobeK=new Float32Array(lobes.length), lobeU=new Float32Array(lobes.length);
+  const ring=(t,y,R,skirt)=>{
+    const o0=pos.length/3;
+    lobes.forEach((L,q)=>{ const u=(t-L.t)*h/Math.max(0.04,r*(L.w||0.9));
+      lobeK[q]=L.a*(u<0? Math.exp(-u*u*16) : Math.exp(-u*u*2.0)); lobeU[q]=Math.exp(-(u+0.32)*(u+0.32)*14)*L.a*4; });
+    const wander=0.45*Math.sin(y*1.1+sd)+0.22*Math.sin(y*2.9+sd*1.3);
+    for(let i=0;i<=segs;i++){
+      const a=(i%segs)/segs*Math.PI*2;
+      const rs=Math.sin(ribN*(a+wander*0.35)+sd)*0.5+0.5;
+      /* the runnels start above the skirt: carried down into the flare they
+         stood out of it as spikes, a stalagmite on insect legs */
+      const ribT=ribA*(o.ribRoot? 0.3+0.7*(1-t) : 1)*(skirt? 0 : Math.min(1,t*h/Math.max(0.12,r*0.6)));
+      let k=1+ribT*(rs-0.5)*2;
+      let under=0;
+      for(let q=0;q<lobes.length;q++){
+        const around=aroundT[q][i];
+        k+=lobeK[q]*around;
+        under=Math.max(under,lobeU[q]*around);
+      }
+      if(knob){
+        const px=Math.cos(a)*R, pz=Math.sin(a)*R;
+        const n=Math.sin(px*31+y*27+sd)*Math.sin(pz*29-y*23+sd*1.7)*Math.sin(px*17+pz*19+y*11)
+               *(0.6+0.4*Math.sin(a*3.3+y*5.1+sd));
+        k+=knob*Math.max(0,n)*Math.max(0,n)*6*(1-t)*(1-t);     // popcorn grows in the splash zone
+      }
+      if(!skirt){
+        /* squat in height and wide around, so the lumps STACK like growth;
+           stretched the other way they hang in folds and the stone is cloth */
+        const sx=Math.cos(a)*R/(r*1.5)+nOff[0], sy=y/(r*1.05)+nOff[1], sz=Math.sin(a)*R/(r*1.5)+nOff[2];
+        k+=lump*(r<0.08? vnoise3(sx,sy,sz)*1.4 : fbm3d(sx,sy,sz))*2*Math.min(1,t*h/Math.max(0.1,r*0.5))
+          +(bumpA? bumpA*vnoise3(sx*4.3,sy*4.3,sz*4.3)*2 : 0);
+      }
+      const rad=Math.max(0.0012,R*(skirt? 1.08 : k));
+      const wy=Math.sin(t*Math.PI*wa+wph)*t, wz=Math.sin(t*Math.PI*wa*0.8+wph2)*t;
+      pos.push(Math.cos(a)*rad+lx*y+wamp*wy, y, Math.sin(a)*rad+lz*y+wamp*wz);
+      /* cavity: the bottom of a groove, the shadow under a lip */
+      let ao=(0.82+0.18*(ribT>0.001? rs : 1))*(1-Math.min(0.45,under));   // dark furrows are BARK
+      let cr=1, cg=1, cb=1;
+      for(const B of bands){ const d=Math.abs(t-B.t)/B.w; if(d<1){ const w=(1-d*d)*B.k;
+        cr*=1+(B.c[0]-1)*w; cg*=1+(B.c[1]-1)*w; cb*=1+(B.c[2]-1)*w; } }
+      for(const S of stripes){ const d=Math.abs(Math.atan2(Math.sin(a-S.a),Math.cos(a-S.a)))/S.w; if(d<1){ const w=(1-d*d)*0.8;
+        cr*=1+(S.c[0]-1)*w; cg*=1+(S.c[1]-1)*w; cb*=1+(S.c[2]-1)*w; } }
+      const gm=1-grime*Math.max(0,1-t*h/Math.max(0.15,r*0.9));
+      col.push(cr*ao*gm,cg*ao*gm*0.97,cb*ao*gm*0.93);
+      uv.push(i/segs, y);
+    }
+    return o0;
+  };
+  const starts=[];
+  /* the root runs deep into the rock and is CLOSED: where the vault rises
+     past a shallow open skirt, you look up into a funnel */
+  const yS=o.hang? -0.5 : -0.3;
+  starts.push(ring(0,yS,0.001,true));
+  starts.push(ring(0,yS,prof(0)*r*(o.hang? 1 : 1.2),true));
+  for(let j=0;j<=rows;j++){ const t=j/rows; starts.push(ring(t,t*h,prof(t)*r,false)); }
+  for(let j=0;j<starts.length-1;j++){
+    const A=starts[j], B=starts[j+1];
+    for(let i=0;i<segs;i++){ const a=A+i, b=B+i; idx.push(a,a+1,b, b,a+1,b+1); }
   }
-  const g=dripNoise(new THREE.LatheGeometry(pts,r<0.1? 7 : r<0.25? 9 : 12),Math.random()*10,lean,0.8);
-  g.rotateX(Math.PI);
+  const g=new THREE.BufferGeometry();
+  g.setAttribute("position",new THREE.Float32BufferAttribute(pos,3));
+  g.setAttribute("color",new THREE.Float32BufferAttribute(col,3));
+  g.setAttribute("uv",new THREE.Float32BufferAttribute(uv,2));
+  g.setIndex(idx); g.computeVertexNormals();
+  /* weld by the ring layout, not by position: each ring's first and last
+     vertex are the seam, and the cap and the tip are poles */
+  const N=g.attributes.normal.array, W=segs+1;
+  for(let j=0;j<starts.length;j++){
+    const A=starts[j]*3, B=(starts[j]+segs)*3;
+    for(let k=0;k<3;k++){ const m=(N[A+k]+N[B+k])/2; N[A+k]=m; N[B+k]=m; }
+  }
+  for(const j of prof(1)*r<0.005? [0,starts.length-1] : [0]){
+    let x=0,y=0,z=0; const o0=starts[j];
+    for(let i=0;i<W;i++){ x+=N[(o0+i)*3]; y+=N[(o0+i)*3+1]; z+=N[(o0+i)*3+2]; }
+    const l=Math.hypot(x,y,z)||1;
+    for(let i=0;i<W;i++){ N[(o0+i)*3]=x/l; N[(o0+i)*3+1]=y/l; N[(o0+i)*3+2]=z/l; }
+  }
+  if(o.hang) g.rotateX(Math.PI);
   return g;
+}
+const crown=(t,dome)=> t>1-dome? Math.sqrt(Math.max(0,1-Math.pow((t-(1-dome))/dome,2))) : 1;
+/* a stalagmite, in one of the four shapes they actually take */
+function stalagmiteGeo(r,h,lean=0.06){
+  const kind=Math.random(), dome=Math.min(0.4,rand(0.9,1.4)*r/h+0.06);
+  const flare=t=>0.22*Math.exp(-t*22);
+  if(kind<0.30){                              // a CANDLE: straight-sided, wax runs down it
+    const nL=2+Math.floor(Math.random()*3), lobes=[];
+    for(let i=0;i<nL;i++) lobes.push({t:rand(0.1,0.8), a:rand(0.05,0.12)});
+    return speleo(h,r,t=>(0.92+0.08*(1-t))*crown(t,dome)+flare(t),{ribs:0.06,ribRoot:true,lobes,knob:0.01,lean,lump:0.24});
+  }
+  if(kind<0.55){                              // a CONE, ringed as it rose
+    const lobes=[]; for(let i=0;i<4+Math.floor(Math.random()*5);i++) lobes.push({t:rand(0.08,0.85), a:rand(0.03,0.08), w:0.6});
+    return speleo(h,r,t=>(1-0.62*Math.pow(t,0.9))*crown(t,dome*0.8)+flare(t),{ribs:0.05,ribRoot:true,lobes,knob:0.012,lean});
+  }
+  if(kind<0.8){                               // a PAGODA: a stack of splash plates
+    const n=3+Math.floor(Math.random()*4), lobes=[];
+    for(let i=0;i<n;i++) lobes.push({t:0.12+i/n*0.78+rand(-0.03,0.03), a:rand(0.35,0.7)*(1-i/n*0.35), w:0.8});
+    return speleo(h,r*0.72,t=>(0.95-0.25*t)*crown(t,dome)+flare(t),{ribs:0.08,lobes,knob:0.008,lean:lean*0.5});
+  }
+  /* a TOTEM: lumps on lumps, the drip having wandered */
+  const ph=Math.random()*7, b=rand(2.2,4.2), lobes=[];
+  for(let i=0;i<2+Math.floor(Math.random()*3);i++) lobes.push({t:rand(0.15,0.8), a:rand(0.1,0.22), w:1.2});
+  return speleo(h,r,t=>(0.9-0.35*t)*(1+0.2*Math.sin(t*Math.PI*b+ph))*crown(t,dome)+flare(t),
+    {ribs:0.06,ribRoot:true,lobes,knob:0.016,lean:lean*1.4,lump:0.26});
+}
+/* a stalactite: flared into the vault, a carrot ringed with its growth,
+   fine flow lines, a fine tip that ends in the drop it is growing from */
+function stalactiteGeo(r,h,lean=0.05){
+  const kk=rand(1.0,1.6), lobes=[];
+  for(let i=0;i<5+Math.floor(Math.random()*8);i++) lobes.push({t:rand(0.05,0.9), a:rand(0.03,0.09), w:0.45});
+  if(Math.random()<0.35) lobes.push({t:rand(0.15,0.5), a:rand(0.15,0.3), w:0.9});   // a drapery collar
+  return speleo(h,r,t=>Math.pow(1-t,kk)*0.97+0.35*Math.exp(-t*18)+(t>0.97? 0 : 0.03),
+    {ribs:0.06,lobes,lean,hang:true,lump:0.12,bump:0.035,wander:0.12,stripes:0.2,rows:clamp(Math.round(h/0.05),10,48)});
 }
 /* a soda straw: a hollow calcite tube the width of a drop, hanging */
 function strawGeo(r,h){
@@ -1104,57 +1237,26 @@ function strawGeo(r,h){
   return g;
 }
 /* a full column: stalagmite and stalactite met in the middle — waisted,
-   flared into the floor and the vault */
+   flared into the floor and the vault, draped and ribbed like poured wax */
 function columnGeo(r,h){
-  const N=22, pts=[], waist=rand(0.4,0.6), ph=Math.random()*7;
-  pts.push(V2(r*1.5,-0.1));
-  for(let i=0;i<=N;i++){
-    const t=i/N;
+  const waist=rand(0.4,0.6), lobes=[];
+  for(let i=0;i<3+Math.floor(Math.random()*4);i++) lobes.push({t:rand(0.1,0.9), a:rand(0.05,0.14), w:1.1});
+  return speleo(h,r,t=>{
     const d=Math.abs(t-waist)/Math.max(waist,1-waist);
-    const rad=r*(0.46+0.54*Math.pow(d,1.3))*(1+0.05*Math.sin(t*Math.PI*3+ph))
-             +r*0.45*(Math.exp(-t*12)+Math.exp(-(1-t)*12));
-    pts.push(V2(rad,t*h));
-  }
-  pts.push(V2(r*1.5,h+0.1));
-  return dripNoise(new THREE.LatheGeometry(pts,16),Math.random()*10,0.02,1.2);
+    return (0.48+0.52*Math.pow(d,1.3))+0.45*(Math.exp(-t*12)+Math.exp(-(1-t)*12));
+  },{ribs:0.10,ribN:7+Math.floor(Math.random()*5),lobes,knob:0.008,lean:0.01,segs:26,lump:0.16,wander:0.05,stripes:0.6,rows:clamp(Math.round(h/0.12),24,80)});
 }
 /* a snapped-off stump: broad, barely tapered, sheared ragged at the top */
 function stumpGeo(r,h){
-  const N=10, seed=Math.random()*10, pts=[V2(r*1.3,-0.04)];
-  for(let i=0;i<=N;i++){
-    const t=i/N;
-    let rad=r*(0.85+0.15*(1-t))*(1+0.05*Math.sin(t*6+seed));
-    if(t>0.86) rad*=Math.max(0.12,(1-t)/0.14*0.85);
-    pts.push(V2(rad,t*h));
-  }
-  pts.push(V2(0.001,h*1.01));
-  return dripNoise(new THREE.LatheGeometry(pts,12),seed,0.05,0.8);
+  return speleo(h,r,t=>(0.85+0.15*(1-t))*(t>0.84? Math.max(0.1,(1-t)/0.16) : 1),{ribs:0.1,knob:0.02,lean:0.05});
 }
-/* a flowstone mound: a low dome whose skirt runs out into the floor like
-   poured wax (spire bases, stream cascades) — never a hemisphere, which is
-   a saucer turned over */
+/* a flowstone mound: poured, not stood — the height rises as (1-ρ²)^1.5
+   from a feather edge under the floor, so its profile is inverted into
+   ρ(t)=√(1−t^⅔). A steep-sided dome is a plate on the floor, and terrace
+   lips near its edge stood up out of the silt as claws. */
 function moundGeo(r,squash){
-  const H=r*squash, pts=[];
-  /* the edge runs out thin and dives under the floor, so no rim of it can
-     stand up and draw the lathe's polygon on the ground */
-  for(const[k,y]of[[1.2,-0.10],[1.08,-0.01],[0.96,0.10],[0.82,0.30],[0.64,0.58],[0.42,0.84],[0.18,0.97],[0,1]])
-    pts.push(V2(r*k*(k>0&&k<1.1? rand(0.94,1.06):1), y<0? y : H*y));
-  return dripNoise(new THREE.LatheGeometry(pts,26),Math.random()*10,0,0.9);
-}
-/* a drapery curtain: wave-folded sheet, folds deepening to a scalloped hem.
-   Built in the XY plane, top edge at y=+hgt/2, hanging root pinned there. */
-function curtainGeo(wdt,hgt){
-  const g=new THREE.PlaneGeometry(wdt,hgt,12,7);
-  const pos=g.attributes.position, seed=Math.random()*10;
-  for(let i=0;i<pos.count;i++){
-    const x=pos.getX(i), y=pos.getY(i);
-    const t=y/hgt+0.5;                    // 1 = root at the ceiling, 0 = free hem
-    const fold=Math.sin(x*4.6+seed)*0.14+Math.sin(x*9.3+seed*2.1)*0.06;
-    pos.setZ(i,(fold+0.03*Math.sin(y*5+seed))*(1.25-t));
-    if(t<0.18) pos.setY(i, y+(0.5+0.5*Math.sin(x*5.2+seed*3))*hgt*0.16);
-  }
-  g.computeVertexNormals();
-  return g;
+  const lobes=[]; for(let i=0;i<1+Math.floor(Math.random()*2);i++) lobes.push({t:rand(0.35,0.7), a:rand(0.04,0.08), w:0.5});
+  return speleo(r*squash,r,t=>Math.sqrt(Math.max(0,1-Math.pow(t,2/3)))*1.15,{ribs:0.05,ribN:9,lobes,knob:0.008,lean:0,segs:24,rows:16,lump:0.12,wander:0,stripes:0});
 }
 
 /* ---------------- silk geometry: webs are structures, not decals ----------------
@@ -1951,21 +2053,53 @@ export function buildCave(){
       const l=new THREE.PointLight(0x3f8fa0,1.6,30,1.4); l.position.set(cx,-15,cz); scene.add(l);
     }
   }
-  /* ---- silk floor sheets around the nests: a skin over the real floor ---- */
+  /* ---- the nest floors: loose silk laid over the ground round each brood,
+     thick at the clutch and thinning out to wisps past the silk the matriarch
+     hears through. It was one flat grey sheet at a third opacity, cut off
+     square at every cell edge — pale plates lying on the floor. The threads
+     are the alpha; the fade is a vertex alpha, lobed round each brood and
+     run to zero along any edge it meets water or the drop, so no cell shows. ---- */
   {
-    const sq=new QuadAcc();
-    for(const k of CAVE.silk){
-      const x=k%CW, y=(k/CW)|0;
-      if(grid3[y][x]===1||grid3[y][x]===5) continue;
+    const sq=new QuadAcc(), lob=CAVE.broods.map(()=>[Math.random()*7,Math.random()*7]);
+    const ok=(x,y)=>{ const c=codeAt(x,y); return c!==3&&c!==5&&c!==7; };
+    const cornerOK=(i,j)=>ok(i-1,j-1)&&ok(i,j-1)&&ok(i-1,j)&&ok(i,j)? 1 : 0;
+    const dens=(xx,zz)=>{
+      let f=0;
+      CAVE.broods.forEach((b,k)=>{
+        const dx=xx-b.center.x, dz=zz-b.center.z, a=Math.atan2(dz,dx);
+        const d=Math.hypot(dx,dz)*(1+0.16*Math.sin(a*3+lob[k][0])+0.08*Math.sin(a*7+lob[k][1]));
+        const t=clamp((d-5.5)/10.5,0,1); f=Math.max(f,1-t*t*(3-2*t));
+      });
+      return f;
+    };
+    const SU=2.2;
+    for(let y=1;y<CH-1;y++)for(let x=1;x<CW-1;x++){
+      const c=grid3[y][x];
+      if(c===1||!ok(x,y)) continue;
       const p=cellToWorld3(x,y);
-      const q=(xx,zz)=>[xx,floorYAt(xx,zz)+0.04,zz];
+      if(Math.min(...CAVE.broods.map(b=>Math.hypot(p.x-b.center.x,p.z-b.center.z)))>21) continue;
+      const k00=cornerOK(x,y), k10=cornerOK(x+1,y), k01=cornerOK(x,y+1), k11=cornerOK(x+1,y+1);
+      const fa=(xx,zz)=>{ const u=(xx-(p.x-E))/CELL, v=(zz-(p.z-E))/CELL;
+        const e=(k00*(1-u)+k10*u)*(1-v)+(k01*(1-u)+k11*u)*v;
+        const f=dens(xx,zz)*e; return [f,f,f]; };
+      const q=(xx,zz)=>[xx,floorYAt(xx,zz)+0.035,zz], nq=(xx,zz)=>floorNormalAt(xx,zz), uq=(xx,zz)=>[xx/SU,zz/SU];
       for(let j=0;j<3;j++)for(let i=0;i<3;i++){
         const x0=p.x-E+i*CELL/3, x1=x0+CELL/3, z0=p.z-E+j*CELL/3, z1=z0+CELL/3;
-        sq.tri(q(x0,z1),q(x1,z1),q(x1,z0),[[0,1],[1,1],[1,0]]);
-        sq.tri(q(x0,z1),q(x1,z0),q(x0,z0),[[0,1],[1,0],[0,0]]);
+        const A=fa(x0,z1), B=fa(x1,z1), C2=fa(x1,z0), D2=fa(x0,z0);
+        if(A[0]+B[0]+C2[0]+D2[0]<0.01) continue;
+        sq.triNC(q(x0,z1),q(x1,z1),q(x1,z0), nq(x0,z1),nq(x1,z1),nq(x1,z0), [uq(x0,z1),uq(x1,z1),uq(x1,z0)], [A,B,C2]);
+        sq.triNC(q(x0,z1),q(x1,z0),q(x0,z0), nq(x0,z1),nq(x1,z0),nq(x0,z0), [uq(x0,z1),uq(x1,z0),uq(x0,z0)], [A,C2,D2]);
       }
     }
-    scene.add(sq.mesh(silkFloorMat));
+    if(sq.vc){
+      const mat=new THREE.MeshPhongMaterial({map:silkLayerTex(), color:0xe6eaec, emissive:0x15191b,
+        specular:0x5a6268, shininess:26, transparent:true, depthWrite:false, vertexColors:true,
+        polygonOffset:true, polygonOffsetFactor:-2, polygonOffsetUnits:-2});
+      /* the vertex colour is the density: into the alpha, never the tint */
+      mat.onBeforeCompile=sh=>{ sh.fragmentShader=sh.fragmentShader.replace("#include <color_fragment>",
+        "diffuseColor.a*=vColor.r;"); };
+      scene.add(sq.mesh(mat));
+    }
   }
   /* ---- dripstone: wet, glossy, grown in matching pairs — merged into a
      single mesh each way (floor spires / ceiling hangers), plus one merged
@@ -2084,6 +2218,27 @@ export function buildCave(){
         stalUp.push(nub);
       }
     }
+    /* stalactites along the tunnels too — the chambers had them all and a
+       tunnel's vault was bare rock — in clusters round a seep, long carrots
+       and short stubs together, the odd one answered from the floor.
+       (Math.random, not srand: decoration must not shift the seeded maze.) */
+    if((code===0||code===3)&&Math.random()<0.22){
+      const cx0=p.x+rand(-1.3,1.3), cz0=p.z+rand(-1.3,1.3);
+      if(!inMouth(cx0,cz0,1.2)){
+        const room=ceilYAt(cx0,cz0)-floorYAt(cx0,cz0);
+        for(let i=2+Math.floor(Math.random()*3);i--;){
+          const sx=cx0+rand(-0.8,0.8), sz=cz0+rand(-0.8,0.8), hh=rand(0.3,Math.min(1.9,room*0.34));
+          const st=new THREE.Mesh(stalactiteGeo(hh*rand(0.11,0.17),hh));
+          st.position.set(sx, ceilYAt(sx,sz)+0.16, sz); st.rotation.y=Math.random()*7;
+          stalDown.push(st);
+        }
+        if(code===0&&Math.random()<0.35&&clearOf(cx0,cz0,0.35)){
+          const h2=rand(0.3,1.1), sm=new THREE.Mesh(stalagmiteGeo(h2*rand(0.16,0.22),h2));
+          sm.position.set(cx0,floorYAt(cx0,cz0),cz0); sm.rotation.y=Math.random()*7; stalUp.push(sm);
+          if(h2>0.6) CAVE.obstacles.push({x:cx0,z:cz0,r:0.3});
+        }
+      }
+    }
     /* NO wall drapery here any more. It anchored at E−0.30, i.e. 0.30m in
        from the wall face, and then took another ~0.2m of wallField and
        fold depth on top — so a broad, shallowly-folded calcite sheet hung
@@ -2142,8 +2297,16 @@ export function buildCave(){
     }
     initDrips(tips, (x,z)=> cellAt3(x,z)===3? WATER_Y : floorYAt(x,z), (x,z)=>cellAt3(x,z)===3);
   }
-  if(stalUp.length){ scene.add(mergeStatic(stalUp,wetMat)); for(const m of stalUp) m.geometry.dispose(); }
-  if(stalDown.length){ scene.add(mergeStatic(stalDown,wetMat)); for(const m of stalDown) m.geometry.dispose(); }
+  /* merged by region, not level-wide: one mesh for the whole cave's dripstone
+     is drawn in full from anywhere, and the formations are not cheap now */
+  const mergeRegion=(arr,mat,sec=12)=>{
+    const buckets=new Map();
+    for(const m of arr){ const c=worldToCell3(m.position.x,m.position.z), k=Math.floor(c.cx/sec)+","+Math.floor(c.cy/sec);
+      let l=buckets.get(k); if(!l) buckets.set(k,l=[]); l.push(m); }
+    for(const l of buckets.values()) scene.add(mergeStatic(l,mat));
+    for(const m of arr) m.geometry.dispose();
+  };
+  mergeRegion(stalUp,wetMat); mergeRegion(stalDown,wetMat);
   if(curtains.length){ scene.add(mergeStatic(curtains,curtainMat)); for(const m of curtains) m.geometry.dispose(); }
   /* ---- the webs: generations of brood have silked every junction ----
      No flat pasted quads. Corner sheets bridge two wall faces, junction
@@ -2478,10 +2641,74 @@ export function buildCave(){
           cocoons.push(co);
         }
       }
-      if(cocoons.length){
-        scene.add(mergeStatic(cocoons,cocoonMaterial()));
-        for(const m of cocoons) m.geometry.dispose();
+      addCocoons(scene,cocoons);
+    }
+    /* ---- the threads (weblines.js): orb webs across corners and between
+       formations, cobweb tangles in the stalactite fields, and a tent of
+       silk over every clutch — lit by the lantern, nearly nothing without it ---- */
+    {
+      const WL=new SilkLines();
+      const up=[0,1,0];
+      /* across the corners where two rock faces meet, at any height */
+      for(let y=1;y<CH-1;y++)for(let x=1;x<CW-1;x++){
+        const code=grid3[y][x];
+        if(code!==0&&code!==4) continue;
+        const p=cellToWorld3(x,y), density=clamp(1-broodDist(x,y)/16,0.15,1);
+        for(const[dx,dy]of[[1,1],[1,-1],[-1,1],[-1,-1]]){
+          if(!solid(codeAt(x+dx,y))||!solid(codeAt(x,y+dy))) continue;
+          if(Math.random()>density*0.55) continue;
+          const rad=rand(0.35,0.95), cx0=p.x+dx*(E-0.05), cz0=p.z+dy*(E-0.05);
+          const fy=floorYAt(cx0,cz0), cv=ceilYAt(cx0,cz0);
+          const hy=Math.random()<0.55? cv-rad-rand(0.15,0.6) : fy+rad+rand(0.2,1.3);
+          const back=rad*1.05;                             // out of the corner along its diagonal
+          const hub=[cx0-dx*back*0.7071, hy, cz0-dy*back*0.7071];
+          const F=wallField(hub[0],hy,hub[2]);
+          hub[0]+=F.x*0.8; hub[2]+=F.z*0.8;
+          const u=[-dy*0.7071,0,dx*0.7071];
+          orbWeb(WL,hub,u,up,rad,{w:0.9+density*0.4});
+        }
       }
+      /* strung between two formations standing close */
+      const spires=CAVE.obstacles.filter(o=>o.r===0.45||o.r===0.55||o.r===0.35);
+      for(let i=0;i<spires.length;i++)for(let j=i+1;j<spires.length;j++){
+        const a=spires[i], b=spires[j], d=Math.hypot(a.x-b.x,a.z-b.z);
+        if(d<1.3||d>3.4||Math.random()>0.45) continue;
+        const mx=(a.x+b.x)/2, mz=(a.z+b.z)/2, fy=floorYAt(mx,mz), rad=d*0.42;
+        const ux=(b.x-a.x)/d, uz=(b.z-a.z)/d;
+        const hub=[mx, fy+Math.max(rad+0.2,rand(0.6,1.4)), mz];
+        orbWeb(WL,hub,[ux,0,uz],up,rad,{anchors:[[a.x+ux*a.r,hub[1]+rand(-0.3,0.3),a.z+uz*a.r],[b.x-ux*b.r,hub[1]+rand(-0.3,0.3),b.z-uz*b.r]]});
+      }
+      /* cobwebs among the stalactites: threads from tip to tip and up to the vault */
+      for(const c of CAVE.chambers){
+        const cp=cellToWorld3(c.cx,c.cy);
+        for(let k=0;k<Math.round(c.r*3);k++){
+          const hx=cp.x+rand(-c.r,c.r)*CELL*0.8, hz=cp.z+rand(-c.r,c.r)*CELL*0.8;
+          if(cellAt3(hx,hz)===1||inMouth(hx,hz,1.0)) continue;
+          const cv=ceilYAt(hx,hz), drop=Math.min(1.6,(cv-floorYAt(hx,hz))*0.22);
+          const pts=cloudPts([hx,cv-drop*0.5-0.1,hz],1.1,drop*0.5,1.1,22);
+          tangleWeb(WL,pts,rand(40,70));
+        }
+      }
+      /* the tent over each clutch: vault to heap, heap to floor, vault to vault */
+      for(const b of broods){
+        const bp=cellToWorld3(b.cx,b.cy), top=[], heap=[], ground=[];
+        for(let q=0;q<14;q++){ const a=Math.random()*7, r=rand(0.5,4.2), px=bp.x+Math.cos(a)*r, pz=bp.z+Math.sin(a)*r;
+          if(cellAt3(px,pz)!==1) top.push([px, ceilYAt(px,pz)-rand(0,0.5), pz]); }
+        for(let q=0;q<12;q++){ const a=Math.random()*7, r=rand(0.2,1.3);
+          heap.push([bp.x+Math.cos(a)*r, 0.45+(1.3-r)*0.35+rand(0,0.3), bp.z+Math.sin(a)*r]); }
+        for(let q=0;q<10;q++){ const a=Math.random()*7, r=rand(2.2,4.5), px=bp.x+Math.cos(a)*r, pz=bp.z+Math.sin(a)*r;
+          if(cellAt3(px,pz)!==1) ground.push([px, floorYAt(px,pz)+0.02, pz]); }
+        for(let q=0;q<30;q++){
+          const a=heap[Math.floor(Math.random()*heap.length)];
+          const pool=Math.random()<0.4? top : ground;
+          if(!pool.length) continue;
+          const t=pool[Math.floor(Math.random()*pool.length)], d=Math.hypot(t[0]-a[0],t[1]-a[1],t[2]-a[2]);
+          WL.sag(a,t,d*rand(0.02,0.06),Math.max(3,Math.round(d/0.8)),0.8);
+        }
+        tangleWeb(WL,top,40,0.9);
+        tangleWeb(WL,cloudPts([bp.x,1.1,bp.z],1.4,0.55,1.4,24),90,1.0);   // the tangle over the eggs
+      }
+      CAVE.silkLines=WL.build();
     }
     const flush=(arr,mat)=>{ if(arr.length){ scene.add(mergeStatic(arr,mat));
       for(const m of arr) m.geometry.dispose(); } };
@@ -3292,5 +3519,7 @@ export function updateCave(dt){
   if(CAVE.stones) cullStones(CAVE.stones,camera);
   updateSpores(dt,camera,STATE.lanternOn? 0.55+0.45*STATE.lanternCharge : 0);
   updateRockDust(dt,camera);
+  { const U=SILK_LINE_MAT.uniforms;                 // the threads catch the flame
+    U.uLP.value.copy(LANT.point.position); U.uLI.value=LANT.point.intensity; }
   updateMist(dt,camera);
 }
