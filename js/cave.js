@@ -17,8 +17,8 @@ import { rand, clamp, lerp, srand, hash } from "./utils.js";
 import { CELL } from "./map.js";
 import { STATE } from "./state.js";
 import { scene, camera, renderer, lights, makeLightRecord, markShared,
-         mergeStatic, freezeStaticScene } from "./scene.js";
-import { makeCanvas, texCaveRock, texShaftMasonry, texShaftMasonryBump,
+         mergeStatic, freezeStaticScene, sectorSplit } from "./scene.js";
+import { makeCanvas, texFor, texCaveRock, texShaftMasonry, texShaftMasonryBump,
          makeWebSheetTexture, makeCobwebTexture, makeStrandTexture, makeFunnelTexture,
          makeFungusSkin, FUNGUS_STRIPS, scaleBoxUV,
          texCloth, texBone, texJournalPages } from "./textures.js";
@@ -36,6 +36,7 @@ import { LANT } from "./lantern.js";
 import { renderObjectives, toast } from "./ui.js";
 import { AU, sfxRockfall, sfxIgnite, startClutchFire, panTo } from "./audio.js";
 
+texFor(2);                         // every map this file declares belongs to THE NEST (see makeCanvas)
 export const CW=47, CH=47, CAVE_H_MAX=20;
 export const CAVE_SPAN=CW*CELL;
 export let grid3=null;
@@ -1927,11 +1928,16 @@ export function buildCave(){
       }
     }
   }
-  const floor=fAcc.mesh(floorMat); scene.add(floor);
+  /* each of these is one skin across all 188m of cave, and as one mesh each
+     was drawn whole from anywhere in it. Cut into 16m sectors (sectorSplit,
+     scene.js) after the shading is settled, so a vertex on a cut carries the
+     same welded normal into both pieces and the surface is unchanged. */
+  const addSectors=m=>{ for(const s of sectorSplit(m,16)) scene.add(s); };
+  const floor=fAcc.mesh(floorMat); addSectors(floor);
   buildBridge(pAcc);
-  const pit=pAcc.mesh(pitMat); smoothShade(pit.geometry,0.2); scene.add(pit);
+  const pit=pAcc.mesh(pitMat); smoothShade(pit.geometry,0.2); addSectors(pit);
   /* the walls and the vault are one skin, welded vertex for vertex */
-  const walls=wAcc.mesh(rockMat); smoothShade(walls.geometry); scene.add(walls);
+  const walls=wAcc.mesh(rockMat); smoothShade(walls.geometry); addSectors(walls);
   /* ---- the stream's water: a lens, not a sheet (see texCaustic above) ---- */
   {
     const S=6;                                  // sub-quads per cell each way
@@ -2298,8 +2304,12 @@ export function buildCave(){
     initDrips(tips, (x,z)=> cellAt3(x,z)===3? WATER_Y : floorYAt(x,z), (x,z)=>cellAt3(x,z)===3);
   }
   /* merged by region, not level-wide: one mesh for the whole cave's dripstone
-     is drawn in full from anywhere, and the formations are not cheap now */
-  const mergeRegion=(arr,mat,sec=12)=>{
+     is drawn in full from anywhere, and the formations are not cheap now.
+     The regions are 16m (4 cells), a quarter of the fog's reach: at the old
+     48m the 1.2 million triangles of dripstone sat in 28 meshes so large
+     that two thirds of them were in the frustum from any spot, most of that
+     past the fog. This is where the level's triangle count went. */
+  const mergeRegion=(arr,mat,sec=4)=>{
     const buckets=new Map();
     for(const m of arr){ const c=worldToCell3(m.position.x,m.position.z), k=Math.floor(c.cx/sec)+","+Math.floor(c.cy/sec);
       let l=buckets.get(k); if(!l) buckets.set(k,l=[]); l.push(m); }
@@ -2647,7 +2657,10 @@ export function buildCave(){
        formations, cobweb tangles in the stalactite fields, and a tent of
        silk over every clutch — lit by the lantern, nearly nothing without it ---- */
     {
-      const WL=new SilkLines();
+      /* 16m regions, not the default 48: the lines are additive, so how they
+         are grouped changes no pixel, and a region small enough to sit behind
+         one rock mass can be skipped when it does (cavevis.js) */
+      const WL=new SilkLines(16);
       const up=[0,1,0];
       /* across the corners where two rock faces meet, at any height */
       for(let y=1;y<CH-1;y++)for(let x=1;x<CW-1;x++){

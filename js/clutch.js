@@ -202,6 +202,15 @@ export function initClutchFire(){
 }
 const _o=new THREE.Object3D();
 /* env: {halo, strandMat, strandMesh, floorAt} from cave.js */
+/* three culls an InstancedMesh by its GEOMETRY's bounding sphere, which
+   knows one egg at the origin and nothing about the pile — so these had
+   culling switched off and every clutch in the cave was drawn every frame,
+   wherever you stood. The mesh gets its own copy of the (small) geometry
+   whose sphere is the whole pile's, and culls like anything else. */
+function boundPile(inst,cy,r){
+  inst.geometry=inst.geometry.clone();
+  inst.geometry.boundingSphere=new THREE.Sphere(new THREE.Vector3(0,cy,0),r);
+}
 export function makeClutch(env,x,z){
   const S=skins();
   const g=new THREE.Group();
@@ -306,7 +315,7 @@ export function makeClutch(env,x,z){
       _o.scale.set(r*rand(0.9,1.1),r*rand(0.8,1.0),r*rand(0.8,1.0)); _o.updateMatrix();
       hk.setMatrixAt(i,_o.matrix);
     }
-    hk.instanceMatrix.needsUpdate=true; hk.frustumCulled=false;
+    hk.instanceMatrix.needsUpdate=true; boundPile(hk,0.2,3.2);     // husks lie out to 1.25× the foot (≤2.6m)
     g.add(hk);
   }
   /* the eggs: each comes to rest on the mound or on the eggs under it */
@@ -341,7 +350,7 @@ export function makeClutch(env,x,z){
   });
   inst.instanceMatrix.needsUpdate=true;
   if(inst.instanceColor) inst.instanceColor.needsUpdate=true;
-  inst.frustumCulled=false;
+  boundPile(inst,0.7,2.2);                    // every egg rests within 1.3m of the heap's axis
   g.add(inst);
   /* fresh silk lashed OVER the pile, mound edge to mound edge, each line
      riding the tops of the eggs it crosses; and guy lines staking it down.

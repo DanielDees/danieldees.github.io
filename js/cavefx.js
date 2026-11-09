@@ -11,7 +11,7 @@
    that makes a stalactite read as wet from across a chamber is the pinpoint
    of lantern caught at its end. */
 import { rand, clamp } from "./utils.js";
-import { scene, camera, markShared } from "./scene.js";
+import { scene, camera, markShared, sectorSplit } from "./scene.js";
 import { STATE } from "./state.js";
 import { AU, panTo } from "./audio.js";
 import { makeMoteSystem, makeDustSystem } from "./particles.js";
@@ -59,7 +59,11 @@ export function initDrips(tips,floorAt,waterAt){
     geo.setAttribute("position",new THREE.Float32BufferAttribute(pos,3));
     geo.setAttribute("normal",new THREE.Float32BufferAttribute(nor,3));
     geo.setIndex(idx);
-    scene.add(new THREE.Mesh(geo,beadMat));
+    /* ~1,500 beads a centimetre across, 80 triangles each: as one mesh all
+       117,000 of them went to the GPU every frame from anywhere in the cave,
+       nearly all of them smaller than a pixel. In 16m sectors only the ones
+       near you are drawn (sectorSplit + the fog cull, scene.js). */
+    for(const s of sectorSplit(new THREE.Mesh(geo,beadMat),16)) scene.add(s);
   }
   /* the falling drops (and the spray a landing kicks up) */
   W.drops=new THREE.InstancedMesh(BEAD,fallMat,N_DROP);

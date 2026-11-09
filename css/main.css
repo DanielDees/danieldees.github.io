@@ -20,8 +20,20 @@ body.lvl2{                       /* THE NEST: fungus blue */
   --accent-28:rgba(119,199,187,.28); --accent-50:rgba(119,199,187,.5);
   --glow:rgba(119,199,187,.22);
 }
-*{margin:0;padding:0;box-sizing:border-box;-webkit-user-select:none;user-select:none}
-html,body{width:100%;height:100%;overflow:hidden;background:#000}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-user-select:none;user-select:none;
+  -webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+/* touch-action:manipulation is what switches off Safari's double-tap zoom;
+   overscroll-behavior stops the page rubber-banding under a dragging thumb */
+html,body{width:100%;height:100%;overflow:hidden;background:#000;
+  touch-action:manipulation;overscroll-behavior:none;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+/* the notch, the rounded corners and the home indicator: every HUD edge
+   below is measured from these, never from the raw screen edge */
+:root{--sl:env(safe-area-inset-left,0px);--sr:env(safe-area-inset-right,0px);
+  --st:env(safe-area-inset-top,0px);--sb:env(safe-area-inset-bottom,0px)}
+/* keyboard wording and touch wording live side by side in the markup; the
+   one that does not apply to this device is taken out (touch.js sets body.touch) */
+body:not(.touch) .tc{display:none!important}
+body.touch .kb{display:none!important}
 body{font-family:"Courier New",Courier,monospace;color:var(--bone)}
 #game{position:fixed;inset:0;cursor:none;transition:filter 1.4s ease}
 canvas{display:block}
@@ -68,7 +80,7 @@ body.dying #game{filter:grayscale(.55) contrast(1.08) brightness(.86) saturate(.
 .panel{background:rgba(8,7,4,.72);border:1px solid var(--accent-28);backdrop-filter:blur(2px)}
 
 /* ---------- objectives log ---------- */
-#objectives{position:fixed;top:18px;left:18px;padding:0;max-width:430px;min-width:290px;
+#objectives{position:fixed;top:calc(18px + var(--st));left:calc(18px + var(--sl));padding:0;max-width:430px;min-width:290px;
   border-left:3px solid var(--accent-50)}
 #objHead{display:flex;justify-content:space-between;align-items:baseline;gap:16px;
   padding:11px 16px 10px;border-bottom:1px solid var(--accent-28);background:var(--accent-08)}
@@ -107,12 +119,12 @@ body.dying #game{filter:grayscale(.55) contrast(1.08) brightness(.86) saturate(.
   100%{box-shadow:0 0 0 26px rgba(0,0,0,0), inset 0 0 0 0 rgba(0,0,0,0)}
 }
 
-#topright{position:fixed;top:18px;right:18px;display:flex;gap:10px;pointer-events:auto}
+#topright{position:fixed;top:calc(18px + var(--st));right:calc(18px + var(--sr));display:flex;gap:10px;pointer-events:auto}
 .hudbtn{font-family:inherit;font-size:13px;letter-spacing:.22em;padding:11px 18px;background:rgba(8,7,4,.72);
   color:var(--accent);border:1px solid var(--accent-50);cursor:pointer}
 .hudbtn:hover{background:var(--accent-15)}
 
-#staminaWrap{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);width:430px;
+#staminaWrap{position:fixed;bottom:calc(26px + var(--sb));left:50%;transform:translateX(-50%);width:430px;
   opacity:0;transition:opacity .3s}
 #staminaWrap.show{opacity:1}
 #stamLabel{display:flex;justify-content:space-between;font-size:14px;letter-spacing:.3em;color:#b3a87e;margin-bottom:7px;
@@ -130,7 +142,7 @@ body.dying #game{filter:grayscale(.55) contrast(1.08) brightness(.86) saturate(.
 #staminaWrap.adren #stamLabel .lowtag{display:none}
 
 /* THE NEST's crank lantern: a second, smaller bar above stamina */
-#lanternWrap{position:fixed;bottom:96px;left:50%;transform:translateX(-50%);width:300px;
+#lanternWrap{position:fixed;bottom:calc(96px + var(--sb));left:50%;transform:translateX(-50%);width:300px;
   opacity:0;transition:opacity .3s}
 #lanternWrap.show{opacity:1}
 #lantLabel{display:flex;justify-content:space-between;font-size:11.5px;letter-spacing:.24em;color:#8fa8ae;margin-bottom:5px;
@@ -143,7 +155,7 @@ body.dying #game{filter:grayscale(.55) contrast(1.08) brightness(.86) saturate(.
 #lanternWrap.low #lantern{background:#8a4a30}
 #lanternWrap.on.low #lantern{background:#ff7a4a;box-shadow:0 0 10px rgba(255,122,74,.4)}
 
-#keysHint{position:fixed;bottom:18px;right:18px;font-size:12.5px;letter-spacing:.14em;color:#7d7560;
+#keysHint{position:fixed;bottom:calc(18px + var(--sb));right:calc(18px + var(--sr));font-size:12.5px;letter-spacing:.14em;color:#7d7560;
   text-shadow:0 1px 3px rgba(0,0,0,.9)}
 #prompt{position:fixed;bottom:14%;left:50%;transform:translateX(-50%);font-size:18px;letter-spacing:.12em;
   color:var(--bone);text-shadow:0 0 8px rgba(0,0,0,.9);opacity:0;transition:opacity .15s}
@@ -170,7 +182,8 @@ body.dying #game{filter:grayscale(.55) contrast(1.08) brightness(.86) saturate(.
 .overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
   background:rgba(4,3,1,.9);z-index:40;pointer-events:auto}
 .overlay.hide{display:none}
-.sheet{max-width:680px;width:92%;max-height:88vh;overflow:auto;padding:34px 42px 38px;
+.sheet{max-width:680px;width:92%;max-height:88vh;max-height:88dvh;overflow:auto;padding:34px 42px 38px;
+  -webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y;
   border:1px solid var(--accent-28);
   background:linear-gradient(180deg, rgba(20,17,8,.97), rgba(10,9,5,.97));box-shadow:0 0 80px rgba(0,0,0,.9)}
 .sheet h1{font-size:26px;letter-spacing:.3em;color:var(--accent);font-weight:400;margin-bottom:5px}
@@ -188,6 +201,9 @@ kbd{display:inline-block;min-width:26px;text-align:center;padding:2px 7px;margin
 .bigbtn{display:block;margin:26px auto 0;font-family:inherit;font-size:13px;letter-spacing:.3em;padding:14px 38px;
   color:var(--ink);background:var(--accent);border:none;cursor:pointer;min-width:270px;white-space:nowrap}
 .bigbtn:hover{background:#efdb84}
+/* PLAY while the level is still being built: the fill is the progress (--p, set by ui.js) */
+.bigbtn:disabled{cursor:default;color:var(--accent);
+  background:linear-gradient(90deg,var(--accent-50) var(--p,0%),var(--accent-15) var(--p,0%))}
 .ghostbtn{margin-top:12px;background:transparent;color:var(--accent);border:1px solid var(--accent-50)}
 .ghostbtn:hover{background:var(--accent-15);color:var(--accent)}
 .subtle{font-size:11px;color:#6e6750;letter-spacing:.1em;text-align:center;margin-top:16px}
@@ -289,3 +305,138 @@ input[type=checkbox]:checked{background:var(--accent)}
 #winOverlay.finale .bigbtn:hover{background:#e7f1f5}
 #winOverlay.finale .ghostbtn{background:transparent;color:#cfdde3;border-color:rgba(207,221,227,.5)}
 #pauseStats{margin:4px 0 6px}
+
+/* =====================================================================
+   TOUCH — phones and tablets (js/touch.js)
+   The layer is the look surface; its children are the stick and the
+   buttons. It sits under the HUD in the document, so the menu button stays
+   on top of it, and it takes touches only while .live (playing, unpaused,
+   no cutscene) — the rest of the time a tap falls through to the menus.
+   ===================================================================== */
+#touchUI{position:fixed;inset:0;display:none;pointer-events:none;touch-action:none;
+  opacity:0;transition:opacity .35s}
+body.touch #touchUI{display:block}
+#touchUI.live{pointer-events:auto;opacity:1}
+/* the buttons are deliberately faint: this is a game about peering into the
+   dark, and a row of bright discs along the bottom would be the brightest
+   thing on the screen */
+.tbtn{position:absolute;width:64px;height:64px;border-radius:50%;padding:0;font-family:inherit;
+  font-size:10px;letter-spacing:.14em;text-indent:.14em;color:var(--accent);
+  background:rgba(8,7,4,.36);border:1px solid var(--accent-28);
+  touch-action:none;transition:opacity .2s, background .12s, border-color .12s}
+.tbtn.down{background:var(--accent-28);border-color:var(--accent)}
+.tbtn.on{background:var(--accent-15);border-color:var(--accent);box-shadow:0 0 14px var(--glow)}
+#tJump{right:calc(20px + var(--sr));bottom:calc(18px + var(--sb))}
+#tCrouch{right:calc(98px + var(--sr));bottom:calc(12px + var(--sb))}
+#tRun{right:calc(14px + var(--sr));bottom:calc(96px + var(--sb))}
+#tRun.spent{color:var(--alert);border-color:rgba(176,58,46,.6)}
+/* USE only exists while there is something to use, and it says so by glowing */
+#tUse{right:calc(92px + var(--sr));bottom:calc(88px + var(--sb));width:72px;height:72px;font-size:12px;
+  opacity:0;pointer-events:none}
+#tUse.show{opacity:1;pointer-events:auto;border-color:var(--accent);background:var(--accent-15);
+  animation:usepulse 1.2s ease-in-out infinite}
+@keyframes usepulse{50%{box-shadow:0 0 18px var(--glow)}}
+/* the lantern's pair: only once you are carrying one */
+#tLight,#tWind{width:56px;height:56px;opacity:0;pointer-events:none}
+#tLight{right:calc(14px + var(--sr));bottom:calc(172px + var(--sb))}
+#tWind{right:calc(80px + var(--sr));bottom:calc(176px + var(--sb))}
+#tLight.show,#tWind.show{opacity:1;pointer-events:auto}
+#tLight.on{color:#ffcf8a;border-color:rgba(255,207,138,.8);background:rgba(255,207,138,.14);
+  box-shadow:0 0 14px rgba(255,207,138,.3)}
+/* the stick: a zero-size anchor moved by transform, so following a thumb
+   never touches layout */
+#tStick{position:absolute;left:0;top:0;width:0;height:0;opacity:0;transition:opacity .15s;pointer-events:none}
+#tStick.on{opacity:1}
+#tStick::before{content:"";position:absolute;left:-54px;top:-54px;width:108px;height:108px;border-radius:50%;
+  border:1px solid var(--accent-50);background:rgba(8,7,4,.28)}
+#tStick i{position:absolute;left:-23px;top:-23px;width:46px;height:46px;border-radius:50%;
+  background:var(--accent-28);border:1px solid var(--accent)}
+/* where the walking thumb goes, until it is there */
+#tHint{position:absolute;left:calc(40px + var(--sl));bottom:calc(30px + var(--sb));width:108px;height:108px;
+  border-radius:50%;border:1px dashed var(--accent-28);display:flex;align-items:center;justify-content:center;
+  font-size:10px;letter-spacing:.3em;text-indent:.3em;color:var(--accent-dim);opacity:.7;
+  pointer-events:none;transition:opacity .2s}
+#tStick.on + #tHint{opacity:0}
+body.touch #keysHint{display:none}
+/* fingers are not cursors: the options' controls grow to something a thumb can hit */
+body.touch input[type=range]{height:8px}
+body.touch input[type=range]::-webkit-slider-thumb{width:26px;height:30px}
+body.touch input[type=checkbox]{width:26px;height:26px}
+body.touch .optrow{margin:16px 0 18px}
+
+/* ---------- turn the phone ---------- */
+#rotateHint{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;background:#040301}
+#rotateIcon{width:38px;height:66px;margin:22px auto 20px;border:2px solid var(--accent);border-radius:7px;
+  animation:rotphone 2.4s ease-in-out infinite}
+@keyframes rotphone{0%,20%{transform:rotate(0)}60%,100%{transform:rotate(-90deg)}}
+@media (orientation:portrait){ body.touch #rotateHint{display:flex} }
+body:not(.ios) .iosOnly, body.standalone .iosOnly{display:none!important}
+
+/* ---------- short screens: a phone held sideways ----------
+   Landscape on a phone is ~340–430 CSS px tall. Everything keeps its place
+   and its look; it is the same HUD at a smaller size, so that the log, the
+   bars and the menus leave the middle of the picture alone. */
+@media (max-height:540px){
+  #objectives{top:calc(10px + var(--st));left:calc(10px + var(--sl));min-width:0;max-width:min(300px,42vw);border-left-width:2px}
+  #objHead{padding:6px 10px 5px;gap:10px}
+  #objFloor{font-size:10.5px;letter-spacing:.22em}
+  #objPlace{font-size:8.5px;letter-spacing:.16em}
+  #objList{padding:6px 10px 2px}
+  #objectives li{font-size:11.5px;line-height:1.4;padding:2px 0;gap:6px}
+  #objectives li .omark{flex-basis:10px}
+  #objectives li .ocount{font-size:10px;gap:4px}
+  #objectives li.sub{font-size:10px;padding:0 0 3px 16px}
+  .pip{width:5px;height:5px}
+  .ometer{width:40px;height:5px}
+  #stats{margin:0 10px;padding:5px 0 6px;font-size:10px;gap:3px 9px}
+  .chip{font-size:9px;padding:1px 5px}
+  #topright{top:calc(10px + var(--st));right:calc(10px + var(--sr))}
+  .hudbtn{font-size:11px;letter-spacing:.2em;padding:9px 14px}
+  #staminaWrap{bottom:calc(10px + var(--sb));width:min(260px,32vw)}
+  #stamLabel{font-size:9.5px;letter-spacing:.22em;margin-bottom:4px}
+  #stamBar{height:13px;padding:2px}
+  #lanternWrap{bottom:calc(46px + var(--sb));width:min(200px,26vw)}
+  #lantLabel{font-size:9px;letter-spacing:.2em;margin-bottom:3px}
+  #lantBar{height:10px}
+  #prompt{bottom:24%;font-size:14px;white-space:nowrap}
+  #hiddenTag{bottom:17%;font-size:11.5px}
+  #toast{top:17%;font-size:14px;max-width:62vw}
+  #ltMain{font-size:34px;letter-spacing:.42em;text-indent:.42em}
+  #ltSub{margin-top:8px;font-size:10.5px}
+  .sheet{max-height:94vh;max-height:94dvh;padding:16px 22px 18px;
+    padding-left:calc(22px + var(--sl)*.5);padding-right:calc(22px + var(--sr)*.5)}
+  .sheet h1{font-size:19px;margin-bottom:3px}
+  .sheet h2{margin-bottom:10px;font-size:10px}
+  .sheet h3{margin:14px 0 6px}
+  .sheet p,.sheet li{font-size:12.5px;line-height:1.6}
+  .bigbtn{margin-top:14px;padding:11px 26px;min-width:220px;font-size:12px}
+  .ghostbtn{margin-top:8px}
+  .subtle{margin-top:9px;font-size:10px}
+  #titleArt{display:none}
+  .statrow{padding:5px 2px;font-size:12px}
+  .tab{padding:8px 11px;font-size:10px}
+  .keys{gap:4px 14px}
+  .keys dd{font-size:12.5px;line-height:1.5}
+  .legend li,.rules li{font-size:12.5px}
+  .rules li{padding:5px 0 5px 30px}
+  .rules li::before{top:5px}
+  .tip{margin-top:10px;padding:8px 12px;font-size:12px;line-height:1.55}
+  #deathStats{margin-top:10px}
+  #deathOverlay h1,#winOverlay h1{font-size:21px}
+  #winOverlay.finale h1{font-size:23px}
+  #deathRule{margin-bottom:9px}
+  #pauseStats{margin:2px 0 2px}
+  .optrow,body.touch .optrow{margin:9px 0 11px}
+  /* the start screen: both buttons on one row, so PLAY is never below the fold */
+  #startOverlay .sheet{text-align:center}
+  #startOverlay .sheet p{text-align:left}
+  #startOverlay .sheet p.subtle{text-align:center}
+  #startOverlay .bigbtn{display:inline-block;min-width:190px;margin:14px 5px 0}
+}
+/* narrow as well as short: the three-across menus lose their side padding */
+@media (max-width:560px){
+  .sheet{padding-left:18px;padding-right:18px}
+  .keys{grid-template-columns:1fr}
+  .keys dt{padding-top:8px}
+  .optrow{grid-template-columns:78px 1fr 44px}
+}

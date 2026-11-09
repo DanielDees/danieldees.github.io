@@ -2,8 +2,124 @@
 import { readSettings } from "./settings.js";
 /* the few maps big enough to matter drop a size on the low graphics setting */
 const LOW_TEX=(()=>{ const s=readSettings(); return !!(s&&s.quality==="low"); })();
-export function makeCanvas(w,h,fn){const c=document.createElement("canvas");c.width=w;c.height=h;fn(c.getContext("2d"),w,h);
-  const t=new THREE.CanvasTexture(c);t.wrapS=t.wrapT=THREE.RepeatWrapping;return t;}
+/* ---------------- a generated map is drawn when it is first needed ----------------
+   Every map in the game is painted at runtime, and ~120 of them are declared
+   at module scope across this file, props.js, library.js, cave.js… They used
+   to be painted where they were declared, so loading the page drew all three
+   floors' worth — 63MB of canvas and most of the startup time — before the
+   menu could answer a tap, to show a level that uses a third of them.
+
+   A map declared while the module graph is still evaluating (DEFER) is now
+   only a PROMISE: the texture object exists at once, so every `map:texFoo`,
+   `.repeat.set()` and `markShared()` that follows works untouched, but its
+   `image` is an accessor that runs the painter the first time anything reads
+   it — three's own upload, a builder slicing it, another painter using it as
+   a pattern. main.js calls sealTextures() once every module has evaluated,
+   and from then on makeCanvas paints at once exactly as it always did: the
+   per-build maps (decals, book covers, posters) are made inside a level
+   build, where the time is already paid for.
+
+   Each promise is tagged with the floors that use it (texFor), which buys
+   the two things laziness alone cannot:
+     · levelTextures(n) — a floor's maps, so they can be painted and uploaded
+       under the loading bar or the black between floors instead of in the
+       frame that first shows them;
+     · releaseTexturesExcept(n) — on the way DOWN (there is no way back up)
+       every map only the old floor used gives back its GPU texture and its
+       canvas.
+   A wrong tag costs a hitch, never a picture: a released or not-yet-warmed
+   map simply paints itself again the next time something asks for it.
+
+   The trap this sets is a painter with a SIDE OUTPUT. `texCeilFoam.mean` was
+   a variable the painter assigned and module code read on the next line —
+   before the painter has run, now. Anything a painter computes for the world
+   outside goes through lazyValue() below, which runs the painter first. */
+const LAZY=[];                       // every deferred map: {tex, lv, built(), drop()}
+let DEFER=true, LV=7;                // module phase · the floors (bit per level) the maps being declared belong to
+/* the floors the maps declared from here on belong to; no arguments = all of them */
+export function texFor(...levels){ LV=levels.length? levels.reduce((m,l)=>m|(1<<l),0) : 7; }
+export function sealTextures(){ DEFER=false; LV=7; }
+function lazify(t,make,lv,register,owns=true){
+  let img=null, peek=false, cloned=false;
+  Object.defineProperty(t,"image",{configurable:true,enumerable:true,
+    get(){ if(img===null&&!peek) img=make(); return img; },
+    /* three's constructor and copy() assign whatever they were handed,
+       undefined included; only a real image may replace the promise */
+    set(v){ if(v) img=v; }});
+  /* a clone shares the canvas, so it must share the promise: three's own
+     clone() copies `image`, which would run the painter on the spot */
+  t.clone=function(){
+    cloned=true;
+    const c=new THREE.CanvasTexture();
+    lazify(c,()=>t.image,lv,DEFER,false);
+    peek=true; THREE.Texture.prototype.copy.call(c,t); peek=false;
+    return c;
+  };
+  /* the canvas if it exists, without painting it (teardown asks which canvases are still owned) */
+  t.peekImage=()=>img;
+  /* releasing empties the canvas at once (freeCanvas) unless a clone may
+     still be showing it — then it is only let go, for the collector */
+  if(register) LAZY.push({tex:t, lv, built:()=>img!==null, drop(){ if(owns&&!cloned) freeCanvas(img); img=null; }});
+  return t;
+}
+/* ---- a blurred fill, on every browser ----
+   `g.filter="blur()"` is the easy way and Safari does not have it: there the
+   assignment is silently ignored and the shape comes out hard-edged — the
+   breaker's soft shadow as a dark rectangle stuck to the wall, on exactly
+   the phones this is for. Where the filter is missing the same Gaussian is
+   had from the canvas's own shadow: the shape is drawn a canvas-width off
+   to the side and only its shadow lands in view (a shadow's blur is twice
+   its standard deviation; the CSS filter's radius IS the deviation).
+   `rgb` is the fill's colour; the fill's own alpha still shapes the result.
+   `draw` must build its own path: one begun before the call keeps the
+   transform it was drawn under and would be filled in place, unblurred. */
+const FILTER_OK=(()=>{ try{ const g=document.createElement("canvas").getContext("2d");
+  g.filter="blur(2px)"; return g.filter==="blur(2px)"; }catch(e){ return false; } })();
+export function blurFill(g,px,rgb,draw){
+  if(FILTER_OK){ g.filter=`blur(${px}px)`; draw(); g.filter="none"; return; }
+  const off=g.canvas.width+g.canvas.height+px*8;
+  g.save();
+  g.shadowColor=rgb; g.shadowBlur=px*2; g.shadowOffsetX=off; g.shadowOffsetY=0;
+  g.translate(-off,0); draw();
+  g.restore();
+}
+/* a canvas keeps its pixel store until the collector gets round to the
+   element, and on an iPhone that store counts against a hard cap on canvas
+   memory in the meantime: a level's worth of dead decal and book-cover
+   canvases is exactly what gets a tab killed. A canvas nobody will read
+   again is emptied by hand, which gives the memory back at once. */
+export function freeCanvas(c){ if(c&&c.getContext&&c.width){ c.width=0; c.height=0; } }
+/* every canvas a deferred map currently holds — they outlive any one level */
+export function ownedCanvases(into){ for(const r of LAZY){ const c=r.tex.peekImage(); if(c) into.add(c); } return into; }
+export function makeCanvas(w,h,fn){
+  const make=()=>{ const c=document.createElement("canvas"); c.width=w; c.height=h; fn(c.getContext("2d"),w,h); return c; };
+  const t=new THREE.CanvasTexture(DEFER? undefined : make());
+  t.wrapS=t.wrapT=THREE.RepeatWrapping;
+  return DEFER? lazify(t,make,LV,true) : t;
+}
+/* a deferred map built from OTHER maps (a bleached copy, a recolour): `make`
+   returns the finished canvas and may read whatever images it likes */
+export function lazyTexture(make){
+  if(!DEFER) return new THREE.CanvasTexture(make());
+  return lazify(new THREE.CanvasTexture(),make,LV,true);
+}
+/* a number a painter works out for the world outside (a map's mean): reading
+   it paints the map first */
+export function lazyValue(tex,key,get){
+  Object.defineProperty(tex,key,{configurable:true,enumerable:true,get(){ void tex.image; return get(); }});
+}
+export function levelTextures(level){ const b=1<<level; return LAZY.filter(r=>r.lv&b).map(r=>r.tex); }
+export function releaseTexturesExcept(level){
+  const b=1<<level; let n=0;
+  for(const r of LAZY) if(!(r.lv&b)&&r.built()){ r.tex.dispose(); r.drop(); n++; }
+  return n;
+}
+/* for smoke tests: how many promises, how many kept, and the canvas they hold */
+export function textureStats(){
+  let built=0, px=0;
+  for(const r of LAZY) if(r.built()){ built++; const c=r.tex.image; px+=c.width*c.height; }
+  return {declared:LAZY.length, built, mb:+(px*4/1048576).toFixed(1)};
+}
 
 
 /* signed per-pixel grain without reading the canvas back: the positive half
@@ -27,6 +143,7 @@ function addGrain(g,w,h,amp){
   g.globalCompositeOperation="difference"; g.fillStyle=g.createPattern(nc,"repeat"); g.fillRect(0,0,w,h);
   g.restore();
 }
+texFor(0);
 /* ================= LEVEL 0 — the yellow backrooms =================
    These three maps were rebuilt once before with drops, seams, batch tones,
    berber flecks, tide rings and printed grime, and every one of those came
@@ -206,11 +323,16 @@ export const texCarpetPile = makeCanvas(256,256,(g,w,h)=>{
     }
   }
 });
-texCarpetPile.mean=(()=>{
-  const c=texCarpetPile.image, d=c.getContext("2d").getImageData(0,0,c.width,c.height).data;
-  let t=0; for(let i=0;i<d.length;i+=4) t+=d[i];
-  return t/(d.length/4)/255;
-})();
+{ let pileMean=-1;
+  lazyValue(texCarpetPile,"mean",()=>{
+    if(pileMean<0){
+      const c=texCarpetPile.image, d=c.getContext("2d").getImageData(0,0,c.width,c.height).data;
+      let t=0; for(let i=0;i<d.length;i+=4) t+=d[i];
+      pileMean=t/(d.length/4)/255;
+    }
+    return pileMean;
+  });
+}
 /* sparse large-scale stain overlay, tiled at a different (non-integer)
    rate than the carpet so the two layers never line up — kills the
    visible repeat without true uniqueness. Restored: at 1024² with tide
@@ -492,7 +614,7 @@ export const texCeilFoam = makeCanvas(LOW_TEX?512:1024, LOW_TEX?512:1024, (g,w,h
 });
 /* the grain is zero-mean, so the field it went onto is the map's mean — no
    read-back */
-texCeilFoam.mean=foamMean;
+lazyValue(texCeilFoam,"mean",()=>foamMean);
 /* ---- the filament: the one asset every electric light in the game shares ----
    Level 0's troffers and THE END's hanging strips run the same tubes, so
    they get the same map. CylinderGeometry's v axis runs end-to-end, so this
@@ -626,6 +748,7 @@ export const texLouvre = makeCanvas(64,8,(g,w,h)=>{
    dust and old water runs. Non-directional and seam-safe, because it maps
    at a fixed world scale (scaleBoxUV) across members of wildly different
    sizes: a 2.2m reflector spine and a 0.09m end cap wear the same steel. */
+texFor(0,1);                          // level 0's troffers and breaker, THE END's strips
 export const texGalv = makeCanvas(256,256,(g,w,h)=>{
   g.fillStyle="#8e918c";g.fillRect(0,0,w,h);
   for(let i=0;i<440;i++){                 // spangle: the frozen-crystal facets
@@ -657,6 +780,7 @@ export const texGalv = makeCanvas(256,256,(g,w,h)=>{
    a non-integer rate so a tile's stains never visibly repeat on the grid.
    Shapes come from a wobbling closed loop (radius varies with angle by a
    couple of sine harmonics) rather than perfect circles. */
+texFor(0);
 export const texCeilStains = makeCanvas(512,512,(g,w,h)=>{
   g.clearRect(0,0,w,h);
   /* stamp soft dabs along (or inside) one irregular loop */
@@ -1001,6 +1125,7 @@ export const envMetal=(()=>{
   t.needsUpdate=true;
   return t;
 })();
+texFor(1);
 /* ================= THE END — the infinite library ================= */
 /* aged institutional plaster, TILEABLE: the walls are 8m boxes mixed with
    odd-sized elevator flanks, so the texture must map at a fixed world
@@ -2626,8 +2751,10 @@ function drawMasonry(g,w,h,bump){
     g.fillStyle=gr; g.fillRect(x-r,y-r,r*2,r*2);
   }
 }
+texFor(1,2);                          // THE NEST's arrival shaft is this same bore, wrong side out
 export const texShaftMasonry=makeCanvas(MAS_S,MAS_S,(g,w,h)=>drawMasonry(g,w,h,false));
 export const texShaftMasonryBump=makeCanvas(MAS_S,MAS_S,(g,w,h)=>drawMasonry(g,w,h,true));
+texFor(1);
 /* loose earth: soft blotches under clods lit on top, pebbles, root hairs,
    all drawn wrapped. 512² for the same reason as the stone. */
 export const texSpoil=makeCanvas(512,512,(g,w,h)=>{
@@ -3035,6 +3162,7 @@ export function sliceTexture(tex,u0,u1,flip=false){
   return t;
 }
 
+texFor(1,2);                          // the cave's rock is also the library stair's treads
 /* ================= THE NEST — the cave below ================= */
 /* wet karst rock, TILEABLE at a fixed world scale (scaleBoxUV again):
    dark limestone with mineral mottling and seep-streaks that fade in and
@@ -3129,6 +3257,7 @@ export const texCaveRock = makeCanvas(512,512,(g,w,h)=>{
     g.beginPath();g.arc(x+r*0.4,y+r*0.5,r*0.55,0,7);g.fill();
   }
 });
+texFor(2);
 /* ---- the silk family: four textures for THE NEST's web system ----
    All alpha-on-transparency; the geometry they dress is 3D (sagging
    sheets, fans, funnels, strands), so these only carry the weave.
@@ -3482,6 +3611,7 @@ export function makeFungusSkin(){
   return {map,emit};
 }
 
+texFor(1,2);
 /* ================= the spider — shared by THE END and THE NEST =================
    Chitin is not plastic. It is layered and waxy, darker along the sclerotised
    seams, pitted with the sockets every bristle grows out of, and HAIRED — a
@@ -3699,6 +3829,7 @@ export const texSpiderFur = makeCanvas(512,512,(g,w,h)=>{
 });
 
 
+texFor(2);
 /* ---- THE NEST: the one who came before -------------------------------
    The corpse was six boxes and a sphere in two flat colours, and the
    journal beside it two more boxes. It is the first thing the level shows
@@ -3786,3 +3917,6 @@ export const texJournalPages = makeCanvas(128,128,(g,w,h)=>{
     g.stroke();
   }
 });
+/* every module that declares maps of its own names its floors first; a
+   module that forgets inherits "all of them", which is merely never released */
+texFor();

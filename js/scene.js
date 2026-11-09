@@ -3,7 +3,8 @@ import { rand, clamp } from "./utils.js";
 import { W, H, CELL, WALL_H, grid, genMap, cellToWorld, isWall } from "./map.js";
 import { texWall, texCarpet, texCarpetPile, texStains, texCeil, texCeilBump, texCeilStains, texCeilFoam, texMoldGrain,
          makeMoldTextures, makeDripTextures, sliceTexture, makeSpillTexture,
-         makeTubeTexture, texGalv, texReflector, texLouvre, scaleBoxUV } from "./textures.js";
+         makeTubeTexture, texGalv, texReflector, texLouvre, scaleBoxUV, texFor,
+         freeCanvas, ownedCanvases } from "./textures.js";
 import { $ } from "./utils.js";
 import { readSettings } from "./settings.js";
 
@@ -61,8 +62,21 @@ $("game").appendChild(renderer.domElement);
 /* live quality switch — pixel ratio applies immediately (1× on low-end halves the
    fragment load), antialias waits for a reload */
 export function setRenderQuality(low){ renderer.setPixelRatio(low?1:_maxDPR()); }
-addEventListener("resize",()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth,innerHeight);});
+/* a phone resizes the page more often than a desktop ever does — turning it,
+   the browser's bars sliding in and out — and Safari reports the new size a
+   beat after the rotation event. So the fit is re-read on every signal there
+   is, and applied only when the numbers actually changed. */
+let _fw=innerWidth, _fh=innerHeight;
+function fitView(){
+  const w=innerWidth, h=innerHeight;
+  if(w===_fw&&h===_fh||!w||!h) return;
+  _fw=w; _fh=h;
+  camera.aspect=w/h; camera.updateProjectionMatrix();
+  renderer.setSize(w,h);
+}
+addEventListener("resize",fitView);
+addEventListener("orientationchange",()=>{ setTimeout(fitView,120); setTimeout(fitView,500); });
+if(window.visualViewport) visualViewport.addEventListener("resize",fitView);
 
 /* modest base light — the fixture pool below does the real work.
    Kept LOW: this pair is the brightness floor for corridors far from any
@@ -125,6 +139,8 @@ function disposeMaterial(m,done){
   done.add(m);
   for(const k of _MAT_MAPS){ const t=m[k]; if(t&&!SHARED.has(t)&&!done.has(t)){ done.add(t); t.dispose(); } }
 }
+/* a texture's canvas, without making a deferred map paint itself to answer */
+const canvasOf=t=>{ const im=t.peekImage? t.peekImage() : t.image; return im instanceof HTMLCanvasElement? im : null; };
 function disposeNode(o,done){
   const g=o.geometry;
   if(g&&!SHARED.has(g)&&!done.has(g)){ done.add(g); g.dispose(); }
@@ -141,6 +157,16 @@ export function clearLevelScene(){
     o.traverse(c=>{ if(c.isMesh||c.isSprite||c.isLine) disposeNode(c,done); });
     scene.remove(o);
   }
+  /* the canvases behind the textures that just went: hundreds of decals,
+     covers and posters whose pixels would otherwise sit in memory until the
+     collector found them — through the build of the NEXT level, which is the
+     moment a phone has least to spare (freeCanvas, textures.js). A canvas a
+     shared or deferred map still owns is left alone: a per-build clone of
+     one shares its canvas. */
+  const keep=ownedCanvases(new Set());
+  for(const r of SHARED) if(r.isTexture){ const c=canvasOf(r); if(c) keep.add(c); }
+  for(const r of done) if(r.isTexture){ const c=canvasOf(r); if(c&&!keep.has(c)) freeCanvas(c); }
+  _fogList.length=0; _fogXYZR.length=0;
   lights.length=0;
   wallMeshes=new Map();
   wallDecals.length=0;
@@ -280,6 +306,125 @@ export function freezeStatic(o){
   o.traverse(c=>{ c.matrixAutoUpdate=false; });
   return o;
 }
+/* ---------------- one mesh a level cannot be culled ----------------
+   three culls an object by its bounding sphere, so a mesh merged across a
+   whole level is drawn in full from anywhere in it — every triangle through
+   the vertex shader, whether it is behind you, round three corners or two
+   hundred metres down a tunnel the fog closed off at sixty-six. sectorSplit
+   cuts a static mesh into a grid of pieces by triangle centroid (x/z), each
+   with its own tight bounds, so the frustum and updateFogCull below can drop
+   the ones that cannot be seen. Nothing about the surface changes: a vertex
+   on a cut is simply duplicated into both pieces with the same normal.
+
+   OPAQUE meshes only, and called where the mesh is made: transparent layers
+   are drawn in creation order, and pieces created later would change it. */
+export function sectorSplit(mesh,size=16){
+  const g=mesh.geometry, P=g.attributes.position.array, I=g.index? g.index.array : null;
+  const nTri=(I? I.length : P.length/3)/3;
+  const key=new Int32Array(nTri), count=new Map();
+  for(let t=0;t<nTri;t++){
+    const a=(I? I[t*3]:t*3)*3, b=(I? I[t*3+1]:t*3+1)*3, c=(I? I[t*3+2]:t*3+2)*3;
+    const k=((Math.floor((P[a]+P[b]+P[c])/3/size)+2048)<<12)|(Math.floor((P[a+2]+P[b+2]+P[c+2])/3/size)+2048);
+    key[t]=k; count.set(k,(count.get(k)||0)+1);
+  }
+  if(count.size<2) return [mesh];
+  /* triangles grouped by sector, in their original order within each */
+  const start=new Map(); let o=0;
+  for(const[k,n]of count){ start.set(k,o); o+=n; }
+  const order=new Int32Array(nTri), fill=new Map(start);
+  for(let t=0;t<nTri;t++){ const k=key[t], at=fill.get(k); order[at]=t; fill.set(k,at+1); }
+  const names=Object.keys(g.attributes), vCount=P.length/3;
+  const remap=new Int32Array(vCount), stamp=new Int32Array(vCount).fill(-1), list=new Int32Array(vCount);
+  const out=[]; let sid=0;
+  for(const[k,n]of count){
+    const s0=start.get(k), idx=new Uint32Array(n*3); let nv=0;
+    for(let j=0;j<n;j++){
+      const t=order[s0+j];
+      for(let e=0;e<3;e++){
+        const v=I? I[t*3+e] : t*3+e;
+        if(stamp[v]!==sid){ stamp[v]=sid; remap[v]=nv; list[nv++]=v; }
+        idx[j*3+e]=remap[v];
+      }
+    }
+    const ng=new THREE.BufferGeometry();
+    for(const name of names){
+      const src=g.attributes[name], sz=src.itemSize, sa=src.array, da=new sa.constructor(nv*sz);
+      for(let i=0;i<nv;i++){ const v=list[i]*sz; for(let c=0;c<sz;c++) da[i*sz+c]=sa[v+c]; }
+      ng.setAttribute(name,new THREE.BufferAttribute(da,sz,src.normalized));
+    }
+    ng.setIndex(new THREE.BufferAttribute(nv>65535? idx : new Uint16Array(idx),1));
+    const m=new THREE.Mesh(ng,mesh.material);
+    m.position.copy(mesh.position); m.quaternion.copy(mesh.quaternion); m.scale.copy(mesh.scale);
+    m.renderOrder=mesh.renderOrder; m.name=mesh.name; Object.assign(m.userData,mesh.userData);
+    out.push(m); sid++;
+  }
+  g.dispose();
+  return out;
+}
+/* ---------------- nothing wholly past the fog is drawn ----------------
+   Every floor is fogged out to its own colour — the same colour the frame
+   is cleared to — by a view depth of fog.far (55m in the backrooms, 66m in
+   the cave), but the camera's far plane is 200m: everything in the frustum
+   between the two was drawn, shaded and textured to produce exactly the
+   pixels the clear had already put there. An object whose whole bounding
+   sphere lies past fog.far in VIEW DEPTH (three's fog is depth along the
+   view axis, not distance — measure it radially and the corners of a wide
+   screen lose things that are still showing) is skipped.
+
+   It is done through the object's LAYER mask, not `.visible`: visibility
+   belongs to the game (a cleared rubble heap, a hidden shaft, the stones'
+   own range cull), and a second writer would un-hide what the game hid.
+   Only static things are registered — a frozen matrix all the way up, a
+   material that takes the scene's fog — so nothing that moves can be
+   culled on a stale position; whatever is added to the scene later is
+   simply never culled. Lights are never touched: their count is part of
+   every shader program.
+
+   LEVEL 0 ONLY, and that is a measured decision, not an oversight. The cull
+   is exact only while everything past the fog really is the fog's colour,
+   and an ADDITIVE layer is not: three fogs it toward the fog colour and then
+   ADDS that. On level 0 the colour is near-black and nothing overlaps, and
+   renders with and without the cull agree to 2/255 on a handful of pixels.
+   In THE NEST the silk threads (weblines.js) stack dozens deep in a pixel,
+   so a web far past the fog shows as a small bright dot — an accident, but
+   part of the picture — and culling the rock in front of one, or the web
+   itself, moves those dots. The cave gets its saving from sectorSplit and
+   the frustum alone, which change nothing. THE END's room is smaller than
+   its fog, so there is nothing there to cull. */
+const _fogList=[], _fogXYZR=[];
+export function registerFogCull(){
+  _fogList.length=0; _fogXYZR.length=0;
+  scene.updateMatrixWorld(true);
+  const s=new THREE.Sphere();
+  for(const root of scene.children){
+    if(root.userData.persist) continue;
+    root.traverse(o=>{
+      if(!(o.isMesh||o.isLine||o.isPoints)||o.isSkinnedMesh||o.frustumCulled===false) return;
+      for(let p=o;p&&p!==scene;p=p.parent) if(p.matrixAutoUpdate||p.userData.animated) return;
+      const ms=Array.isArray(o.material)? o.material : [o.material];
+      for(const m of ms) if(!m||m.fog!==true) return;
+      const g=o.geometry; if(!g||!g.attributes.position) return;
+      if(!g.boundingSphere) g.computeBoundingSphere();
+      s.copy(g.boundingSphere).applyMatrix4(o.matrixWorld);
+      _fogList.push(o); _fogXYZR.push(s.center.x,s.center.y,s.center.z,s.radius+0.5);
+    });
+  }
+}
+/* a capture from somewhere other than the player's eye (the elevator's
+   reflection) wants everything back for its one frame */
+export function fogCullShowAll(){ for(const o of _fogList) o.layers.mask=1; }
+export function updateFogCull(){
+  const n=_fogList.length; if(!n||!scene.fog) return;
+  camera.updateMatrixWorld();
+  const e=camera.matrixWorld.elements, far=scene.fog.far;
+  const fx=-e[8], fy=-e[9], fz=-e[10], px=e[12], py=e[13], pz=e[14];
+  for(let i=0,j=0;i<n;i++,j+=4){
+    const depth=(_fogXYZR[j]-px)*fx+(_fogXYZR[j+1]-py)*fy+(_fogXYZR[j+2]-pz)*fz;
+    const mask= depth-_fogXYZR[j+3]>=far? 0 : 1;
+    const L=_fogList[i].layers;
+    if(L.mask!==mask) L.mask=mask;
+  }
+}
 /* sweep the freshly built level: freeze every static top-level object. Skips
    persistent rig, animated props (idle-spinning pickups), and anything a
    cutscene drives by transform (elevators, the breaker) — all tagged
@@ -402,7 +547,9 @@ const SHEET=0.014;                   // the steel's thickness
    electrodes, worn phosphor, and — on the dying ones — the end-of-life hue
    drift toward orange at the centre. The library's hanging strips import
    the same two maps. */
+texFor(0,1);                       // which floors these maps belong to (see makeCanvas in textures.js)
 export const tubeTex = makeTubeTexture(false), warmTubeTex = makeTubeTexture(true);
+texFor(0);
 /* galvanized-steel fixture frame — clearly a piece of metal hardware,
    not a patch of ceiling; faint emissive keeps it readable right next
    to its own glowing tubes */
@@ -927,7 +1074,10 @@ export function mergeDecals(){
       merged.renderOrder=LAYER_DECAL;
       scene.add(merged);
     }
-    for(const m of list){ scene.remove(m); m.geometry.dispose(); m.material.map.dispose(); m.material.dispose(); }
+    /* the page holds every pixel now: the ~300 canvases the decals grew on
+       are finished with, and are emptied rather than left for the collector */
+    for(const m of list){ scene.remove(m); m.geometry.dispose(); m.material.map.dispose(); m.material.dispose();
+      freeCanvas(m.material.map.image); }
   }
   wallDecals.length=0;
 }

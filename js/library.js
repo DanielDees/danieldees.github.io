@@ -17,7 +17,7 @@ import { rand, clamp, lerp, srand, hash } from "./utils.js";
 import { CELL } from "./map.js";
 import { STATE } from "./state.js";
 import { scene, camera, renderer, lights, hemi, amb, makeLightRecord, markShared, mergeStatic, freezeStaticScene, batchStatic, tubeTex } from "./scene.js";
-import { makeCanvas, texLibWall, texLibCarpet, texLibCarpetBump, texLibCeil, texShelfWood, texDeskWood,
+import { makeCanvas, texFor, texLibWall, texLibCarpet, texLibCarpetBump, texLibCeil, texShelfWood, texDeskWood,
          texCaveRock, texGalv, texBeige, makeKeyboardTexture, KB_LAYOUT, makeFloppyTexture,
          makeCrackTexture, makeEndTextTexture, makePosterTexture, makeArtTexture,
          makeWrapTexture, texStretchFilm, FILM_BANDS, texTape, texCartPaint, texMannequin,
@@ -31,6 +31,7 @@ import { makeElevator, ELEV, addInteractable } from "./props.js";
 import { makeDustSystem, makeDebris } from "./particles.js";
 import { sfxLightsOut, escalateLibraryAmbience, sfxComputerBoot, sfxComputerStatic } from "./audio.js";
 
+texFor(1);                         // every map this file declares belongs to THE END (see makeCanvas)
 export const LW=25, LH=25, LIB_WALL_H=24.0;      // −30% footprint; tall ceiling gives the spider room to climb
 export const ROOM_SPAN=LW*CELL;                  // 100m — reaction times scale off this
 export let grid2=null;

@@ -13,7 +13,7 @@
        floats), so overlapping billows composite in the right order.
    Debris is two InstancedMeshes (clods and carpet shreds) that fly, bounce
    once and LIE WHERE THEY LAND — the dig leaves its spoil on the floor. */
-import { makeCanvas } from "./textures.js";
+import { makeCanvas, blurFill } from "./textures.js";
 import { rand } from "./utils.js";
 import { markShared } from "./scene.js";
 
@@ -363,10 +363,15 @@ function flameAtlas(){
         const gr=g.createLinearGradient(0,oy+122,0,oy+6);
         gr.addColorStop(0,`rgba(255,255,255,${al})`); gr.addColorStop(0.6,`rgba(255,255,255,${al*0.55})`);
         gr.addColorStop(1,"rgba(255,255,255,0)");
-        g.fillStyle=gr; g.beginPath();
-        pts.forEach(([v,hf,d],i)=>{ const x=ox+64+d-hf, y=oy+122-v*116; i?g.lineTo(x,y):g.moveTo(x,y); });
-        for(let i=pts.length-1;i>=0;i--){ const [v,hf,d]=pts[i]; g.lineTo(ox+64+d+hf, oy+122-v*116); }
-        g.closePath(); g.filter="blur(3px)"; g.fill(); g.filter="none";
+        g.fillStyle=gr;
+        /* the path is built INSIDE the callback: blurFill may shift the
+           canvas first, and a path keeps the transform it was drawn under */
+        blurFill(g,3,"rgb(255,255,255)",()=>{
+          g.beginPath();
+          pts.forEach(([v,hf,d],i)=>{ const x=ox+64+d-hf, y=oy+122-v*116; i?g.lineTo(x,y):g.moveTo(x,y); });
+          for(let i=pts.length-1;i>=0;i--){ const [v,hf,d]=pts[i]; g.lineTo(ox+64+d+hf, oy+122-v*116); }
+          g.closePath(); g.fill();
+        });
       }
       g.restore();
     }

@@ -1,5 +1,5 @@
 /* ---------------- interaction ---------------- */
-import { STATE, KEYS, monster } from "./state.js";
+import { STATE, KEYS, TOUCH, monster } from "./state.js";
 import { scene } from "./scene.js";
 import { interactables } from "./props.js";
 import { sfxPickup, sfxClunk, sfxDiscPickup, sfxDiscInsert, sfxStrikerTick, sfxDoorRattle } from "./audio.js";
@@ -11,6 +11,17 @@ import { startDeadPC } from "./library.js";
 import { igniteClutch } from "./cave.js";
 
 let focusedItem=null;
+/* is there something under the crosshair to use? (the touch USE button lights on this) */
+export function hasFocus(){ return !!focusedItem; }
+/* the prompt names the control you actually have: a key, or the on-screen button */
+const useKey=()=> TOUCH.on? "[USE]" : "[E]";
+/* the prompt is rewritten every frame; an identical innerHTML write still
+   throws the element's layout away, so only a changed string reaches the DOM */
+let promptHTML="";
+function setPrompt(html){
+  if(html!==promptHTML){ promptHTML=html; ui.prompt.innerHTML=html; }
+  ui.prompt.classList.add("show");
+}
 export function tryInteract(){
   if(!STATE.playing||STATE.paused||STATE.dead||CINE.active||!focusedItem) return;
   const it=focusedItem;
@@ -65,7 +76,8 @@ export function tryInteract(){
     if(it.journal) scene.remove(it.journal);
     if(it.glowL) it.glowL.intensity=0;          // the ember comes with you (never remove: light count)
     STATE.hasLantern=true; STATE.lanternCharge=0.65; STATE.lanternOn=false;
-    toast("You picked up a crank lantern. Press F to light it, hold R to wind it up.",6200);
+    toast(TOUCH.on? "You picked up a crank lantern. Tap LIGHT to light it, hold WIND to wind it up."
+                  : "You picked up a crank lantern. Press F to light it, hold R to wind it up.",6200);
   } else if(it.kind==="clutch"){
     /* not a press — a commitment. The channel runs in updateInteractHold. */
     if(!STATE.hasLantern) sfxClunk();
@@ -83,8 +95,7 @@ export function updateInteractHold(dt){
   holdT+=dt; tickT-=dt;
   if(tickT<=0){ tickT=0.38; sfxStrikerTick(1); }
   const pct=Math.min(99,Math.round(holdT/3*100));
-  ui.prompt.innerHTML=`<b>[E]</b> BURNING — ${pct}%`;
-  ui.prompt.classList.add("show");
+  setPrompt(`<b>${useKey()}</b> BURNING — ${pct}%`);
   if(holdT>=3){
     holdT=0;
     igniteClutch(it);
@@ -94,16 +105,17 @@ export function updateInteractHold(dt){
 export function updateFocus(){
   focusedItem=null;
   let best=2.7;
-  const fwd=new THREE.Vector3(-Math.sin(STATE.yaw),0,-Math.cos(STATE.yaw));
+  /* plain numbers: this runs every frame over every interactable, and a
+     cloned Vector3 apiece was a steady drip of garbage */
+  const fx=-Math.sin(STATE.yaw), fz=-Math.cos(STATE.yaw);
   for(const it of interactables){
     if(it.taken&&it.kind!=="exit"&&it.kind!=="terminal"&&it.kind!=="deadElev") continue;
-    const d=it.mesh.position.clone().sub(STATE.pos); d.y=0;
-    const dist=d.length();
-    if(dist<best && d.normalize().dot(fwd)>0.45){ best=dist; focusedItem=it; }
+    const p=it.mesh.position, dx=p.x-STATE.pos.x, dz=p.z-STATE.pos.z;
+    const dist=Math.hypot(dx,dz);
+    if(dist<best && (dist>0? (dx*fx+dz*fz)/dist : 0)>0.45){ best=dist; focusedItem=it; }
   }
   if(focusedItem){
     const lbl = typeof focusedItem.label==="function"? focusedItem.label() : focusedItem.label;
-    ui.prompt.innerHTML=`<b>[E]</b> ${lbl}`;
-    ui.prompt.classList.add("show");
+    setPrompt(`<b>${useKey()}</b> ${lbl}`);
   } else ui.prompt.classList.remove("show");
 }

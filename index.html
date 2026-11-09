@@ -2,8 +2,22 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- viewport-fit=cover runs the picture out under the notch and the home
+     indicator; the HUD and the touch controls keep clear of them with
+     env(safe-area-inset-*) in main.css -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<!-- added to an iPhone's Home Screen the game opens full screen, with no browser bars -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="NOCLIP">
+<meta name="format-detection" content="telephone=no">
 <title>NOCLIP — Escape the Backrooms</title>
+<!-- the engine is the one file the page cannot start without: fetch it at
+     once, in parallel with the stylesheet, instead of when the parser gets there -->
+<link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+<link rel="preload" as="script" href="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js">
 <link rel="stylesheet" href="css/main.css">
 </head>
 <body class="lvl0">
@@ -18,6 +32,21 @@
 <div class="fxlayer" id="deathfx"></div>
 <div class="fxlayer" id="flash"></div>
 
+<!-- ============ TOUCH CONTROLS (phones and tablets; js/touch.js) ============
+     the layer itself is the look surface, its left part is the walking stick,
+     and the buttons sit under the right thumb. It sits BELOW the HUD so the
+     menu button stays on top, and it only takes touches while you are playing. -->
+<div id="touchUI">
+  <div id="tStick"><i></i></div>
+  <div id="tHint">MOVE</div>
+  <button class="tbtn" id="tLight" data-act="light">LIGHT</button>
+  <button class="tbtn" id="tWind" data-act="wind">WIND</button>
+  <button class="tbtn" id="tUse" data-act="use">USE</button>
+  <button class="tbtn" id="tRun" data-act="run">RUN</button>
+  <button class="tbtn" id="tCrouch" data-act="crouch">CROUCH</button>
+  <button class="tbtn" id="tJump" data-act="jump">JUMP</button>
+</div>
+
 <div id="hud">
   <div id="crosshair"></div>
   <div id="objectives" class="panel">
@@ -29,14 +58,14 @@
     <div id="stats"></div>
   </div>
   <div id="topright">
-    <button class="hudbtn" id="btnMenu">MENU [ESC]</button>
+    <button class="hudbtn" id="btnMenu">MENU<span class="kb"> [ESC]</span></button>
   </div>
   <div id="staminaWrap">
     <div id="stamLabel"><span><span id="stamName">STAMINA</span> <span class="lowtag">· EXHAUSTED</span></span><span id="stamPct">100%</span></div>
     <div id="stamBar"><div id="stamina"></div></div>
   </div>
   <div id="lanternWrap">
-    <div id="lantLabel"><span>LANTERN <span class="deadtag">· EMPTY</span></span><span>[F] ON/OFF · [R] WIND</span></div>
+    <div id="lantLabel"><span>LANTERN <span class="deadtag">· EMPTY</span></span><span class="kb">[F] ON/OFF · [R] WIND</span></div>
     <div id="lantBar"><div id="lantern"></div></div>
   </div>
   <div id="keysHint">WASD MOVE · SHIFT SPRINT · SPACE JUMP · C CROUCH · E INTERACT</div>
@@ -63,9 +92,11 @@
        and the constant buzz of fluorescent lights, going on for miles in every direction.</p>
     <p style="margin-top:10px">You aren't alone down here. Collect what you need, get the power back on
        and reach the exit elevator — and try not to make any noise.</p>
-    <button class="bigbtn" id="btnStart">PLAY</button>
+    <!-- ui.js enables this once level 0 is built and its shaders are compiled -->
+    <button class="bigbtn" id="btnStart" disabled>LOADING</button>
     <button class="bigbtn ghostbtn" id="btnHow1">HOW TO PLAY</button>
     <p class="subtle blink">Headphones recommended</p>
+    <p class="subtle iosOnly" style="opacity:.6">For full screen, tap Share, then Add to Home Screen</p>
     <p class="subtle" style="margin-top:8px;opacity:.55">v3.3.0</p>
   </div>
 </div>
@@ -85,9 +116,31 @@
 
     <!-- ---- CONTROLS ---- -->
     <section class="pane on" id="gControls">
-      <p class="lede">You only need a few keys, and nothing is timed. Staying alive comes down to
+      <p class="lede"><span class="kb">You only need a few keys, and nothing is timed.</span><span class="tc">There
+         are only a few controls, and nothing is timed.</span> Staying alive comes down to
          where you go and how much noise you make.</p>
-      <dl class="keys">
+      <dl class="keys tc">
+        <dt><kbd>LEFT THUMB</kbd></dt>
+          <dd>Move. <span class="q">Touch anywhere on the left of the screen and drag. A short push is a slow walk.</span></dd>
+        <dt><kbd>RIGHT THUMB</kbd></dt>
+          <dd>Look around. <span class="q">Drag anywhere else. Dragging from a button works too.</span></dd>
+        <dt><kbd>RUN</kbd></dt>
+          <dd>Sprint. <span class="q">Tap to start, tap again or stop moving to end it. Fast, but <b>loud</b>,
+              and it uses up stamina.</span></dd>
+        <dt><kbd>CROUCH</kbd></dt>
+          <dd>Crouch, and tap again to stand. <span class="q">Slow but <b>silent</b>, and small enough to fit
+              under things.</span></dd>
+        <dt><kbd>JUMP</kbd></dt>
+          <dd>Jump.</dd>
+        <dt><kbd>USE</kbd></dt>
+          <dd>Interact. <span class="q">It appears when there's something in front of you to pick up, press
+              or open. Some actions need you to <b>hold</b> it.</span></dd>
+        <dt><kbd>LIGHT</kbd> <kbd>WIND</kbd></dt>
+          <dd>Lantern on or off · hold to wind it up. <span class="q">Once you've found one.</span></dd>
+        <dt><kbd>MENU</kbd></dt>
+          <dd>Pause. <span class="q">How to Play and Options are in the pause menu.</span></dd>
+      </dl>
+      <dl class="keys kb">
         <dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt>
           <dd>Move. <span class="q">Use the mouse to look around.</span></dd>
         <dt><kbd>SHIFT</kbd></dt>
@@ -195,16 +248,17 @@
         <h3>OBJECTIVES</h3>
         <ol class="rules tight">
           <li>Take the <b>crank lantern</b> from the body at the bottom of the broken stairs.</li>
-          <li>Burn all <b>four egg clutches</b>. Hold <kbd>E</kbd> for three seconds while standing still.</li>
+          <li>Burn all <b>four egg clutches</b>. Hold <kbd class="kb">E</kbd><kbd class="tc">USE</kbd> for three seconds while standing still.</li>
           <li>Climb out through the <b>crack</b> that opens after the last one burns.</li>
         </ol>
         <h3>THE LANTERN</h3>
         <p>While it's lit, the hatchlings <b>back away</b> from the light and can't hear you. But it runs
-           down, winding it up (<kbd>R</kbd>) is noisy and slows you to a walk, and the <b>mother</b> can see the
+           down, winding it up (<kbd class="kb">R</kbd><kbd class="tc">WIND</kbd>) is noisy and slows you to a walk, and the <b>mother</b> can see the
            light from a long way off. The light keeps the small ones away and draws the big one in.</p>
         <h3>THE HATCHLINGS AND THEIR MOTHER</h3>
         <p>Hatchlings guard their own areas and hunt by sound. If one <b>grabs onto you</b>, your stamina drains
-           and its screaming leads its mother to you. Shake it off by moving the mouse quickly, or burn it off
+           and its screaming leads its mother to you. Shake it off by <span class="kb">moving the mouse quickly</span><span class="tc">swiping the view quickly from
+           side to side</span>, or burn it off
            with the lantern. The mother patrols between her clutches. Webbed ground near the nests carries
            your footsteps twice as far, wading through the stream hides them, and loose rocks are loud. Each
            clutch you burn sends her into a <b>frenzy</b>, dims the fungus nearby, and causes a <b>rockfall</b>
@@ -241,10 +295,11 @@
 
     <h3>INPUT</h3>
     <div class="optrow">
-      <label for="sensSlider">MOUSE</label>
-      <input type="range" id="sensSlider" min="10" max="400" value="100" title="Mouse sensitivity"><output id="sensV">1.0x</output>
+      <label for="sensSlider"><span class="kb">MOUSE</span><span class="tc">LOOK</span></label>
+      <input type="range" id="sensSlider" min="10" max="400" value="100" title="Look sensitivity"><output id="sensV">1.0x</output>
     </div>
-    <div class="optrow">
+    <!-- a held crouch needs a spare finger: on touch it is always a toggle -->
+    <div class="optrow kb">
       <label for="crouchToggle">CROUCH</label>
       <input type="checkbox" id="crouchToggle" title="Toggle crouch instead of holding C"><output id="crouchToggleV">HOLD</output>
     </div>
@@ -293,6 +348,16 @@
     <div id="winStats"></div>
     <p id="winNote" class="subtle"></p>
     <button class="bigbtn" id="btnAgain">PLAY AGAIN</button>
+  </div>
+</div>
+
+<!-- ============ ROTATE (touch, portrait) ============ -->
+<div id="rotateHint">
+  <div class="sheet" style="text-align:center;max-width:420px">
+    <h1>NOCLIP</h1>
+    <div id="rotateIcon"></div>
+    <p>Turn your phone sideways to play.</p>
+    <p class="subtle">If the screen doesn't turn, switch off the orientation lock.</p>
   </div>
 </div>
 

@@ -64,6 +64,10 @@ const _mats=new Map();
 const VS="varying vec2 vUv;\nvoid main(){ vUv=uv; gl_Position=vec4(position.xy,0.0,1.0); }";
 /* can we render heights at float precision? (WebGL2 + EXT_color_buffer_float) */
 const FLOAT_OK=renderer.capabilities.isWebGL2&&!!renderer.extensions.get("EXT_color_buffer_float");
+/* a phone GPU that cannot render to 32-bit float can nearly always render to
+   16-bit: plenty for a height field, and a world away from the 8-bit
+   fallback, which terraces every gentle slope the normal map is taken off */
+const HALF_OK=!FLOAT_OK&&renderer.capabilities.isWebGL2&&!!renderer.extensions.get("EXT_color_buffer_half_float");
 /* `body` must define  vec4 bake(vec2 uv).  Materials are cached by body, so
    two bakes of one body (a different seed, a different uniform) compile once.
    opts.float renders a nearest-filtered, unmipmapped float target meant to be
@@ -72,7 +76,7 @@ export function bakeTexture(size,body,opts={}){
   const w=size, h=opts.h||size, flt=!!opts.float;
   const rt=new THREE.WebGLRenderTarget(w,h,{
     wrapS:THREE.RepeatWrapping, wrapT:THREE.RepeatWrapping,
-    type:flt&&FLOAT_OK? THREE.FloatType : THREE.UnsignedByteType,
+    type:flt&&FLOAT_OK? THREE.FloatType : flt&&HALF_OK? THREE.HalfFloatType : THREE.UnsignedByteType,
     minFilter:flt? THREE.NearestFilter : THREE.LinearMipmapLinearFilter,
     magFilter:flt? THREE.NearestFilter : THREE.LinearFilter,
     depthBuffer:false, stencilBuffer:false});

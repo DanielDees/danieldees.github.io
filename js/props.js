@@ -1,11 +1,14 @@
 /* ---------------- props ---------------- */
 import { rand } from "./utils.js";
 import { W, H, CELL, WALL_H as WALL_H0, cellToWorld, randomOpenCell, isWall, losCells } from "./map.js";
-import { makeCanvas, texWall, scaleBoxUV, makeCrackTexture, envMetal, makeSpillTexture, texGalv } from "./textures.js";
+import { makeCanvas, texFor, blurFill, texWall, scaleBoxUV, makeCrackTexture, envMetal, makeSpillTexture, texGalv } from "./textures.js";
 import { STATE } from "./state.js";
 import { scene, renderer, wallMeshes, removeDecalsOnWall, mergeWallMeshes, mergeDecals, freezeStaticScene,
-         markShared, mergeStatic } from "./scene.js";
+         markShared, mergeStatic, fogCullShowAll } from "./scene.js";
 
+/* which floors this file's maps belong to (see makeCanvas): the pickups and
+   the breaker are level 0's; the elevator's steel is also THE END's wreck */
+texFor(0);
 export let interactables=[];    // {kind, mesh, label, taken}
 export let exitDoor=null;
 /* level changes rebuild the prop set from scratch */
@@ -213,6 +216,7 @@ const texCard=makeCanvas(160,180,(g,w,h)=>{
    mid for the cab lining, dark for the trim. Tiled at a fixed world scale
    (scaleBoxUV) at 0.5m, so a 2.5m door leaf and a 20mm bezel wear the same
    steel at the same grain size. */
+texFor(0,1);
 const texElevSteel=makeCanvas(1024,1024,(g,w,h)=>{
   g.fillStyle="#c2c7ca";g.fillRect(0,0,w,h);
   /* the tone of the sheet drifts across its width — soft, wrapped, and far
@@ -553,6 +557,7 @@ function makeFuse(){
 /* ---- the distribution board ----
    Every canvas here is FITTED to the one part it dresses: nothing tiles, so
    the wear, the print and the damp can each be where they would really be. */
+texFor(0);
 const texGlow=makeCanvas(64,64,(g,w,h)=>{
   const gr=g.createRadialGradient(w/2,h/2,0,w/2,h/2,w/2);
   gr.addColorStop(0,"rgba(255,255,255,1)");gr.addColorStop(0.22,"rgba(255,255,255,0.42)");
@@ -713,9 +718,8 @@ const texTag=makeCanvas(128,224,(g,w,h)=>{
    dark rectangle stuck to the wall. */
 const texBoxShadow=makeCanvas(128,160,(g,w,h)=>{
   g.clearRect(0,0,w,h);
-  g.filter="blur(12px)";
-  g.fillStyle="rgba(10,8,4,0.58)";g.fillRect(12,14,w-24,h-24);
-  g.filter="none";
+  g.fillStyle="rgba(10,8,4,0.58)";
+  blurFill(g,12,"rgb(10,8,4)",()=>g.fillRect(12,14,w-24,h-24));
 });
 markShared(texGlow,texHazard,texMeter,texBand,texDead,texSwPlate,texTag,texBoxShadow);
 const galvMat=new THREE.MeshPhongMaterial({map:texGalv, color:0x7e807c, specular:0x3a3c3a, shininess:26,
@@ -1038,6 +1042,7 @@ function makeBreaker(p,facing){
    are lined with because it hides a thousand hands. As a bump on the
    brushed map it is invisible past a metre and makes the panel a
    different metal from the plain lining around it up close. */
+texFor(0,1);
 const texLinen=makeCanvas(256,256,(g,w,h)=>{
   g.fillStyle="#808080";g.fillRect(0,0,w,h);
   for(let i=0;i<9000;i++){
@@ -1115,9 +1120,21 @@ function reflectElevator(){
   e.localToWorld(_rp.set(0,1.45,0.9));
   if(Math.hypot(_rp.x-STATE.pos.x,_rp.z-STATE.pos.z)>16) return;
   e.userData.reflPending=false;
-  e.visible=false;
+  /* the car must not mirror itself, but hiding the GROUP hid its three point
+     lights with it: the light count is part of every shader program, so each
+     material the capture could see was recompiled for 32 lights instead of 35
+     — seventeen programs in one frame, a hard freeze the first time you came
+     near the doors. So the parts are hidden one by one and the lights stay in
+     the count at zero, which lights exactly as much as not being there. */
+  const hid=[], dark=[];
+  e.traverse(c=>{
+    if(c.isLight){ dark.push(c,c.intensity); c.intensity=0; }
+    else if((c.isMesh||c.isLine||c.isPoints||c.isSprite)&&c.visible){ hid.push(c); c.visible=false; }
+  });
+  fogCullShowAll();                    // culled for YOUR eye, not for the cube's (re-culled next frame)
   reflCam.position.copy(_rp); reflCam.update(renderer,scene);
-  e.visible=true;
+  for(const c of hid) c.visible=true;
+  for(let i=0;i<dark.length;i+=2) dark[i].intensity=dark[i+1];
 }
 export function makeElevator(p,facing,opts={}){
   /* the exit elevator, carved INTO its wall cell: placeProps removes that

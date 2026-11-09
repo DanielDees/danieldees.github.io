@@ -14,7 +14,9 @@
 import { clamp, lerp } from "./utils.js";
 import { camera, renderer, markShared, mergeStatic } from "./scene.js";
 import { STATE } from "./state.js";
-import { makeCanvas, texCloth } from "./textures.js";
+import { makeCanvas, texFor, texCloth } from "./textures.js";
+
+texFor(2);                         // the lantern only exists in THE NEST (see makeCanvas)
 
 const brassMat=new THREE.MeshPhongMaterial({color:0x7a5c2c, specular:0x8e7446, shininess:52});
 const steelMat=new THREE.MeshPhongMaterial({color:0x2b2c2c, specular:0x4a4c4e, shininess:34});

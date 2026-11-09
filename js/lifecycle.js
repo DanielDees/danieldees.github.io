@@ -2,17 +2,21 @@
 import { $ } from "./utils.js";
 import { STATE, monster, spider } from "./state.js";
 import { W, H, cellToWorld, farOpenWorldPoint } from "./map.js";
-import { scene, camera, renderer, lights, buildLevel, clearLevelScene, setLevelEnvironment } from "./scene.js";
+import { scene, camera, renderer, lights, buildLevel, clearLevelScene, setLevelEnvironment,
+         registerFogCull } from "./scene.js";
 import { placeProps, interactables, exitDoor, clearInteractables } from "./props.js";
 import { makeMonster, wakeMonster, escalateMonster, clearMonsterFx } from "./monster.js";
+import { levelTextures, releaseTexturesExcept } from "./textures.js";
 import { buildLibrary, LIB } from "./library.js";
 import { buildCave, CAVE } from "./cave.js";
+import { initCaveVis } from "./cavevis.js";
 import { makeSpider, resetSpider, spiderHearDisc, resetSpiderCave } from "./spider.js";
 import { makeHatchlings, resetHatchlings, silenceHatchlings } from "./hatchling.js";
 import { CINE, updateCinematic, startTheEndIntro, startNestIntro,
          startDeathCam, endDeathCam } from "./cutscene.js";
 import { AU, sfxDeath, startLibraryAmbience, startCaveAmbience } from "./audio.js";
-import { ui, toast, renderObjectives, setPaused, lockPointer, setLevelChrome, FLOORS } from "./ui.js";
+import { ui, toast, renderObjectives, setPaused, lockPointer, setLevelChrome, FLOORS,
+         setLoadProgress, setLoadReady } from "./ui.js";
 import { igniteClutch, hushCave } from "./cave.js";
 
 /* ---- level 0 is made while the start screen is up ----
@@ -22,20 +26,31 @@ import { igniteClutch, hushCave } from "./cave.js";
    scene (the menu draws over an empty one), and its programs and textures are
    warmed a root at a time between frames. The light count is part of every
    program, so each root is compiled with dark stand-ins for the level's
-   lights that are not in it. startGame takes whatever is ready. */
+   lights that are not in it. startGame takes whatever is ready.
+   PLAY is this work's progress bar (ui.js): it is handed over when the queue
+   is empty, and at once if anything in here throws — a level that failed to
+   warm still builds the slow way on the first frame, and a button that never
+   wakes up is worse than a hitch. */
 let pre=null;
 export function prewarmLevel0(){
   if(pre||STATE.playing) return;
-  buildLevel(); placeProps();
-  const mon=makeMonster();
+  let mon;
+  try{
+    buildLevel(); placeProps();
+    mon=makeMonster();
+  }catch(e){ console.error(e); setLoadReady(); return; }
   const objs=scene.children.filter(o=>!o.userData.persist);
   for(const o of objs) scene.remove(o);
-  pre={objs, mon, stop:false};
+  const P=pre={objs, mon, stop:false};
   const nLights=o=>{ let n=0; o.traverse(c=>{ if(c.isLight) n++; }); return n; };
   const total=objs.reduce((n,o)=>n+nLights(o),0);
   const stand=[]; for(let i=0;i<total;i++) stand.push(new THREE.PointLight(0,0));
-  const queue=[...objs,mon], done=new Set();
+  /* the floor's own maps go through the queue too, one apiece: painting and
+     uploading them is most of this wait, and several are custom uniforms no
+     walk of the materials would find (the carpet pile, the ceiling foam) */
+  const queue=[...levelTextures(0),...objs,mon], done=new Set();
   const warm=o=>{
+    if(o.isTexture){ if(!done.has(o)){ done.add(o); renderer.initTexture(o); } return; }
     const n=total-nLights(o);
     for(let i=0;i<n;i++) scene.add(stand[i]);
     scene.add(o); renderer.compile(scene,camera); scene.remove(o);
@@ -48,17 +63,26 @@ export function prewarmLevel0(){
       }
     });
   };
+  const n0=queue.length;
   const step=()=>{
-    if(pre.stop) return;
-    const t0=performance.now();
-    while(queue.length && performance.now()-t0<10) warm(queue.shift());
-    if(queue.length) setTimeout(step,0);
+    if(P.stop) return;
+    try{
+      const t0=performance.now();
+      while(queue.length && performance.now()-t0<10) warm(queue.shift());
+    }catch(e){ console.error(e); queue.length=0; }
+    /* the build above was the first fifth of the wait */
+    setLoadProgress(0.2+0.8*(1-queue.length/n0));
+    if(queue.length) setTimeout(step,0); else setLoadReady();
   };
+  setLoadProgress(0.2);
   setTimeout(step,0);
 }
 export function startGame(){
   if(pre){ pre.stop=true; for(const o of pre.objs) scene.add(o); monster.mesh=pre.mon; pre=null; }
   else { buildLevel(); placeProps(); monster.mesh=makeMonster(); }
+  /* level 0 only (see registerFogCull): the static meshes go on the list;
+     the entity is added after it is taken, and is never culled */
+  registerFogCull();
   scene.add(monster.mesh);
   const s=cellToWorld(W>>1,H>>1);
   STATE.pos.set(s.x,0,s.z);
@@ -67,6 +91,16 @@ export function startGame(){
   setLevelChrome(0);
   renderObjectives(true);
   lockPointer();
+}
+/* under the black between floors: the new floor's generated maps are painted
+   and uploaded now rather than in whichever frame first shows them, and
+   every map only the floors above used gives its memory back — there is no
+   way back up, so nothing will ask for them again (see makeCanvas) */
+function changeFloorTextures(level){
+  for(const t of levelTextures(level)){
+    try{ renderer.initTexture(t); }catch(e){ console.warn(e); }
+  }
+  releaseTexturesExcept(level);
 }
 /* ---------------- the descent: level 0 → THE END ---------------- */
 /* reached from the end of the elevator cutscene, under a black screen:
@@ -92,6 +126,7 @@ export function enterTheEnd(){
   ui.vignette.style.opacity=0.16;      // THE END is dark enough; the edge vignette reads as obscuring here (−80%)
   setLevelEnvironment(1);
   buildLibrary();
+  changeFloorTextures(1);
   spider.mesh=makeSpider(); scene.add(spider.mesh);
   resetSpider(LIB.spawn.x,LIB.spawn.z,40);
   spider.active=false;                 // it starts its rounds when the intro ends
@@ -128,6 +163,8 @@ export function enterTheNest(){
   ui.vignette.style.opacity=0.16;
   setLevelEnvironment(2);
   buildCave();
+  initCaveVis();                        // what the rock hides is not drawn (cavevis.js)
+  changeFloorTextures(2);
   spider.mesh=makeSpider(); scene.add(spider.mesh);
   resetSpiderCave(CAVE.spawn.x,CAVE.spawn.z,34);
   spider.active=false;                  // it starts tending when the intro ends
@@ -136,7 +173,7 @@ export function enterTheNest(){
   STATE.y=0; STATE.vy=0; STATE.grounded=true; STATE.velX=0; STATE.velZ=0;
   STATE.yaw=CAVE.spawnYaw; STATE.pitch=0; STATE.stamina=1; STATE.crouch=false;
   const hint=$("keysHint");
-  if(hint) hint.textContent="WASD MOVE · SHIFT SPRINT · C CROUCH · E INTERACT · F LANTERN · R WIND";
+  if(hint) hint.textContent="WASD MOVE · SHIFT SPRINT · C CROUCH · E INTERACT · F LANTERN · R WIND";   // hidden on touch
   startCaveAmbience();
   setLevelChrome(2);
   renderObjectives(true);
@@ -190,6 +227,7 @@ export function respawn(){
   STATE.bottles=0; STATE.hasFuse=false; STATE.powerOn=false; STATE.objective=0;
   STATE.time=0; STATE.ambDim=1; STATE.shakeAmp=0; STATE.surge=null;
   buildLevel(); placeProps();
+  registerFogCull();
   monster.mesh=makeMonster(); scene.add(monster.mesh);
   const s=cellToWorld(W>>1,H>>1);
   STATE.pos.set(s.x,0,s.z);

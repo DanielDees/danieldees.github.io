@@ -1,6 +1,6 @@
 /* ---------------- player movement, jumping & collision ---------------- */
 import { lerp } from "./utils.js";
-import { STATE, KEYS, monster, spider } from "./state.js";
+import { STATE, KEYS, TOUCH, monster, spider } from "./state.js";
 import { CELL, cellToWorld, worldToCell, isWall } from "./map.js";
 import { AU, sfxStep, sfxJump, sfxLand, sfxStoneStep, sfxWaterStep, sfxGravelStep } from "./audio.js";
 import { camera, playerLight } from "./scene.js";
@@ -28,18 +28,25 @@ function collide(px,pz,r){
   return {x:nx,z:nz};
 }
 export function updatePlayer(dt){
-  const crouchKey = STATE.crouchToggle? STATE.crouchLatch
-                                      : !!KEYS["KeyC"];
+  /* a held crouch needs a finger you do not have on a phone: touch always latches */
+  const crouchKey = (STATE.crouchToggle||TOUCH.on)? STATE.crouchLatch
+                                                  : !!KEYS["KeyC"];
   const wantCrouch = STATE.grounded && crouchKey;
   /* in the library you cannot stand up with a tabletop over your head;
      in the cave, the squeezes hold you down the same way */
   STATE.crouch = wantCrouch ||
     (STATE.level===1 && STATE.crouch && underTable(STATE.pos.x,STATE.pos.z)) ||
     (STATE.level===2 && STATE.crouch && underRock(STATE.pos.x,STATE.pos.z));
-  const wantSprint = !!(KEYS["ShiftLeft"]||KEYS["ShiftRight"]);
+  const wantSprint = !!(KEYS["ShiftLeft"]||KEYS["ShiftRight"]||TOUCH.sprint);
   let fwd=0,str=0;
   if(KEYS["KeyW"])fwd++; if(KEYS["KeyS"])fwd--;
   if(KEYS["KeyD"])str++; if(KEYS["KeyA"])str--;
+  /* the touch stick is analog: its direction steers and its throw sets the
+     pace (touch.js has already taken out the dead zone). Keys win if both. */
+  let pace=1;
+  if(fwd===0&&str===0&&(TOUCH.fwd!==0||TOUCH.str!==0)){
+    fwd=TOUCH.fwd; str=TOUCH.str; pace=Math.min(1,Math.hypot(fwd,str));
+  }
   const movingInput = fwd!==0||str!==0;
   STATE.sprinting = wantSprint && movingInput && !STATE.crouch && STATE.stamina>0.02;
 
@@ -62,6 +69,7 @@ export function updatePlayer(dt){
   if(STATE.cranking) speed=Math.min(speed,2.4);
   /* wading the black stream drags at the knees (but hides your noise) */
   if(STATE.level===2&&cellAt3(STATE.pos.x,STATE.pos.z)===3) speed*=0.8;
+  if(!STATE.sprinting) speed*=pace;              // a sprint is a sprint, however far the stick is pushed
   const sin=Math.sin(STATE.yaw),cos=Math.cos(STATE.yaw);
   let vx=(-sin*fwd + cos*str), vz=(-cos*fwd - sin*str);
   const vl=Math.hypot(vx,vz)||1; vx/=vl; vz/=vl;

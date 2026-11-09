@@ -24,7 +24,15 @@ export function applyVolumes(){
 export function audioInit(){
   if(AU.started) return;
   AU.started=true;
+  /* an iPhone's ring/silent switch mutes Web Audio outright unless the page
+     says it is playing media rather than making interface sounds. A game
+     whose whole radar is what you can hear cannot be silent because of a
+     switch on the side of the phone. (Safari 16.4+; nothing else has it.) */
+  try{ if(navigator.audioSession) navigator.audioSession.type="playback"; }catch(e){}
   const C = AU.ctx = new (window.AudioContext||window.webkitAudioContext)();
+  /* this runs inside the PLAY tap, which is the gesture iOS requires before
+     a context may run — but it still hands the context over suspended */
+  if(C.state!=="running"&&C.resume) C.resume();
   AU.master=C.createGain(); AU.master.connect(C.destination);
   AU.music=C.createGain();  AU.music.connect(AU.master);
   AU.sfx=C.createGain();    AU.sfx.connect(AU.master);

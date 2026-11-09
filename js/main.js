@@ -11,8 +11,8 @@
      airborne; crouching slips under the library's tables and through the
      cave's squeezes; the crank lantern is THE NEST's other heartbeat.
    ===================================================================== */
-import { STATE, monster, spider } from "./state.js";
-import { scene, camera, renderer, lights } from "./scene.js";
+import { STATE, TOUCH, monster, spider } from "./state.js";
+import { scene, camera, renderer, lights, updateFogCull } from "./scene.js";
 import { updatePlayer } from "./player.js";
 import { updateMonster } from "./monster.js";
 import { updateSpider, updateSpiderCave, debugSpiderToWall, debugSpiderToCeiling, spiderHearDisc, debugSpiderDiscTransit } from "./spider.js";
@@ -25,6 +25,7 @@ import { CINE, updateCinematic, startBreakerCine, startElevatorCine,
 import { W, H, CELL, grid, cellToWorld } from "./map.js";
 import { updateLibrary, LIB, grid2, revealHole } from "./library.js";
 import { updateCave, CAVE, grid3 } from "./cave.js";
+import { updateCaveVis, caveVisStats } from "./cavevis.js";
 import { updateHatchlings, HATCH } from "./hatchling.js";
 import { updateLantern, LANT } from "./lantern.js";
 import { updateViewmodel, renderViewmodel } from "./viewmodel.js";
@@ -32,6 +33,12 @@ import { enterTheEnd, enterTheNest, debugSkipToTheEnd, debugWarpToTerminal, debu
          respawn, die, win, prewarmLevel0 } from "./lifecycle.js";
 import { ui, renderObjectives } from "./ui.js";
 import "./input.js";
+import { updateTouch } from "./touch.js";
+import { sealTextures, textureStats } from "./textures.js";
+
+/* every module has evaluated by the time this body runs: from here on a
+   generated map is painted where it is made (see makeCanvas) */
+sealTextures();
 
 /* ---------------- main loop ---------------- */
 let last=performance.now(), uiTick=0;
@@ -44,6 +51,7 @@ function loop(now){
   /* the death camera runs outside the play gate on purpose: the world is
      frozen exactly as it was when it caught you, and only the view moves */
   if(STATE.dead&&DEATH.active) updateDeathCam(dt);
+  updateTouch();                                // the on-screen controls follow the game's state
   if(STATE.playing&&!STATE.paused&&!STATE.dead&&!STATE.won){
     STATE.time+=dt;
     if(CINE.active){
@@ -73,6 +81,10 @@ function loop(now){
     uiTick-=dt;
     if(uiTick<=0){ renderObjectives(); uiTick=1; }
   }
+  /* neither of these is game logic: they run on every frame that is drawn,
+     paused or dying included, because the eye can move in any of them */
+  updateFogCull();                              // level 0: past the fog (scene.js)
+  if(STATE.level===2) updateCaveVis();          // THE NEST: behind the rock (cavevis.js)
   renderer.render(scene,camera);
   renderViewmodel();                            // the lantern in your hand, over the world
 }
@@ -81,13 +93,13 @@ requestAnimationFrame(loop);
 setTimeout(prewarmLevel0,120);
 
 /* console/debug handle (also used by automated smoke tests) */
-window.NOCLIP_DEBUG={STATE, monster, spider, CINE, scene, camera, renderer,
+window.NOCLIP_DEBUG={STATE, TOUCH, monster, spider, CINE, scene, camera, renderer,
   startBreakerCine, startElevatorCine, startTheEndIntro, startTerminalCine,
   startDescentEnd, startAscentEnd, revealHole,
   enterTheEnd, enterTheNest, debugSkipToTheEnd, debugWarpToTerminal, debugWarpToNest, respawn,
   die, win, DEATH,                              // the death/win cards, for smoke tests
   debugSpiderToWall, debugSpiderToCeiling, spiderHearDisc, debugSpiderDiscTransit,
-  W, H, CELL, cellToWorld,
+  W, H, CELL, cellToWorld, textureStats, updateFogCull, updateCaveVis, caveVisStats,
   get interactables(){ return interactables; },
   get exitDoor(){ return exitDoor; },
   get grid(){ return grid; },                   // level 0's, for parity with grid2/grid3

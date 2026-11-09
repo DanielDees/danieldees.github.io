@@ -1,6 +1,6 @@
 /* ---------------- HUD, overlays, settings & mixer ---------------- */
 import { $, clamp } from "./utils.js";
-import { STATE } from "./state.js";
+import { STATE, TOUCH } from "./state.js";
 import { AU, applyVolumes, audioInit } from "./audio.js";
 import { renderer, setRenderQuality } from "./scene.js";
 import { SETTINGS_KEY, readSettings } from "./settings.js";
@@ -154,7 +154,12 @@ export function renderObjectives(force=false){
   if(ui.stats.innerHTML!==strip) ui.stats.innerHTML=strip;
 }
 
-export function lockPointer(){ renderer.domElement.requestPointerLock(); }
+/* a phone has no pointer to lock (and no requestPointerLock to call): the
+   touch layer steers the view there, and MENU pauses */
+export function lockPointer(){
+  const el=renderer.domElement;
+  if(!TOUCH.on && el.requestPointerLock) el.requestPointerLock();
+}
 
 /* ---------------- overlay logic ---------------- */
 export function setPaused(p,keepAudio=false){
@@ -262,8 +267,59 @@ wire("btnStart",()=>{
   audioInit();
   ui.start.classList.add("hide");
   ui.how.classList.add("hide");
+  goFullscreen();
   startGame();
 });
+/* ---- the PLAY button is also the loading bar ----
+   The markup ships it disabled and reading LOADING; lifecycle's prewarm
+   reports its progress here and hands it over when level 0 is built and its
+   shaders are compiled. A button that looks ready and does nothing for the
+   seconds a phone needs is the worst of both. */
+export function setLoadProgress(p){
+  const b=$("btnStart"); if(!b||!b.disabled) return;
+  const pct=Math.round(clamp(p,0,1)*100);
+  b.style.setProperty("--p",pct+"%");
+  b.textContent=`LOADING ${pct}%`;
+}
+export function setLoadReady(){
+  const b=$("btnStart"); if(!b) return;
+  b.disabled=false; b.textContent="PLAY"; b.style.removeProperty("--p");
+}
+
+/* ---- the device around the page ---- */
+{
+  const ua=navigator.userAgent||"";
+  /* an iPad asks for the desktop site by default and calls itself a Mac */
+  const ios=/iPhone|iPad|iPod/.test(ua)||(/Macintosh/.test(ua)&&navigator.maxTouchPoints>1);
+  const standalone=navigator.standalone===true||
+    (typeof matchMedia==="function"&&matchMedia("(display-mode: standalone), (display-mode: fullscreen)").matches);
+  document.body.classList.toggle("ios",ios);
+  document.body.classList.toggle("standalone",standalone);
+}
+/* Android can go properly full screen and hold itself sideways; an iPhone
+   can do neither from a page (it gets there from the Home Screen instead),
+   so this asks only where both halves exist and shrugs off a refusal */
+function goFullscreen(){
+  if(!TOUCH.on) return;
+  const el=document.documentElement, so=screen.orientation;
+  if(!el.requestFullscreen||!so||!so.lock) return;
+  try{
+    const p=el.requestFullscreen({navigationUI:"hide"});
+    if(p&&p.then) p.then(()=>so.lock("landscape")).catch(()=>{});
+  }catch(e){}
+}
+/* leaving the app (a call, the home gesture, another tab) or turning the
+   phone upright has to stop the clock: on a desktop the pointer lock dropping
+   does this, and a phone has no lock to drop */
+function pauseIfPlaying(){
+  if(STATE.playing&&!STATE.paused&&!STATE.dead&&!STATE.won) openPause();
+}
+document.addEventListener("visibilitychange",()=>{ if(document.hidden&&TOUCH.on) pauseIfPlaying(); });
+{
+  const upright=typeof matchMedia==="function"? matchMedia("(orientation: portrait)") : null;
+  const turned=()=>{ if(upright.matches&&TOUCH.on) pauseIfPlaying(); };
+  if(upright){ if(upright.addEventListener) upright.addEventListener("change",turned); else if(upright.addListener) upright.addListener(turned); }
+}
 wire("btnRespawn",()=>{
   ui.death.classList.add("hide");
   respawn(); setPaused(false); lockPointer();

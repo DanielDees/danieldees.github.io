@@ -12,7 +12,7 @@ import { CAVE, cellAt3, hatchBlocked, worldToCell3, cellToWorld3, surfaceNoiseGa
          floorYAt } from "./cave.js";
 import { inBeam } from "./lantern.js";
 import { AU, panTo, sfxHatchTap, startLatchScreech } from "./audio.js";
-import { texSpiderAbd, texSpiderCarapace, texSpiderLimb, makeCanvas } from "./textures.js";
+import { texSpiderAbd, texSpiderCarapace, texSpiderLimb, makeCanvas, lazyTexture, texFor } from "./textures.js";
 
 export const HATCH=[];
 /* pale, not white: their mother's chitin maps under a bone-white tint, so
@@ -21,9 +21,15 @@ export const HATCH=[];
    colour, the way hers do. */
 /* her maps are near-black; theirs are the same drawing screened up to bone,
    so the pattern survives the bleaching instead of being tinted into mud */
-const bleach=(src,lift)=>{ const im=src.image;
-  const t=makeCanvas(im.width,im.height,(g,w,h)=>{ g.drawImage(im,0,0);
-    g.globalCompositeOperation="screen"; g.fillStyle=lift; g.fillRect(0,0,w,h); });
+/* a promise like every other module-scope map (see makeCanvas): reading her
+   image here would paint the spider at page load, two floors early */
+texFor(2);
+const bleach=(src,lift)=>{
+  const t=lazyTexture(()=>{
+    const im=src.image, c=document.createElement("canvas"); c.width=im.width; c.height=im.height;
+    const g=c.getContext("2d"); g.drawImage(im,0,0);
+    g.globalCompositeOperation="screen"; g.fillStyle=lift; g.fillRect(0,0,c.width,c.height);
+    return c; });
   t.wrapS=src.wrapS; t.wrapT=src.wrapT; return t; };
 const paleMat=new THREE.MeshPhongMaterial({map:bleach(texSpiderAbd,"rgb(168,158,140)"), color:0xd6ccb8,
   specular:0x2e2a24, shininess:48});

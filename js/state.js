@@ -37,6 +37,16 @@ export const STATE={
   frenzyT:0,                     // >0: the brood is frenzied, the matriarch enraged
 };
 export const KEYS={};
+/* ---- touch input (phones and tablets) ----
+   The on-screen controls write here and into KEYS; player.js reads both, so
+   the keyboard path is untouched. `on` is decided once, from the primary
+   pointer, and touch.js also switches it on at the first real touch (a
+   laptop with a touchscreen). `str`/`fwd` are the stick, each −1…1, and
+   `sprint` is the RUN button's latch. */
+export const TOUCH={
+  on: typeof matchMedia==="function" && matchMedia("(hover: none) and (pointer: coarse)").matches,
+  str:0, fwd:0, sprint:false,
+};
 export const monster={
   active:false, mesh:null, pos:new THREE.Vector3(),
   wakeT:0, shock:null, shockTimer:0, escalation:0,

@@ -1,6 +1,6 @@
 /* ---------------- input ---------------- */
 import { clamp } from "./utils.js";
-import { STATE, KEYS } from "./state.js";
+import { STATE, KEYS, TOUCH } from "./state.js";
 import { renderer } from "./scene.js";
 import { ui, setPaused, toggleSound } from "./ui.js";
 import { tryInteract } from "./interact.js";
@@ -25,7 +25,7 @@ addEventListener("keydown",e=>{
   if(e.code==="KeyE") tryInteract();
   if(e.code==="KeyF"&&!e.repeat) toggleLantern();
   /* toggle-mode crouch: each fresh press of [C] flips the latch */
-  if(e.code==="KeyC"&&!e.repeat&&STATE.crouchToggle)
+  if(e.code==="KeyC"&&!e.repeat&&(STATE.crouchToggle||TOUCH.on))
     STATE.crouchLatch=!STATE.crouchLatch;
   if(e.code==="Digit6"){
     const now=performance.now();
