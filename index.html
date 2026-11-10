@@ -18,6 +18,42 @@
      once, in parallel with the stylesheet, instead of when the parser gets there -->
 <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
 <link rel="preload" as="script" href="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js">
+<!-- every module, named up front: left to itself the browser finds them one
+     import at a time, a round trip per level of the graph, which on a phone's
+     connection is most of a second before a line of the game runs. Keep this
+     list in step with js/ (a missing entry only costs that file its head start). -->
+<link rel="modulepreload" href="js/audio.js">
+<link rel="modulepreload" href="js/bake.js">
+<link rel="modulepreload" href="js/cave.js">
+<link rel="modulepreload" href="js/cavefx.js">
+<link rel="modulepreload" href="js/cavemats.js">
+<link rel="modulepreload" href="js/caverocks.js">
+<link rel="modulepreload" href="js/cavevis.js">
+<link rel="modulepreload" href="js/clutch.js">
+<link rel="modulepreload" href="js/cutscene.js">
+<link rel="modulepreload" href="js/hatchling.js">
+<link rel="modulepreload" href="js/input.js">
+<link rel="modulepreload" href="js/interact.js">
+<link rel="modulepreload" href="js/lantern.js">
+<link rel="modulepreload" href="js/library.js">
+<link rel="modulepreload" href="js/lifecycle.js">
+<link rel="modulepreload" href="js/lights.js">
+<link rel="modulepreload" href="js/main.js">
+<link rel="modulepreload" href="js/map.js">
+<link rel="modulepreload" href="js/monster.js">
+<link rel="modulepreload" href="js/particles.js">
+<link rel="modulepreload" href="js/player.js">
+<link rel="modulepreload" href="js/props.js">
+<link rel="modulepreload" href="js/scene.js">
+<link rel="modulepreload" href="js/settings.js">
+<link rel="modulepreload" href="js/spider.js">
+<link rel="modulepreload" href="js/state.js">
+<link rel="modulepreload" href="js/textures.js">
+<link rel="modulepreload" href="js/touch.js">
+<link rel="modulepreload" href="js/ui.js">
+<link rel="modulepreload" href="js/utils.js">
+<link rel="modulepreload" href="js/viewmodel.js">
+<link rel="modulepreload" href="js/weblines.js">
 <link rel="stylesheet" href="css/main.css">
 </head>
 <body class="lvl0">
@@ -97,7 +133,7 @@
     <button class="bigbtn ghostbtn" id="btnHow1">HOW TO PLAY</button>
     <p class="subtle blink">Headphones recommended</p>
     <p class="subtle iosOnly" style="opacity:.6">For full screen, tap Share, then Add to Home Screen</p>
-    <p class="subtle" style="margin-top:8px;opacity:.55">v3.3.0</p>
+    <p class="subtle" style="margin-top:8px;opacity:.55">v3.4.0</p>
   </div>
 </div>
 

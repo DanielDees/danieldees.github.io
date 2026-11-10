@@ -1,11 +1,11 @@
 # NOCLIP — Escape the Backrooms
 
-**Version: v3.3.0**
+**Version: v3.4.0**
 
 A first-person browser survival horror game, playable right now at
 **[danieldees.github.io](https://danieldees.github.io)** — no install, no login,
-no plugin. Three procedurally generated floors, three things that hunt you, and
-one way down from each.
+no plugin, on a desktop or on a phone held sideways. Three procedurally generated
+floors, three things that hunt you, and one way down from each.
 
 Vanilla JS ES modules on three.js r128 from a CDN: **no build step, no package
 manager, no dependencies to install, and not a single image or audio file** —
@@ -83,6 +83,22 @@ The chimney is real: climb it yourself, tread by tread, into the pale.
 | `F` / `R` | THE NEST only: lantern on/off / hold to crank the charge back up (loudly) |
 | `O` / `ESC` | options / pause — **How to Play** is on the pause menu |
 
+**On a phone or tablet** the controls are on the screen (hold the phone sideways):
+
+| Touch | Action |
+| --- | --- |
+| left thumb, anywhere on the left | move — a floating stick; a short push is a slow walk |
+| right thumb, anywhere else | look (dragging from a button works too) |
+| `RUN` | sprint — tap to start, tap again or stop moving to end it |
+| `CROUCH` | crouch, and tap again to stand |
+| `JUMP` | jump |
+| `USE` | interact — appears when there is something in reach; hold it for the clutch burns |
+| `LIGHT` / `WIND` | THE NEST only: lantern on/off / hold to crank |
+| `MENU` | pause |
+
+On an iPhone, **Share → Add to Home Screen** opens the game full screen with no
+browser bars. Leaving the app or turning the phone upright pauses it.
+
 Headphones recommended — audio is positional, and both monsters are far easier to
 track by ear.
 
@@ -91,6 +107,56 @@ level follows), and one page per level. Pages for levels you haven't reached yet
 stay locked, so the guide never spoils what's coming.
 
 ## Changelog
+
+### v3.4.0 (2026-11-10)
+The game plays on a phone, loads in a fraction of the time, and asks less of the
+machine everywhere — with the picture unchanged. No AI, generation, objective or
+art changes.
+
+**Phones and tablets**
+- **Touch controls.** A floating stick under the left thumb (analog: a light push is
+  a careful walk), look with the right, and `RUN` / `CROUCH` / `JUMP` / `USE` under
+  the right thumb. `RUN` and `CROUCH` latch, so you can sprint while steering and
+  stay hidden with your hands off the screen; `USE` only appears when there is
+  something to use, and `LIGHT` / `WIND` once you carry the lantern. Prompts, How to
+  Play and the Options sheet use touch wording on a touch device.
+- **No pointer lock needed.** `PLAY`, `RESUME` and `TRY AGAIN` work without it, and
+  the game pauses itself when you leave the app or turn the phone upright.
+- **A phone-sized interface.** The HUD and every menu fit a phone held sideways and
+  keep clear of the notch and the home indicator. Pinch and double-tap zoom, the
+  text callout and rubber-band scrolling are off. Added to the Home Screen it runs
+  full screen.
+- **Sound with the silent switch on** (iOS 16.4+), since the game's radar is what you
+  can hear.
+- **Soft shadows and flames on Safari**, which has no canvas blur filter and drew
+  them hard-edged.
+
+**Loading**
+- **`PLAY` is the loading bar.** It used to look ready and do nothing until the
+  textures had finished; now it shows progress and wakes when level 0 is built and
+  its shaders are compiled.
+- **Only the level you are about to play is generated.** The page used to paint all
+  three levels' textures before the menu could respond. Each level's are now made
+  when you get there, under the black between floors. Startup work before the menu
+  responds is down about 80%, and time to a playable level 0 about 30%.
+- **A freeze near the elevator is gone.** The elevator doors' reflection capture
+  recompiled seventeen shaders in one frame the first time you came near.
+
+**Memory**
+- About a third less texture memory at startup, and each level's textures are
+  released on the way down to the next instead of piling up.
+- Canvases that are finished with (≈300 decals on every level 0 build, a level's
+  book covers and posters at teardown) are emptied immediately instead of waiting for
+  the garbage collector — the difference between running and being killed on a phone.
+
+**Rendering cost (same frame, less work)**
+- **THE NEST draws what you can see.** Anything behind solid rock is skipped: about
+  half the triangles on average (1.25M → 0.61M) and 40% fewer from the worst spots,
+  checked pixel-for-pixel against drawing everything.
+- **LEVEL 0 stops drawing past the fog**: about a quarter fewer draw calls on average
+  and 40% fewer from the worst spots.
+- The interaction prompt and focus test no longer rewrite the page or allocate every
+  frame.
 
 ### v3.3.0 (2026-09-23)
 A graphics and presentation pass over THE END and THE NEST, plus a rewrite of the

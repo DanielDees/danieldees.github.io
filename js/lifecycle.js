@@ -461,7 +461,7 @@ export function win(){
       `<div class="statrow"><span>CLUTCHES BURNED</span><span>${STATE.clutchesLit}/4</span></div>`+
       `<div class="statrow"><span>DISKS DELIVERED</span><span>${STATE.discsDelivered}/${STATE.discTotal||0}</span></div>`+
       `<div class="statrow"><span>DEATHS</span><span>${STATE.deaths}</span></div>`;
-    if(wN) wN.innerHTML="That's the end of NOCLIP <b>v3.3.0</b> — all three levels. "+
+    if(wN) wN.innerHTML="That's the end of NOCLIP <b>v3.4.0</b> — all three levels. "+
       "There's nothing past the crack yet; more levels are coming in future versions.<br>Thanks for playing.";
     if(wA) wA.textContent="PLAY AGAIN";
   } else if(STATE.level===1){

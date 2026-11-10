@@ -130,14 +130,18 @@ if(layer){
   layer.addEventListener("touchcancel",end,opt);
 }
 
-/* a laptop with a touchscreen reports a fine pointer; the first real touch
-   on the game is what says the player wants these controls */
+/* a device whose PRIMARY pointer is a finger gets these controls from the
+   start (state.js). One that reports no fine pointer at all but did not
+   match that query gets them at its first real touch. A laptop with a
+   touchscreen AND a mouse keeps the keyboard and the pointer lock: a stray
+   finger on the glass must not take mouse-look away for the rest of the run. */
 function enable(){
   if(TOUCH.on) return;
   TOUCH.on=true; document.body.classList.add("touch");
 }
 if(TOUCH.on) document.body.classList.add("touch");
-else addEventListener("touchstart",enable,{once:true,passive:true});
+else if(typeof matchMedia==="function"&&!matchMedia("(any-pointer: fine)").matches)
+  addEventListener("touchstart",enable,{once:true,passive:true});
 
 /* Safari's own pinch (gesture*) zooms the whole page out from under the
    HUD. Its double-tap zoom is switched off in CSS (touch-action), not here:

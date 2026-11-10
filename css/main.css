@@ -32,6 +32,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;
   --st:env(safe-area-inset-top,0px);--sb:env(safe-area-inset-bottom,0px)}
 /* keyboard wording and touch wording live side by side in the markup; the
    one that does not apply to this device is taken out (touch.js sets body.touch) */
+/* iOS dresses a bare <button> in its own rounded, tinted chrome */
+button{-webkit-appearance:none;appearance:none;border-radius:0}
 body:not(.touch) .tc{display:none!important}
 body.touch .kb{display:none!important}
 body{font-family:"Courier New",Courier,monospace;color:var(--bone)}
@@ -320,26 +322,30 @@ body.touch #touchUI{display:block}
 /* the buttons are deliberately faint: this is a game about peering into the
    dark, and a row of bright discs along the bottom would be the brightest
    thing on the screen */
-.tbtn{position:absolute;width:64px;height:64px;border-radius:50%;padding:0;font-family:inherit;
+/* the whole cluster is laid out from one size, --b, so a very short screen
+   can shrink it in one place and LIGHT never climbs into the menu button */
+#touchUI{--b:64px}
+.tbtn{position:absolute;width:var(--b);height:var(--b);border-radius:50%;padding:0;font-family:inherit;
   font-size:10px;letter-spacing:.14em;text-indent:.14em;color:var(--accent);
   background:rgba(8,7,4,.36);border:1px solid var(--accent-28);
   touch-action:none;transition:opacity .2s, background .12s, border-color .12s}
 .tbtn.down{background:var(--accent-28);border-color:var(--accent)}
 .tbtn.on{background:var(--accent-15);border-color:var(--accent);box-shadow:0 0 14px var(--glow)}
 #tJump{right:calc(20px + var(--sr));bottom:calc(18px + var(--sb))}
-#tCrouch{right:calc(98px + var(--sr));bottom:calc(12px + var(--sb))}
-#tRun{right:calc(14px + var(--sr));bottom:calc(96px + var(--sb))}
+#tCrouch{right:calc(var(--b) + 34px + var(--sr));bottom:calc(12px + var(--sb))}
+#tRun{right:calc(14px + var(--sr));bottom:calc(var(--b) + 32px + var(--sb))}
 #tRun.spent{color:var(--alert);border-color:rgba(176,58,46,.6)}
 /* USE only exists while there is something to use, and it says so by glowing */
-#tUse{right:calc(92px + var(--sr));bottom:calc(88px + var(--sb));width:72px;height:72px;font-size:12px;
+#tUse{right:calc(var(--b) + 28px + var(--sr));bottom:calc(var(--b) + 24px + var(--sb));
+  width:calc(var(--b) + 8px);height:calc(var(--b) + 8px);font-size:12px;
   opacity:0;pointer-events:none}
 #tUse.show{opacity:1;pointer-events:auto;border-color:var(--accent);background:var(--accent-15);
   animation:usepulse 1.2s ease-in-out infinite}
 @keyframes usepulse{50%{box-shadow:0 0 18px var(--glow)}}
 /* the lantern's pair: only once you are carrying one */
-#tLight,#tWind{width:56px;height:56px;opacity:0;pointer-events:none}
-#tLight{right:calc(14px + var(--sr));bottom:calc(172px + var(--sb))}
-#tWind{right:calc(80px + var(--sr));bottom:calc(176px + var(--sb))}
+#tLight,#tWind{width:calc(var(--b) - 8px);height:calc(var(--b) - 8px);opacity:0;pointer-events:none}
+#tLight{right:calc(14px + var(--sr));bottom:calc(var(--b)*2 + 44px + var(--sb))}
+#tWind{right:calc(var(--b) + 16px + var(--sr));bottom:calc(var(--b)*2 + 48px + var(--sb))}
 #tLight.show,#tWind.show{opacity:1;pointer-events:auto}
 #tLight.on{color:#ffcf8a;border-color:rgba(255,207,138,.8);background:rgba(255,207,138,.14);
   box-shadow:0 0 14px rgba(255,207,138,.3)}
@@ -432,6 +438,13 @@ body:not(.ios) .iosOnly, body.standalone .iosOnly{display:none!important}
   #startOverlay .sheet p{text-align:left}
   #startOverlay .sheet p.subtle{text-align:center}
   #startOverlay .bigbtn{display:inline-block;min-width:190px;margin:14px 5px 0}
+}
+/* the smallest phones: under 300px of height the cluster comes down a size */
+@media (max-height:300px){
+  #touchUI{--b:50px}
+  .tbtn{font-size:9px;letter-spacing:.08em;text-indent:.08em}
+  #tUse{font-size:10px}
+  #tHint{width:92px;height:92px;bottom:calc(16px + var(--sb))}
 }
 /* narrow as well as short: the three-across menus lose their side padding */
 @media (max-width:560px){

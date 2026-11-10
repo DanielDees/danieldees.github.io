@@ -300,7 +300,9 @@ export function setLoadReady(){
    can do neither from a page (it gets there from the Home Screen instead),
    so this asks only where both halves exist and shrugs off a refusal */
 function goFullscreen(){
-  if(!TOUCH.on) return;
+  /* Android only by name: an iPad HAS requestFullscreen, and its full screen
+     puts a close button over the game and leaves on a downward swipe */
+  if(!TOUCH.on||!/Android/.test(navigator.userAgent||"")) return;
   const el=document.documentElement, so=screen.orientation;
   if(!el.requestFullscreen||!so||!so.lock) return;
   try{
